@@ -1,5 +1,5 @@
 %%%-------------------------------------------------------------------
-%%% @copyright (C) 2011-2016, 2600Hz INC
+%%% @copyright (C) 2011-2017, 2600Hz INC
 %%% @doc
 %%%
 %%% A Number Manager module for carrier: telnyx.com
@@ -17,6 +17,7 @@
 -export([disconnect_number/1]).
 -export([is_number_billable/1]).
 -export([should_lookup_cnam/0]).
+-export([check_numbers/1]).
 
 -include("knm.hrl").
 
@@ -44,6 +45,16 @@ is_local() -> 'false'.
 -spec is_number_billable(knm_number:knm_number()) -> boolean().
 is_number_billable(_Number) -> 'true'.
 
+%%--------------------------------------------------------------------
+%% @public
+%% @doc
+%% Check with carrier if these numbers are registered with it.
+%% @end
+%%--------------------------------------------------------------------
+-spec check_numbers(ne_binaries()) -> {ok, kz_json:object()} |
+                                      {error, any()}.
+check_numbers(_Numbers) -> {error, not_implemented}.
+
 
 %%--------------------------------------------------------------------
 %% @public
@@ -51,7 +62,7 @@ is_number_billable(_Number) -> 'true'.
 %% Query the system for a quantity of available numbers in a rate center
 %% @end
 %%--------------------------------------------------------------------
--spec find_numbers(ne_binary(), pos_integer(), knm_carriers:options()) ->
+-spec find_numbers(ne_binary(), pos_integer(), knm_search:options()) ->
                           {'ok', knm_number:knm_numbers()}.
 find_numbers(<<"+1", Prefix:3/binary, _/binary>>, Quantity, Options)
   when ?IS_US_TOLLFREE(Prefix) ->
@@ -67,7 +78,7 @@ find_numbers(<<"+1", NPA:3/binary, _/binary>>=Num, Quantity, Options) ->
     {'ok', numbers(Results, Options)};
 
 find_numbers(<<"+",_/binary>>=_InternationalNum, Quantity, Options) ->
-    Country = knm_carriers:country(Options),
+    Country = knm_search:country(Options),
     Results = numbers('region', Quantity, Country, 'undefined'),
     {'ok', international_numbers(Results, Options)}.
 
@@ -154,7 +165,7 @@ numbers(JObjs, Options) ->
     ].
 
 international_numbers(JObjs, Options) ->
-    Dialcode = knm_carriers:dialcode(Options),
+    Dialcode = knm_search:dialcode(Options),
     QID = knm_search:query_id(Options),
     [{QID, {Num, ?MODULE, ?NUMBER_STATE_DISCOVERY, Data}}
      || Data <- JObjs,

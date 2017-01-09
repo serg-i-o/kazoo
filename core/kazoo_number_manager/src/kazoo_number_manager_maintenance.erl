@@ -1,5 +1,5 @@
 %%%-------------------------------------------------------------------
-%%% @copyright (C) 2016, 2600Hz INC
+%%% @copyright (C) 2017, 2600Hz INC
 %%% @doc
 %%%
 %%%
@@ -25,6 +25,7 @@
 -export([purge_discovery/0
         ,purge_discovery/1
         ]).
+-export([update_number_services_view/1]).
 
 -define(TIME_BETWEEN_ACCOUNTS_MS
        ,kapps_config:get_integer(?KNM_CONFIG_CAT, <<"time_between_accounts_ms">>, ?MILLISECONDS_IN_SECOND)).
@@ -52,7 +53,7 @@ refresh_numbers_dbs() ->
                  || Db <- Databases,
                     kzs_util:db_classification(Db) =:= 'numbers'
                         orelse kzs_util:db_classification(Db) =:= 'system_numbers'
-               ],
+                ],
     refresh_numbers_dbs(NumberDbs, length(NumberDbs)).
 
 -spec refresh_numbers_dbs(ne_binaries(), non_neg_integer()) -> 'ok'.
@@ -72,20 +73,48 @@ refresh_numbers_db(<<?KNM_DB_PREFIX_ENCODED, _/binary>> = NumberDb) ->
 refresh_numbers_db(<<?KNM_DB_PREFIX, Suffix/binary>>) ->
     NumberDb = <<?KNM_DB_PREFIX_ENCODED, Suffix/binary>>,
     refresh_numbers_db(NumberDb);
-refresh_numbers_db(<<"+", Suffix/binary>>) ->
-    refresh_numbers_db(Suffix);
+refresh_numbers_db(<<"+", _/binary>> = Num) ->
+    refresh_numbers_db(knm_converters:to_db(Num));
 refresh_numbers_db(Suffix) ->
     NumberDb = <<?KNM_DB_PREFIX_ENCODED, Suffix/binary>>,
     refresh_numbers_db(NumberDb).
 
 %% @public
+-spec update_number_services_view(ne_binary()) -> ok.
+update_number_services_view(?MATCH_ACCOUNT_RAW(AccountId)) ->
+    update_number_services_view(kz_util:format_account_db(AccountId));
+update_number_services_view(?MATCH_ACCOUNT_ENCODED(_)=AccountDb) ->
+    JObj = knm_converters:available_classifiers(), %%TODO: per-account classifiers.
+    Pairs = [{Classification, kz_json:get_value([Classification, <<"regex">>], JObj)}
+             || Classification <- kz_json:get_keys(JObj)
+            ],
+    {Classifications, Regexs} = lists:unzip(Pairs),
+    MapView = number_services_map(Classifications, Regexs),
+    RedView = number_services_red(),
+    ViewName = <<"_design/numbers">>,
+    {ok, View} = kz_datamgr:open_doc(AccountDb, ViewName),
+    NewView = kz_json:set_values([{[<<"views">>, <<"reconcile_services">>, <<"map">>], MapView}
+                                 ,{[<<"views">>, <<"reconcile_services">>, <<"reduce">>], RedView}
+                                 ]
+                                ,View
+                                ),
+    case kz_json:are_equal(View, NewView) of
+        true -> ?LOG("View is up to date.", []);
+        false ->
+            true = kz_datamgr:db_view_update(AccountDb, [{ViewName, NewView}]),
+            ?LOG("View updated!", [])
+    end.
+
+%% @public
 -spec fix_accounts_numbers([ne_binary()]) -> 'ok'.
 -spec fix_account_numbers(ne_binary()) -> 'ok'.
 fix_accounts_numbers(Accounts) ->
-    foreach_pause_in_between(?TIME_BETWEEN_ACCOUNTS_MS, fun fix_account_numbers/1, Accounts).
+    AccountDbs = lists:usort([kz_util:format_account_db(Account) || Account <- Accounts]),
+    _ = purge_discovery(),
+    foreach_pause_in_between(?TIME_BETWEEN_ACCOUNTS_MS, fun fix_account_numbers/1, AccountDbs).
 
 fix_account_numbers(AccountDb = ?MATCH_ACCOUNT_ENCODED(A,B,Rest)) ->
-    kz_util:put_callid(?MODULE),
+    kz_util:put_callid('fix_account_numbers'),
     ?LOG("########## fixing [~s] ##########", [AccountDb]),
     ?LOG("[~s] getting numbers from account db", [AccountDb]),
     DisplayPNs = get_DIDs(AccountDb, <<"phone_numbers/crossbar_listing">>),
@@ -124,6 +153,8 @@ fix_account_numbers(AccountDb = ?MATCH_ACCOUNT_ENCODED(A,B,Rest)) ->
                ok =:= ?LOG("########## will remove [~s] doc: ~s ##########", [AccountDb, DID])
            ],
     _ = kz_datamgr:del_docs(AccountDb, ToRm),
+    ?LOG("########## updating view [~s] ##########", [AccountDb]),
+    update_number_services_view(AccountDb),
     ?LOG("########## done fixing [~s] ##########", [AccountDb]);
 fix_account_numbers(Account = ?NE_BINARY) ->
     fix_account_numbers(kz_util:format_account_db(Account)).
@@ -192,6 +223,66 @@ migrate_unassigned_numbers(NumberDb, Offset) ->
 %%% Internal functions
 %%%===================================================================
 
+escape(?NE_BINARY=Bin0) ->
+    StartSz = byte_size(Start= <<"<<">>),
+    EndSz   = byte_size(End  = <<">>">>),
+    Bin = iolist_to_binary(io_lib:format("~p", [Bin0])),
+    SizeOfWhatIWant = byte_size(Bin) - (StartSz + EndSz),
+    <<Start:StartSz/binary, Escaped:SizeOfWhatIWant/binary, End:EndSz/binary>> = Bin,
+    Escaped.
+
+number_services_map(Classifications, Regexs) ->
+    iolist_to_binary(
+      ["function(doc) {"
+       "  if (doc.pvt_type != 'number' || doc.pvt_deleted) return;"
+       "  var e164 = doc._id;"
+       %% "log('+14157125234'.match(",escape(<<"\\d+">>),"));"
+       "  var resM = {};"
+       "  resM[doc.pvt_module_name] = 1;"
+       "  var resC = {};"
+       "  if (false) return;"
+      ,[["  else if (e164.match(", escape(R), "))"
+         "    resC['", Class, "'] = resM;"
+        ]
+        || {Class, R} <- lists:zip(Classifications, Regexs)
+       ]
+      ,"  var resF = {};"
+       "  var used = doc.pvt_features || {};"
+       "  for (var feature in used)"
+       "    if (used.hasOwnProperty(feature))"
+       "      resF[feature] = 1;"
+       "  emit(doc._id, {'classifications':resC, 'features':resF});"
+       "}"
+      ]).
+
+number_services_red() ->
+    iolist_to_binary(
+      ["function(Keys, Values, _Rereduce) {"
+       "  var incr = function (o, k, v) {"
+       "    o[k] = v + ((o[k] === undefined) ? 0 : o[k]);"
+       "    return o;"
+       "  };"
+       "  var acc = function (Oout, Oin) {"
+       "    for (var Ofield in Oin)"
+       "      if (Oin.hasOwnProperty(Ofield))"
+       "        Oout = incr(Oout, Ofield, Oin[Ofield]);"
+       "    return Oout;"
+       "  };"
+       "  var resF = {};"
+       "  var resC = {};"
+       "  for (var i in Values) {"
+       "    var Value = Values[i];"
+       "    resF = acc(resF, Value['features'] || {});"
+       "    var Classifications = Value['classifications'] || {};"
+       "    for (var klass in Classifications) {"
+       "      if (Classifications.hasOwnProperty(klass))"
+       "        resC[klass] = acc(resC[klass] || {}, Classifications[klass]);"
+       "    }"
+       "  }"
+       "  return {'classifications':resC, 'features':resF};"
+       "}"
+      ]).
+
 -spec foreach_pause_in_between(non_neg_integer(), fun(), list()) -> 'ok'.
 foreach_pause_in_between(_, _, []) -> 'ok';
 foreach_pause_in_between(_, Fun, [Element]) ->
@@ -227,7 +318,6 @@ fix_docs({error, _R}, _, _, _NumberDb, _DID) ->
 fix_docs({ok, NumDoc}, Doc, AccountDb, NumberDb, DID) ->
     case app_using(DID) =:= kz_json:get_ne_binary_value(?PVT_USED_BY, NumDoc)
         andalso have_same_pvt_values(NumDoc, Doc)
-        andalso are_features_available_synced(NumDoc)
     of
         true -> ?LOG("~s already synced", [DID]);
         false ->
@@ -288,13 +378,6 @@ have_same_pvt_values(NumDoc0, Doc0) ->
     NumDoc = cleanse(kz_json:private_fields(NumDoc0)),
     Doc = cleanse(kz_json:private_fields(Doc0)),
     NumDoc == Doc.
-
--spec are_features_available_synced(kz_json:object()) -> boolean().
-are_features_available_synced(NumDoc) ->
-    kz_json:get_value(?PVT_FEATURES_AVAILABLE, NumDoc) =:=
-        knm_phone_number:features_available(
-          knm_phone_number:from_json(NumDoc)
-         ).
 
 -spec cleanse(kz_json:object()) -> kz_json:object().
 cleanse(JObj) ->

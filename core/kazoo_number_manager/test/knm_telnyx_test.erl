@@ -1,5 +1,5 @@
 %%%-------------------------------------------------------------------
-%%% @copyright (C) 2016, 2600Hz
+%%% @copyright (C) 2017, 2600Hz
 %%% @doc
 %%% @end
 %%% @contributors
@@ -13,14 +13,19 @@
 api_test_() ->
     Options = [{'account_id', ?RESELLER_ACCOUNT_ID}
               ,{'carriers', [<<"knm_telnyx">>]}
+              ,{'query_id', <<"QID">>}
               ],
-    [find_numbers(Options)
-    ,find_international_numbers(Options)
-    ,acquire_number()
-    ].
+    {setup
+    ,fun () -> {'ok', Pid} = knm_search:start_link(), Pid end
+    ,fun gen_server:stop/1
+    ,fun (_ReturnOfSetup) ->
+             [find_numbers(Options)
+             ,find_international_numbers(Options)
+             ]
+     end
+    }.
 
-
-find_numbers(Options) ->
+find_numbers(Options0) ->
     [[{"Verify found numbers"
       ,?_assertEqual(Limit, length(Results))
       }
@@ -31,12 +36,15 @@ find_numbers(Options) ->
      || {Prefix, Limit} <- [{<<"301359">>, 5}
                            ,{<<"800">>, 2}
                            ],
-        Results <- [knm_carriers:find(Prefix, [{'quantity',Limit}|Options])]
+        Options <- [[{quantity, Limit}
+                    ,{prefix, Prefix}
+                     | Options0
+                    ]],
+        Results <- [knm_search:find(Options)]
     ].
 
 find_international_numbers(Options0) ->
     Country = <<"GB">>,
-    Options = [{'country', Country} | Options0],
     [[{"Verify found numbers"
       ,?_assertEqual(Limit, length(Results))
       }
@@ -46,7 +54,12 @@ find_international_numbers(Options0) ->
      ]
      || {Prefix, Limit} <- [{<<"1">>, 2}
                            ],
-        Results <- [knm_carriers:find(Prefix, [{'quantity',Limit}|Options])]
+        Options <- [[{country, Country}
+                    ,{quantity, Limit}
+                    ,{prefix, Prefix}
+                     | Options0
+                    ]],
+        Results <- [knm_search:find(Options)]
     ].
 
 matcher(Dialcode, Prefix) ->
@@ -59,8 +72,8 @@ matcher(Dialcode, Prefix) ->
             end
     end.
 
-acquire_number() ->
-    N = <<"+14352154006">>,
+acquire_number_test_() ->
+    N = ?TEST_TELNYX_NUM,
     PhoneNumber = knm_phone_number:set_number(knm_phone_number:new(), N),
     Number = knm_number:set_phone_number(knm_number:new(), PhoneNumber),
     Result = knm_telnyx:acquire_number(Number),
@@ -82,8 +95,8 @@ e911_test_() ->
               ,{<<"auth_by_account">>, kz_json:new()}
               ,{'public_fields', JObj}
               ],
-    {'ok', N1} = knm_number:create(?TEST_AVAILABLE_NUM, Options),
-    {'ok', N2} = knm_number:update_phone_number(N1, [{fun knm_phone_number:reset_doc/2, JObj}]),
+    {'ok', N1} = knm_number:create(?TEST_TELNYX_NUM, Options),
+    #{'ok' := [N2]} = knm_numbers:update([N1], [{fun knm_phone_number:reset_doc/2, JObj}]),
     PN1 = knm_number:phone_number(N1),
     PN2 = knm_number:phone_number(N2),
     [{"Verify feature is properly set"
@@ -115,8 +128,8 @@ cnam_test_() ->
               ,{<<"auth_by_account">>, kz_json:new()}
               ,{'public_fields', JObj}
               ],
-    {'ok', N1} = knm_number:create(?TEST_AVAILABLE_NUM, Options),
-    {'ok', N2} = knm_number:update_phone_number(N1, [{fun knm_phone_number:reset_doc/2, JObj}]),
+    {'ok', N1} = knm_number:create(?TEST_TELNYX_NUM, Options),
+    #{'ok' := [N2]} = knm_numbers:update([N1], [{fun knm_phone_number:reset_doc/2, JObj}]),
     PN1 = knm_number:phone_number(N1),
     PN2 = knm_number:phone_number(N2),
     [{"Verify inbound CNAM is properly activated"

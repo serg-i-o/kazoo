@@ -1,5 +1,5 @@
 %%%-------------------------------------------------------------------
-%%% @copyright (C) 2012-2016, 2600Hz INC
+%%% @copyright (C) 2012-2017, 2600Hz INC
 %%% @doc
 %%% Renders a custom account email template, or the system default,
 %%% and sends the email with fax attachment to the user.
@@ -35,12 +35,21 @@ handle_req(JObj, _Props) ->
 
     lager:debug("new outbound fax left, sending to email if enabled"),
 
-    AccountId = kz_json:get_value(<<"Account-ID">>, JObj),
+    AccountDb = kapi_notifications:account_db(JObj),
     JobId = kz_json:get_value(<<"Fax-JobId">>, JObj),
-    lager:debug("account-id: ~s, fax-id: ~s", [AccountId, JobId]),
-    {'ok', FaxDoc} = kz_datamgr:open_doc(?KZ_FAXES_DB, JobId),
+    lager:debug("account-db: ~s, fax-id: ~s", [AccountDb, JobId]),
 
+    case kz_datamgr:open_cache_doc(AccountDb, JobId) of
+        {'ok', FaxDoc} ->
+            process_req(FaxDoc, JObj, _Props);
+        {'error', Err} ->
+            lager:error("could not load fax document: ~p", [Err])
+    end.
+
+-spec process_req(kzd_fax:doc(), kz_json:object(), kz_proplist()) -> any().
+process_req(FaxDoc, JObj, _Props) ->
     Emails = kz_json:get_value([<<"notifications">>,<<"email">>,<<"send_to">>], FaxDoc, []),
+    AccountId = kz_json:get_value(<<"Account-ID">>, JObj),
 
     {'ok', AcctObj} = kz_account:fetch(AccountId),
     Docs = [FaxDoc, JObj, AcctObj],
@@ -56,11 +65,13 @@ handle_req(JObj, _Props) ->
                                                <<"outbound_fax_to_email">>,
                                                <<"email_subject_template">>], AcctObj),
 
+    AccountDb = kapi_notifications:account_db(JObj),
+
     {'ok', TxtBody} = notify_util:render_template(CustomTxtTemplate, ?DEFAULT_TEXT_TMPL, Props),
     {'ok', HTMLBody} = notify_util:render_template(CustomHtmlTemplate, ?DEFAULT_HTML_TMPL, Props),
     {'ok', Subject} = notify_util:render_template(CustomSubjectTemplate, ?DEFAULT_SUBJ_TMPL, Props),
 
-    try build_and_send_email(TxtBody, HTMLBody, Subject, Emails, props:filter_empty(Props)) of
+    try build_and_send_email(TxtBody, HTMLBody, Subject, Emails, props:filter_empty(Props), AccountDb) of
         _ -> lager:debug("built and sent")
     catch
         C:R ->
@@ -106,7 +117,7 @@ create_template_props(Event, [FaxDoc | _Others]=_Docs, Account) ->
                  ,{<<"call_id">>, kz_json:get_value(<<"Call-ID">>, Event)}
                   | fax_values(kz_json:get_value(<<"Fax-Info">>, Event))
                  ]}
-    ,{<<"account_db">>, kz_doc:account_db(Account)}
+    ,{<<"account_db">>, kapi_notifications:account_db(Event)}
     ].
 
 fax_values(Event) ->
@@ -120,14 +131,14 @@ fax_values(Event) ->
 %% process the AMQP requests
 %% @end
 %%--------------------------------------------------------------------
--spec build_and_send_email(iolist(), iolist(), iolist(), ne_binary() | ne_binaries(), kz_proplist()) -> any().
-build_and_send_email(TxtBody, HTMLBody, Subject, To, Props) when is_list(To) ->
-    _ = [build_and_send_email(TxtBody, HTMLBody, Subject, T, Props) || T <- To];
-build_and_send_email(TxtBody, HTMLBody, Subject, To, Props) ->
+-spec build_and_send_email(iolist(), iolist(), iolist(), ne_binary() | ne_binaries(), kz_proplist(), ne_binary()) -> any().
+build_and_send_email(TxtBody, HTMLBody, Subject, To, Props, AccountDb) when is_list(To) ->
+    _ = [build_and_send_email(TxtBody, HTMLBody, Subject, T, Props, AccountDb) || T <- To];
+build_and_send_email(TxtBody, HTMLBody, Subject, To, Props, AccountDb) ->
     Service = props:get_value(<<"service">>, Props),
     From = props:get_value(<<"send_from">>, Service),
 
-    {ContentType, AttachmentFileName, AttachmentBin} = notify_fax_util:get_attachment(?MOD_CONFIG_CAT, Props),
+    {ContentType, AttachmentFileName, AttachmentBin} = notify_fax_util:get_attachment(AccountDb, ?MOD_CONFIG_CAT, Props),
     [ContentTypeA,ContentTypeB] = binary:split(ContentType,<<"/">>),
 
     {ContentTypeParams, CharsetString} = notify_util:get_charset_params(Service),

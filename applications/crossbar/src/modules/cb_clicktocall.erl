@@ -1,5 +1,5 @@
 %%%-------------------------------------------------------------------
-%%% @copyright (C) 2011-2016, 2600Hz INC
+%%% @copyright (C) 2011-2017, 2600Hz INC
 %%% @doc
 %%%
 %%% Click to call
@@ -451,10 +451,11 @@ build_originate_req(Contact, Context) ->
            ,{<<"Auto-Answer-Loopback">>, AutoAnswer}
            ,{<<"Authorizing-ID">>, kz_doc:id(JObj)}
            ,{<<"Inherit-Codec">>, <<"false">>}
-           ,{<<"Authorizing-Type">>, <<"device">>}
+           ,{<<"Authorizing-Type">>, <<"clicktocall">>}
            ,{<<"Loopback-Request-URI">>, <<OutboundNumber/binary, "@", (kz_account:realm(AccountDoc))/binary>>}
            ,{<<"From-URI">>, <<CalleeNumber/binary, "@", (kz_account:realm(AccountDoc))/binary>>}
            ,{<<"Request-URI">>, <<OutboundNumber/binary, "@", (kz_account:realm(AccountDoc))/binary>>}
+           ,{<<"Retain-CID">>, 'true'}
            ],
 
     Endpoint = [{<<"Invite-Format">>, <<"loopback">>}
@@ -488,12 +489,12 @@ build_originate_req(Contact, Context) ->
       ,{<<"Custom-SIP-Headers">>, kz_json:get_value(<<"custom_sip_headers">>, JObj)}
       ,{<<"Custom-Channel-Vars">>, kz_json:from_list(CCVs)}
       ,{<<"Export-Custom-Channel-Vars">>, [<<"Account-ID">>, <<"Authorizing-ID">>, <<"Authorizing-Type">>
-                                          ,<<"Auto-Answer-Loopback">>, <<"Loopback-Request-URI">>
+                                          ,<<"Loopback-Request-URI">>
                                           ,<<"From-URI">>, <<"Request-URI">>
                                           ]
        }
-      ,{<<"Simplify-Loopback">>, <<"true">>}
-      ,{<<"Loopback-Bowout">>, <<"true">>}
+      ,{<<"Simplify-Loopback">>, <<"false">>}
+      ,{<<"Loopback-Bowout">>, <<"false">>}
       ,{<<"Start-Control-Process">>, <<"false">>}
        | kz_api:default_headers(<<"resource">>, <<"originate_req">>, ?APP_NAME, ?APP_VERSION)
       ]).

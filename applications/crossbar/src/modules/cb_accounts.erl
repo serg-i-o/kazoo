@@ -1,5 +1,5 @@
 %%%-------------------------------------------------------------------
-%%% @copyright (C) 2011-2016, 2600Hz INC
+%%% @copyright (C) 2011-2017, 2600Hz INC
 %%% @doc
 %%% Account module
 %%%
@@ -1000,10 +1000,11 @@ fix_start_key([StartKey|_T]) -> StartKey.
 -spec load_account_tree(cb_context:context()) -> cb_context:context().
 load_account_tree(Context) ->
     Tree = get_authorized_account_tree(Context),
-    Options = [{'keys', Tree}, 'include_docs'],
-    case kz_datamgr:all_docs(?KZ_ACCOUNTS_DB, Options) of
+    case kz_datamgr:open_cache_docs(?KZ_ACCOUNTS_DB, Tree) of
         {'error', R} -> crossbar_doc:handle_datamgr_errors(R, ?KZ_ACCOUNTS_DB, Context);
-        {'ok', JObjs} -> format_account_tree_results(Context, JObjs)
+        {'ok', JObjs} ->
+            %%FIXME: extract & handle errors from JObjs
+            format_account_tree_results(Context, JObjs)
     end.
 
 -spec get_authorized_account_tree(cb_context:context()) -> ne_binaries().
@@ -1387,6 +1388,7 @@ load_initial_views(Context)->
     [{FirstId, _}|_] = Views = kapps_maintenance:get_all_account_views(),
     {LastId, _} = lists:last(Views),
     kapps_util:update_views(cb_context:account_db(Context), Views, 'true'),
+    _ = kazoo_number_manager_maintenance:update_number_services_view(cb_context:account_db(Context)),
     ensure_views(Context, [FirstId, LastId]).
 
 -spec ensure_views(cb_context:context(), ne_binaries()) -> 'ok'.

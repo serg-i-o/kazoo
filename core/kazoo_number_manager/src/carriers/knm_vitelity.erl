@@ -1,5 +1,5 @@
 %%%-------------------------------------------------------------------
-%%% @copyright (C) 2014-2016, 2600Hz INC
+%%% @copyright (C) 2014-2017, 2600Hz INC
 %%% @doc
 %%%
 %%% Handle client requests for phone_number documents
@@ -18,6 +18,7 @@
 -export([disconnect_number/1]).
 -export([should_lookup_cnam/0]).
 -export([is_number_billable/1]).
+-export([check_numbers/1]).
 
 -include("knm.hrl").
 -include("knm_vitelity.hrl").
@@ -36,6 +37,16 @@ is_local() -> 'false'.
 %%--------------------------------------------------------------------
 %% @public
 %% @doc
+%% Check with carrier if these numbers are registered with it.
+%% @end
+%%--------------------------------------------------------------------
+-spec check_numbers(ne_binaries()) -> {ok, kz_json:object()} |
+                                      {error, any()}.
+check_numbers(_Numbers) -> {error, not_implemented}.
+
+%%--------------------------------------------------------------------
+%% @public
+%% @doc
 %% Query the Vitelity system for a quanity of available numbers
 %% in a rate center
 %% @end
@@ -43,6 +54,8 @@ is_local() -> 'false'.
 -spec find_numbers(ne_binary(), pos_integer(), knm_carriers:options()) ->
                           {'ok', knm_number:knm_numbers()} |
                           {'error', any()}.
+find_numbers(<<"+1",Prefix/binary>>, Quantity, Options) ->
+    find_numbers(Prefix, Quantity, Options);
 find_numbers(Prefix, Quantity, Options) ->
     case props:is_true(tollfree, Options, 'false') of
         'false' -> classify_and_find(Prefix, Quantity, Options);

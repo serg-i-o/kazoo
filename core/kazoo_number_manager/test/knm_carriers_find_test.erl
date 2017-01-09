@@ -1,5 +1,5 @@
 %%%-------------------------------------------------------------------
-%%% @copyright (C) 2016, 2600Hz
+%%% @copyright (C) 2017, 2600Hz
 %%% @doc
 %%% @end
 %%% @contributors
@@ -9,6 +9,34 @@
 
 -include_lib("eunit/include/eunit.hrl").
 -include("knm.hrl").
+
+is_number_billable_test_() ->
+    {ok, N} = knm_number:get(?TEST_OLD_NUM),
+    PN1 = knm_number:phone_number(N),
+    PN2 = knm_phone_number:set_module_name(PN1, <<"knm_bandwidth2">>),
+    PN3 = knm_phone_number:set_module_name(PN1, <<"wnm_pacwest">>),
+    [?_assertEqual(false, knm_carriers:is_number_billable(PN1))
+    ,?_assertEqual(true, knm_carriers:is_number_billable(PN2))
+    ,?_assertEqual(true, knm_carriers:is_number_billable(PN3))
+    ].
+
+check_test_() ->
+    Nums = [?TEST_AVAILABLE_NUM
+           ,?TEST_IN_SERVICE_NUM
+           ,?TEST_IN_SERVICE_WITH_HISTORY_NUM
+           ,?TEST_EXISTING_TOLL
+           ],
+    [?_assertEqual(kz_json:new(), knm_carriers:check([]))
+    ,{"Checking numbers against unconfigured carriers"
+     ,?_assertEqual(#{?TEST_AVAILABLE_NUM => <<"error">>
+                     ,?TEST_IN_SERVICE_NUM => <<"error">>
+                     ,?TEST_IN_SERVICE_WITH_HISTORY_NUM => <<"error">>
+                     ,?TEST_EXISTING_TOLL => <<"error">>
+                     }
+                   ,kz_json:to_map(knm_carriers:check(Nums))
+                   )
+     }
+    ].
 
 find_local_test_() ->
     [{"Finding local numbers not supported"
@@ -22,16 +50,20 @@ find_local_test_() ->
     ].
 
 find_other_test_() ->
-    {'ok', Pid} = knm_search:start_link(),
     Options = [{carriers, [?CARRIER_OTHER]}
               ,{'query_id', <<"QID">>}
               ],
-    X = [find_no_phonebook(Options)
-        ,find_blocks(Options)
-        ,find_numbers(Options)
-        ],
-    _ = gen_server:stop(Pid),
-    X.
+    {setup
+    ,fun () -> {'ok', Pid} = knm_search:start_link(), Pid end
+    ,fun gen_server:stop/1
+    ,fun (_ReturnOfSetup) ->
+             [find_no_phonebook(Options)
+             ,?_assertEqual([], knm_search:find([{prefix, <<"415">>}]))
+             ,find_numbers(Options)
+             ,find_blocks(Options)
+             ]
+     end
+    }.
 
 find_no_phonebook(Options0) ->
     Prefix = <<"415">>,
@@ -54,48 +86,16 @@ find_blocks(Options0) ->
                | Options0
               ],
 
-    {'bulk', [StartNumber, EndNumber]=Numbers} =
-        knm_other:find_numbers(Prefix, Limit, Options),
-    [StartJObj, EndJObj]=Results = knm_search:find(Options),
+    {'bulk', [StartNumber, EndNumber]=Numbers} = knm_other:find_numbers(Prefix, Limit, Options),
+    [StartRep, EndRep]=Results = knm_search:find(Options),
 
-    [{"Verify the same amount of numbers and results"
-     ,?_assertEqual(length(Numbers), length(Results))
-     }
-     | verify_start(StartNumber, StartJObj)
-     ++ verify_end(EndNumber, EndJObj)
-    ].
-
-verify_start(StartNumber, StartJObj) ->
-    PhoneNumber = knm_number:phone_number(StartNumber),
-    verify_block(PhoneNumber, StartJObj, ?START_BLOCK, 5.0).
-
-verify_end(EndNumber, EndJObj) ->
-    PhoneNumber = knm_number:phone_number(EndNumber),
-    verify_block(PhoneNumber, EndJObj, ?END_BLOCK, 'undefined').
-
-verify_block(PhoneNumber, JObj, DID, Activation) ->
-    [{"Verify start number matches start of block"
-     ,?_assertEqual(DID, knm_phone_number:number(PhoneNumber))
-     }
-    ,{"Verify start number carrier module"
-     ,?_assertEqual(?CARRIER_OTHER, knm_phone_number:module_name(PhoneNumber))
-     }
-    ,{"Verify auth_by account id"
-     ,?_assertEqual(?RESELLER_ACCOUNT_ID, knm_phone_number:auth_by(PhoneNumber))
-     }
-    ,{"Verify assigned_to account id"
-     ,?_assertEqual('undefined', knm_phone_number:assigned_to(PhoneNumber))
-     }
-    ,{"Verify phone number database"
-     ,?_assertEqual(<<"numbers%2F%2B1415">>, knm_phone_number:number_db(PhoneNumber))
-     }
-
-    ,{"Verify JObj number is start number"
-     ,?_assertEqual(DID, kz_json:get_value(<<"number">>, JObj))
-     }
-    ,{"Verify JObj activation charge"
-     ,?_assertEqual(Activation, kz_json:get_value(<<"activation_charge">>, JObj))
-     }
+    [?_assertEqual(length(Numbers), length(Results))
+    ,?_assertEqual(?START_BLOCK, kz_json:get_value(<<"number">>, StartRep))
+    ,?_assertEqual(?END_BLOCK, kz_json:get_value(<<"number">>, EndRep))
+    ,?_assertEqual(?START_BLOCK, element(1,element(2,StartNumber)))
+    ,?_assertEqual(?END_BLOCK, element(1,element(2,EndNumber)))
+    ,?_assertEqual(?CARRIER_OTHER, kz_util:to_binary(element(2,element(2,StartNumber))))
+    ,?_assertEqual(?CARRIER_OTHER, kz_util:to_binary(element(2,element(2,EndNumber))))
     ].
 
 find_numbers(Options0) ->
@@ -124,23 +124,7 @@ verify_number_result(Result, {Tests, N}) ->
                     ,kz_json:get_value(<<"number">>, Result)
                     )
       }
-     ,{"Verify result activation charge"
-      ,activation_charge_test(Result, <<"+1415886790", (N+$0)>>)
-      }
       | Tests
      ]
     ,N+1
-    }.
-
-activation_charge_test(Result, ?START_BLOCK) ->
-    {"Verify start of range activation"
-    ,?_assertEqual(5.0, kz_json:get_value(<<"activation_charge">>, Result))
-    };
-activation_charge_test(Result, ?END_BLOCK) ->
-    {"Verify end of range activation"
-    ,?_assertEqual('undefined', kz_json:get_value(<<"activation_charge">>, Result))
-    };
-activation_charge_test(Result, _DID) ->
-    {"Verify inner range activation"
-    ,?_assertEqual(1.0, kz_json:get_value(<<"activation_charge">>, Result))
     }.

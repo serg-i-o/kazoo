@@ -1,5 +1,5 @@
 %%%-------------------------------------------------------------------
-%%% @copyright (C) 2014-2016, 2600Hz INC
+%%% @copyright (C) 2014-2017, 2600Hz INC
 %%% @doc
 %%% Module for interacting with JSON schema docs
 %%% @end
@@ -17,6 +17,8 @@
         ,validation_error/4
         ,build_error_message/2
         ]).
+
+-export_type([validation_error/0, validation_errors/0]).
 
 -include_lib("kazoo/include/kz_types.hrl").
 -include_lib("kazoo/include/kz_databases.hrl").
@@ -36,13 +38,19 @@ load(Schema) -> load(kz_util:to_binary(Schema)).
                                        {'error', any()}.
 fload(<<"./", Schema/binary>>) -> fload(Schema);
 fload(<<_/binary>> = Schema) ->
-    io:format("loading schema ~s~n", [Schema]),
-    Path = <<"/opt/kazoo/applications/crossbar/priv/couchdb/schemas/", Schema/binary, ".json">>,
-    case file:read_file(Path) of
-        {'error', _E}=E -> E;
-        {'ok', Bin} -> {'ok', kz_json:insert_value(<<"id">>, Schema, kz_json:decode(Bin))}
-    end;
+    PrivDir = code:priv_dir('crossbar'),
+    SchemaPath = filename:join([PrivDir, "couchdb", "schemas", maybe_add_ext(Schema)]),
+    {'ok', SchemaJSON} = file:read_file(SchemaPath),
+    SchemaJObj = kz_json:decode(SchemaJSON),
+    {'ok', kz_json:insert_value(<<"id">>, Schema, SchemaJObj)};
 fload(Schema) -> fload(kz_util:to_binary(Schema)).
+
+-spec maybe_add_ext(ne_binary()) -> ne_binary().
+maybe_add_ext(Schema) ->
+    case filename:extension(Schema) of
+        <<".json">> -> Schema;
+        _Ext -> <<Schema/binary, ".json">>
+    end.
 
 -spec flush() -> 'ok'.
 -spec flush(ne_binary()) -> 'ok'.
@@ -147,11 +155,12 @@ validate(SchemaJObj, DataJObj, Options) ->
 -type options() :: [option()].
 
 -type validation_error() :: {integer(), ne_binary(), kz_json:object()}.
+-type validation_errors() :: [validation_error()].
 
 -spec errors_to_jobj([jesse_error:error_reason()]) ->
-                            [validation_error()].
+                            validation_errors().
 -spec errors_to_jobj([jesse_error:error_reason()], options()) ->
-                            [validation_error()].
+                            validation_errors().
 errors_to_jobj(Errors) ->
     errors_to_jobj(Errors, [{'version', ?CURRENT_VERSION}]).
 
@@ -663,6 +672,8 @@ validation_error(Property, <<"expired">> = C, Message, Options) ->
 validation_error(Property, <<"invalid">> = C, Message, Options) ->
     depreciated_validation_error(Property, C, Message, Options);
 validation_error(Property, <<"schema">> = C, Message, Options) ->
+    depreciated_validation_error(Property, C, Message, Options);
+validation_error(Property, <<"additionalProperties">> = C, Message, Options) ->
     depreciated_validation_error(Property, C, Message, Options);
 validation_error(Property, Code, Message, Options) ->
     lager:warning("UNKNOWN ERROR CODE: ~p", [Code]),

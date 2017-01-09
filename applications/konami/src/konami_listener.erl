@@ -1,5 +1,5 @@
 %%%-------------------------------------------------------------------
-%%% @copyright (C) 2016, 2600Hz
+%%% @copyright (C) 2017, 2600Hz
 %%% @doc
 %%%
 %%% @end
@@ -35,7 +35,7 @@
                   ,{'route', []}
                   ]).
 -define(RESPONDERS, [{{?MODULE, 'handle_metaflow'}
-                     ,[{<<"metaflow">>, <<"bindings">>}]
+                     ,[{<<"metaflow">>, <<"bind">>}]
                      }
                     ,{{?MODULE, 'handle_channel_create'}
                      ,[{<<"call_event">>, <<"CHANNEL_CREATE">>}]

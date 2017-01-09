@@ -1,5 +1,5 @@
 %%%-------------------------------------------------------------------
-%%% @copyright (C) 2012-2016, 2600Hz INC
+%%% @copyright (C) 2012-2017, 2600Hz INC
 %%% @doc
 %%%
 %%% @end
@@ -186,7 +186,7 @@ refresh([Database|Databases], Pause, Total) ->
 -spec get_databases() -> ne_binaries().
 get_databases() ->
     {'ok', Databases} = kz_datamgr:db_info(),
-    lists:sort(fun get_database_sort/2, Databases).
+    lists:sort(fun get_database_sort/2, lists:usort(Databases ++ ?KZ_SYSTEM_DBS)).
 
 -spec get_database_sort(ne_binary(), ne_binary()) -> boolean().
 get_database_sort(Db1, Db2) ->
@@ -387,8 +387,8 @@ refresh_account_db(Database) ->
     AccountId = kz_util:format_account_id(Database, 'raw'),
     _ = remove_depreciated_account_views(AccountDb),
     _ = ensure_account_definition(AccountDb, AccountId),
-    Views = get_all_account_views(),
-    _ = kapps_util:update_views(AccountDb, Views, 'true'),
+    _ = kapps_util:update_views(AccountDb, get_all_account_views(), 'true'),
+    _ = kazoo_number_manager_maintenance:update_number_services_view(AccountDb),
     kapps_account_config:migrate(AccountDb),
     _ = kazoo_bindings:map(binding({'refresh_account', AccountDb}), AccountId),
     'ok'.

@@ -1,5 +1,5 @@
 %%%-------------------------------------------------------------------
-%%% @copyright (C) 2012-2016, 2600Hz INC
+%%% @copyright (C) 2012-2017, 2600Hz INC
 %%% @doc
 %%% For TTS (Text To Speech), use the create/* methods
 %%% To do ASR (Automatic Speech Recognition), there are two options:
@@ -367,8 +367,8 @@ create_response(<<"voicefabric">> = _Engine, {'ok', 200, Headers, Content}) ->
         {'ok', WavContent} ->
             kz_util:delete_file(WavFile),
             lager:debug("media converted"),
-            NewHeaders = props:set_values([{"Content-Type", "audio/wav"}
-                                          ,{"Content-Length", integer_to_list(byte_size(WavContent))}
+            NewHeaders = props:set_values([{"content-type", "audio/wav"}
+                                          ,{"content-length", integer_to_list(byte_size(WavContent))}
                                           ]
                                          ,Headers
                                          ),
