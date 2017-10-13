@@ -84,7 +84,6 @@
                ,start_time = os:timestamp() :: kz_time:now()
                ,is_call_up = 'true' :: boolean()
                ,is_node_up = 'true' :: boolean()
-<<<<<<< Upstream, based on 2600hz/master
                ,keep_alive_ref :: kz_term:api_reference()
                ,other_legs = [] :: kz_term:ne_binaries()
                ,last_removed_leg :: kz_term:api_binary()
@@ -1073,14 +1072,13 @@ get_module(Category, Name) ->
 %%
 %% @end
 %%--------------------------------------------------------------------
--spec execute_control_request(kz_json:object(), state()) -> 'ok'.
+-spec execute_control_request(kz_json:object(), state()) -> 'ok' | {'ok', ne_binary()} | {'error', any()}.
 execute_control_request(Cmd, #state{node=Node
                                    ,call_id=CallId
                                    ,other_legs=OtherLegs
                                    }) ->
     kz_util:put_callid(CallId),
     Srv = self(),
-    %%    Insert = kz_json:get_atom_value(<<"Insert-At">>, Cmd, 'tail'),
 
     lager:debug("executing call command '~s' ~s"
                ,[kz_json:get_value(<<"Application-Name">>, Cmd)
