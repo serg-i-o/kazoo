@@ -32,7 +32,7 @@ config_doc_id() ->
 -spec send(kz_term:ne_binary(), kz_types:api_control_q(), kz_term:ne_binary()) ->
                   {'ok', kz_term:ne_binary()} |
                   {'error', 'no_response'}.
--spec send(kz_term:ne_binary() | kapps_call:call(), kz_types:api_control_q(), kz_term:api_binary(), kz_term:api_binary()) ->
+-spec send(kz_term:ne_binary() | kapps_call:call(), kz_types:api_control_q() | kz_term:ne_binary(), kz_term:api_binary(), kz_term:api_binary()) ->
                   {'ok', kz_term:ne_binary()} |
                   {'error', 'no_response'}.
 -spec send(kz_term:ne_binary(), kz_types:api_control_q(), kz_term:api_binary(), kz_term:api_binary(), kz_term:api_binary()) ->
