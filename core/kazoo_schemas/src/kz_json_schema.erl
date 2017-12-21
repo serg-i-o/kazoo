@@ -790,9 +790,10 @@ depreciated_validation_error(Property, Code, Message, Options) ->
 
 -spec insert_default_options(options()) -> options().
 insert_default_options(Options) ->
+    lager:notice("Inserting default options"),
     props:insert_values([{'version', ?CURRENT_VERSION}
-                         ,{'error_code', 400}
-                         ,{'error_message', <<"invalid_request">>}
+                        ,{'error_code', 400}
+                        ,{'error_message', <<"invalid_request">>}
                         ]
                        ,Options
                        ).
@@ -808,6 +809,7 @@ build_validate_error(Property, Code, Message, Options) ->
 
     Key = kz_binary:join(Property, <<".">>),
 
+    lager:notice("Options: ~p", [Options]),
     {props:get_value('error_code', Options)
     ,props:get_value('error_message', Options)
     ,kz_json:set_values([{[Key, Code], Error}], kz_json:new())

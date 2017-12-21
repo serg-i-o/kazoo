@@ -1004,7 +1004,7 @@ add_validation_error(<<_/binary>> = Property, Code, Message, Context) ->
 add_validation_error(Property, Code, <<_/binary>> = Message, Context) ->
     add_validation_error(Property, Code, kz_json:from_list([{<<"message">>, Message}]), Context);
 add_validation_error(Property, Code, Message, Context) ->
-    {ErrorCode, ErrorMessage, ErrorJObj} =
+    Resp = {ErrorCode, ErrorMessage, ErrorJObj} =
         kz_json_schema:validation_error(Property, Code, Message
                                        ,props:filter_undefined(
                                           [{'version', api_version(Context)}
@@ -1013,6 +1013,7 @@ add_validation_error(Property, Code, Message, Context) ->
                                           ]
                                          )
                                        ),
+    lager:notice("Resp: ~p", [Resp]),
     ErrorsJObj = validation_errors(Context),
 
     Context#cb_context{validation_errors=kz_json:merge_jobjs(ErrorJObj, ErrorsJObj)
