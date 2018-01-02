@@ -1,0 +1,25 @@
+{
+    "$schema": "http://json-schema.org/draft-04/schema#",
+    "_id": "storage.attachment.common_properties",
+    "description": "Common schema properties for storage attachments",
+    "properties": {
+        "settings": {
+            "description": "Common settings for storage accounts",
+            "properties": {
+                "oauth_doc_id": {
+                    "description": "Doc ID in the system 'auth' database",
+                    "kazoo-validation": true,
+                    "type": "string"
+                }
+            },
+            "required": [
+                "oauth_doc_id"
+            ],
+            "type": "object"
+        }
+    },
+    "required": [
+        "settings"
+    ],
+    "type": "object"
+}

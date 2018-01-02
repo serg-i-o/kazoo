@@ -18,9 +18,15 @@
 -spec extra_validator(jesse:json_term(), jesse_state:state()) -> jesse_state:state().
 extra_validator(Value, State) ->
     Schema = jesse_state:get_current_schema(State),
-    case kz_json:is_true(<<"kazoo-validation">>, Schema, 'false') of
-        'true' -> extra_validation(Value, State);
-        'false' -> State
+    lager:notice("~nValue: ~p~nSchema: ~p", [Value, Schema]),
+    NewState =
+        case kz_json:is_true(<<"kazoo-validation">>, Schema, 'false') of
+            'true' -> extra_validation(Value, State);
+            'false' -> State
+        end,
+    case kz_json:get_value(<<"exist-validation">>, Schema) of
+        undefined -> NewState;
+        _DB -> extra_validation(Value, NewState)
     end.
 
 -spec extra_validation(jesse:json_term(), jesse_state:state()) -> jesse_state:state().
@@ -85,6 +91,18 @@ extra_validation(<<"storage.plan.database.attachment.handler">>, Value, State) -
                                                   ,State
                                                   )
     end;
+extra_validation(<<"storage.attachment.common_properties.oauth_doc_id">>, Value, State) ->
+    lager:debug("extra_validation: Value: ~p, State: ~p", [Value, State]),
+    State;
+    %JObj = jesse_state:get_current_value(State),
+    %Keys = kz_json:get_keys(<<"attachments">>, JObj),
+    %case lists:member(Value, Keys) of
+    %    'true' -> State;
+    %    'false' -> jesse_error:handle_data_invalid('external_error'
+    %                                              ,?INVALID_STORAGE_ATTACHMENT_REFERENCE(Value)
+    %                                              ,State
+    %                                              )
+    %end;
 extra_validation(_Key, _Value, State) ->
     lager:debug("extra validation of ~s not handled for value ~p", [_Key, _Value]),
     State.

@@ -162,10 +162,9 @@ resource_exists(?PLANS_TOKEN, _PlanId) -> 'true'.
 %%--------------------------------------------------------------------
 -spec validate(cb_context:context()) -> cb_context:context().
 validate(Context) ->
-    lager:notice("validate.error_code: ~p", [cb_context:resp_error_code(Context)]),
     ReqVerb = cb_context:req_verb(Context),
     Context1 = validate_storage(set_scope(Context), ReqVerb),
-    maybe_check_storage_credentials(Context1, ReqVerb).
+    maybe_check_storage_settings(Context1, ReqVerb).
 
 -spec validate(cb_context:context(), path_token()) -> cb_context:context().
 validate(Context, ?PLANS_TOKEN) ->
@@ -212,10 +211,12 @@ validate_storage_plan(Context, PlanId, ?HTTP_DELETE) ->
 %%--------------------------------------------------------------------
 -spec put(cb_context:context()) -> cb_context:context().
 put(Context) ->
+    lager:notice("logging from cb_storage.put/1"),
     crossbar_doc:save(Context).
 
 -spec put(cb_context:context(), path_token()) -> cb_context:context().
 put(Context, ?PLANS_TOKEN) ->
+    lager:notice("logging from cb_storage.put/2"),
     crossbar_doc:save(Context).
 
 %%--------------------------------------------------------------------
@@ -263,6 +264,7 @@ delete(Context, ?PLANS_TOKEN, _PlanId) ->
 %%--------------------------------------------------------------------
 -spec create(cb_context:context()) -> cb_context:context().
 create(Context) ->
+    lager:notice("logging from cb_storage.create/1"),
     OnSuccess = fun(C) -> on_successful_validation(doc_id(Context), C) end,
     cb_context:validate_request_data(<<"storage">>, Context, OnSuccess).
 
@@ -416,61 +418,73 @@ doc_id({'reseller_plans', _AccountId}) -> 'undefined';
 doc_id({'reseller_plan', PlanId, _AccountId}) -> PlanId;
 doc_id(Context) -> doc_id(scope(Context)).
 
--spec maybe_check_storage_credentials(cb_context:context(), ne_binary()) -> cb_context:context().
-maybe_check_storage_credentials(Context, ReqVerb) when ReqVerb =:= ?HTTP_PUT;
+-spec maybe_check_storage_settings(cb_context:context(), ne_binary()) ->
+    cb_context:context().
+maybe_check_storage_settings(Context, ReqVerb) when ReqVerb =:= ?HTTP_PUT;
                                                        ReqVerb =:= ?HTTP_POST;
                                                        ReqVerb =:= ?HTTP_PATCH ->
-    lager:notice("error_code: ~p", [cb_context:resp_error_code(Context)]),
     case cb_context:resp_status(Context) of
-      'success' ->
-        RespData = cb_context:resp_data(Context),
-        DbName = cb_context:account_db(Context),
-        DocId = doc_id(Context),
-        AName = <<"test_credentials_file.txt">>,
-        Contents = kz_binary:rand_hex(16),
-        Atts = kz_json:get_value(<<"attachments">>, RespData),
-        ContextRecordInfo =
-          lists:zip(record_info(fields, cb_context), tl(tuple_to_list(Context))),
-        error_logger:info_msg("ContextRecordInfo: ~p", [ContextRecordInfo]),
-        lager:notice("RespData: ~p", [RespData]),
-        lager:notice("Keys: ~p~nAtts: ~p", [kz_json:get_keys(RespData), Atts]),
-        kz_json:foldl(
-          fun(AttId, Att, ContextAcc) ->
-              Handler = kz_json:get_value(<<"handler">>, Att),
-              Settings = kz_json:to_map(kz_json:get_value(<<"settings">>, Att)),
-              AttHandler = kz_term:to_atom(<<"kz_att_", Handler/binary>>),
-              Fun = fun(BinKey, SettingsAcc) ->
-                        AtomKey = kz_term:to_atom(BinKey),
-                        SettingsAcc#{AtomKey => maps:get(BinKey, Settings)}
-                    end,
-              AttSettings = lists:foldl(Fun, #{} , maps:keys(Settings)),
-              Opts = [{'plan_override', #{'att_handler' => {AttHandler, AttSettings}}}],
-              case kz_datamgr:put_attachment(DbName, DocId, AName, Contents, Opts) of
-                  {ok, _} ->
-                      ContextAcc;
-                  {error, Reason} when is_tuple(Reason) ->
-                      lager:notice("error_code: ~p", [cb_context:resp_error_code(Context)]),
-                      NewReason = [kz_term:to_binary(Term) ||
-                                   Term <- tuple_to_list(Reason)],
-                      Property = kz_json:get_value(<<"name">>, Att, AttId),
-                      cb_context:add_validation_error([<<"attachments">>, Property]
-                                                     ,<<"invalid">>
-                                                     ,NewReason
-                                                     ,ContextAcc
-                                                     );
-                  {error, Reason} ->
-                      Property = kz_json:get_value(<<"name">>, Att, AttId),
-                      cb_context:add_validation_error([<<"attachments">>, Property]
-                                                     ,<<"invalid">>
-                                                     ,kz_json:to_binary(Reason)
-                                                     ,ContextAcc
-                                                     )
-              end
-          end,
-          Context,
-          Atts);
-      _ ->
-        Context
+        'success' ->
+            Doc = cb_context:doc(Context),
+            DbName = cb_context:account_db(Context),
+            DocId = doc_id(Context),
+            AName = <<"test_credentials_file.txt">>,
+            Atts = kz_json:get_value(<<"attachments">>, Doc),
+            %Errors =
+            kz_json:foldl(
+              fun(AttId, Att, Acc) ->
+                  Contents = kz_binary:rand_hex(16),
+                  Handler = kz_json:get_value(<<"handler">>, Att),
+                  %Settings = kz_json:to_map(kz_json:get_value(<<"settings">>, Att)),
+                  Settings = kz_json:get_value(<<"settings">>, Att),
+                  AttHandler = kz_term:to_atom(<<"kz_att_", Handler/binary>>, 'true'),
+                  % Convert keys to atom
+                  AttSettings = maps:from_list([{kz_term:to_atom(K, 'true')
+                                                ,kz_json:get_value(K, Settings)
+                                                } || K <- kz_json:get_keys(Settings)]),
+                  Opts = [{'plan_override', #{'att_handler' => {AttHandler, AttSettings}}}],
+                  case kz_datamgr:put_attachment(DbName, DocId, AName, Contents, Opts) of
+                      {'ok', _} ->
+                          Acc;
+                      %{error, {Type, Code, Message, Body}} ->
+                      {'error', Reason} when is_tuple(Reason) ->
+                          %Error = #{<<"message">> => <<"The AWS Access Key Id you provided does not exist in our records.">>
+                          %         ,<<"engine">> => #{<<"type">> => Type
+                          %                           ,<<"code">> => Code
+                          %                           ,<<"message">> => kz_term:to_binary(Message)
+                          %                           ,<<"body">> => kz_term:to_binary(Body)
+                          %                           }
+                          %         },
+                          %[Error | Acc]
+                          NewReason = [kz_term:to_binary(Term) ||
+                                       Term <- tuple_to_list(Reason)],
+                          %[NewReason | Acc];
+                          cb_context:add_validation_error([<<"attachments">>, AttId]
+                                                         ,<<"invalid">>
+                                                         ,NewReason
+                                                         ,Context
+                                                         );
+                      {'error', Reason} ->
+                          %[kz_term:to_binary(Reason) | Acc]
+                          cb_context:add_validation_error([<<"attachments">>, AttId]
+                                                         ,<<"invalid">>
+                                                         ,kz_term:to_binary(Reason)
+                                                         ,Context
+                                                         )
+                  end
+              end,
+              [],
+              Atts);%,
+              %maybe_return_400(Context, Errors);
+        _ ->
+            Context
     end;
-maybe_check_storage_credentials(Context, _ReqVerb) ->
+maybe_check_storage_settings(Context, _ReqVerb) ->
     Context.
+
+%-spec maybe_return_400(cb_context:context(), [map()]) -> cb_context:context().
+%maybe_return_400(Context, []) ->
+%    Context;
+%maybe_return_400(Context, Errors) when is_list(Errors) ->
+%    ErrorMsg = <<"Credentials validation for attachments failed.">>,
+%    crossbar_util:response_400(ErrorMsg, Errors, Context).

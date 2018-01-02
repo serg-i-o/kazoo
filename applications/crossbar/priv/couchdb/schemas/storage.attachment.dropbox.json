@@ -11,16 +11,8 @@
             "type": "string"
         },
         "settings": {
+            "$ref": "storage.attachment.common_properties",
             "description": "Settings for the DropBox account",
-            "properties": {
-                "oauth_doc_id": {
-                    "description": "Doc ID in the system 'auth' database",
-                    "type": "string"
-                }
-            },
-            "required": [
-                "oauth_doc_id"
-            ],
             "type": "object"
         }
     },
