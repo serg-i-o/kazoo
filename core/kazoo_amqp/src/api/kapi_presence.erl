@@ -51,7 +51,7 @@
 
 -export([declare_exchanges/0]).
 
--include_lib("kazoo_amqp/src/amqp_util.hrl").
+-include("kz_amqp_util.hrl").
 -include("kapi_presence.hrl").
 
 %%--------------------------------------------------------------------
@@ -80,13 +80,13 @@ publish_search_req(JObj) ->
     publish_search_req(JObj, ?DEFAULT_CONTENT_TYPE).
 publish_search_req(Req, ContentType) ->
     {'ok', Payload} = kz_api:prepare_api_payload(Req, ?SEARCH_REQ_VALUES, fun search_req/1),
-    amqp_util:presence_publish(search_req_routing_key(Req), Payload, ContentType).
+    kz_amqp_util:presence_publish(search_req_routing_key(Req), Payload, ContentType).
 
 -spec search_req_routing_key(kz_term:ne_binary() | kz_term:api_terms()) -> kz_term:ne_binary().
 search_req_routing_key(Req) when is_list(Req) ->
     search_req_routing_key(props:get_value(<<"Realm">>, Req));
 search_req_routing_key(Realm) when is_binary(Realm) ->
-    list_to_binary([<<"presence.search_req.">>, amqp_util:encode(Realm)]);
+    list_to_binary([<<"presence.search_req.">>, kz_amqp_util:encode(Realm)]);
 search_req_routing_key(Req) ->
     search_req_routing_key(kz_json:get_value(<<"Realm">>, Req)).
 
@@ -116,7 +116,7 @@ publish_search_partial_resp(Queue, JObj) ->
     publish_search_partial_resp(Queue, JObj, ?DEFAULT_CONTENT_TYPE).
 publish_search_partial_resp(Queue, Resp, ContentType) ->
     {'ok', Payload} = kz_api:prepare_api_payload(Resp, ?SEARCH_PARTIAL_RESP_VALUES, fun search_partial_resp/1),
-    amqp_util:targeted_publish(Queue, Payload, ContentType).
+    kz_amqp_util:targeted_publish(Queue, Payload, ContentType).
 
 %%--------------------------------------------------------------------
 %% @doc
@@ -144,7 +144,7 @@ publish_search_resp(Queue, JObj) ->
     publish_search_resp(Queue, JObj, ?DEFAULT_CONTENT_TYPE).
 publish_search_resp(Queue, Resp, ContentType) ->
     {'ok', Payload} = kz_api:prepare_api_payload(Resp, ?SEARCH_RESP_VALUES, fun search_resp/1),
-    amqp_util:targeted_publish(Queue, Payload, ContentType).
+    kz_amqp_util:targeted_publish(Queue, Payload, ContentType).
 
 %%--------------------------------------------------------------------
 %% @doc Subscribing for updates
@@ -170,15 +170,15 @@ publish_subscribe(JObj) ->
     publish_subscribe(JObj, ?DEFAULT_CONTENT_TYPE).
 publish_subscribe(Req, ContentType) ->
     {'ok', Payload} = kz_api:prepare_api_payload(Req, ?SUBSCRIBE_VALUES, fun subscribe/1),
-    amqp_util:presence_publish(subscribe_routing_key(Req), Payload, ContentType).
+    kz_amqp_util:presence_publish(subscribe_routing_key(Req), Payload, ContentType).
 
 -spec subscribe_routing_key(kz_term:api_terms() | kz_term:ne_binary()) -> kz_term:ne_binary().
 subscribe_routing_key(Prop) when is_list(Prop) ->
     subscribe_routing_key(props:get_value(<<"User">>, Prop));
 subscribe_routing_key(User) when is_binary(User) ->
     R = case binary:split(User, <<"@">>) of
-            [_To, Realm] -> amqp_util:encode(Realm);
-            [Realm] -> amqp_util:encode(Realm)
+            [_To, Realm] -> kz_amqp_util:encode(Realm);
+            [Realm] -> kz_amqp_util:encode(Realm)
         end,
     <<"subscriptions.", R/binary>>;
 subscribe_routing_key(JObj) ->
@@ -208,7 +208,7 @@ publish_update(JObj) ->
     publish_update(JObj, ?DEFAULT_CONTENT_TYPE).
 publish_update(Req, ContentType) ->
     {'ok', Payload} = kz_api:prepare_api_payload(Req, ?UPDATE_VALUES, fun update/1),
-    amqp_util:presence_publish(update_routing_key(Req), Payload, ContentType).
+    kz_amqp_util:presence_publish(update_routing_key(Req), Payload, ContentType).
 
 -spec update_routing_key(kz_term:ne_binary() | kz_term:api_terms()) -> kz_term:ne_binary().
 -spec update_routing_key(kz_term:ne_binary(), kz_term:ne_binary()) -> kz_term:ne_binary().
@@ -223,9 +223,9 @@ update_routing_key(Req) ->
 
 update_routing_key(CallId, PresenceID) ->
     list_to_binary([<<"update.">>
-                   ,amqp_util:encode(realm_from_presence_id(PresenceID))
+                   ,kz_amqp_util:encode(realm_from_presence_id(PresenceID))
                    ,"."
-                   ,amqp_util:encode(CallId)
+                   ,kz_amqp_util:encode(CallId)
                    ]).
 
 -spec realm_from_presence_id(kz_term:ne_binary()) -> kz_term:ne_binary().
@@ -259,7 +259,7 @@ publish_dialog(JObj) ->
     publish_dialog(JObj, ?DEFAULT_CONTENT_TYPE).
 publish_dialog(Req, ContentType) ->
     {'ok', Payload} = kz_api:prepare_api_payload(Req, ?DIALOG_VALUES, fun dialog/1),
-    amqp_util:presence_publish(dialog_routing_key(Req), Payload, ContentType).
+    kz_amqp_util:presence_publish(dialog_routing_key(Req), Payload, ContentType).
 
 -spec dialog_routing_key(kz_term:ne_binary() | kz_term:api_terms()) -> kz_term:ne_binary().
 -spec dialog_routing_key(kz_term:ne_binary(), kz_term:ne_binary()) -> kz_term:ne_binary().
@@ -274,9 +274,9 @@ dialog_routing_key(Req) ->
 
 dialog_routing_key(CallId, PresenceID) ->
     list_to_binary([<<"dialog.">>
-                   ,amqp_util:encode(realm_from_presence_id(PresenceID))
+                   ,kz_amqp_util:encode(realm_from_presence_id(PresenceID))
                    ,"."
-                   ,amqp_util:encode(CallId)
+                   ,kz_amqp_util:encode(CallId)
                    ]).
 
 %%--------------------------------------------------------------------
@@ -302,7 +302,7 @@ probe_v(JObj) -> probe_v(kz_json:to_proplist(JObj)).
 publish_probe(JObj) -> publish_probe(JObj, ?DEFAULT_CONTENT_TYPE).
 publish_probe(Req, ContentType) ->
     {'ok', Payload} = kz_api:prepare_api_payload(Req, ?PROBE_VALUES, fun probe/1),
-    amqp_util:presence_publish(probe_routing_key(Req), Payload, ContentType).
+    kz_amqp_util:presence_publish(probe_routing_key(Req), Payload, ContentType).
 
 probe_routing_key(Prop) when is_list(Prop) ->
     probe_routing_key(props:get_value(<<"Event-Package">>, Prop));
@@ -354,7 +354,7 @@ mwi_update_v(JObj) -> mwi_update_v(kz_json:to_proplist(JObj)).
 publish_mwi_update(JObj) -> publish_mwi_update(JObj, ?DEFAULT_CONTENT_TYPE).
 publish_mwi_update(Req, ContentType) ->
     {'ok', Payload} = kz_api:prepare_api_payload(Req, ?MWI_REQ_VALUES, fun mwi_update/1),
-    amqp_util:presence_publish(mwi_update_routing_key(Req), Payload, ContentType).
+    kz_amqp_util:presence_publish(mwi_update_routing_key(Req), Payload, ContentType).
 
 -spec mwi_update_routing_key(kz_term:api_terms() | kz_term:api_binary()) -> kz_term:ne_binary().
 mwi_update_routing_key(Prop) when is_list(Prop) ->
@@ -368,9 +368,9 @@ mwi_update_routing_key(JObj) ->
 -spec mwi_update_routing_key(kz_term:ne_binary(), kz_term:ne_binary()) -> kz_term:ne_binary().
 mwi_update_routing_key(User, Realm) ->
     list_to_binary([<<"mwi_updates.">>
-                   ,amqp_util:encode(Realm)
+                   ,kz_amqp_util:encode(Realm)
                    ,"."
-                   ,amqp_util:encode(User)
+                   ,kz_amqp_util:encode(User)
                    ]).
 
 -spec mwi_unsolicited_update(kz_term:api_terms()) -> {'ok', iolist()} | {'error', string()}.
@@ -391,15 +391,15 @@ mwi_unsolicited_update_v(JObj) -> mwi_unsolicited_update_v(kz_json:to_proplist(J
 publish_unsolicited_mwi_update(JObj) -> publish_unsolicited_mwi_update(JObj, ?DEFAULT_CONTENT_TYPE).
 publish_unsolicited_mwi_update(Req, ContentType) ->
     {'ok', Payload} = kz_api:prepare_api_payload(Req, ?MWI_UNSOLICITED_REQ_VALUES, fun mwi_unsolicited_update/1),
-    amqp_util:presence_publish(mwi_unsolicited_update_routing_key(Req), Payload, ContentType).
+    kz_amqp_util:presence_publish(mwi_unsolicited_update_routing_key(Req), Payload, ContentType).
 
 -spec mwi_unsolicited_update_routing_key(kz_term:api_terms() | kz_term:api_binary()) -> kz_term:ne_binary().
 mwi_unsolicited_update_routing_key(Prop) when is_list(Prop) ->
     mwi_unsolicited_update_routing_key(props:get_value(<<"To">>, Prop));
 mwi_unsolicited_update_routing_key(To) when is_binary(To) ->
     R = case binary:split(To, <<"@">>) of
-            [_To, Realm] -> amqp_util:encode(Realm);
-            [Realm] -> amqp_util:encode(Realm)
+            [_To, Realm] -> kz_amqp_util:encode(Realm);
+            [Realm] -> kz_amqp_util:encode(Realm)
         end,
     <<"mwi_unsolicited_updates.", R/binary>>;
 mwi_unsolicited_update_routing_key(JObj) ->
@@ -428,13 +428,13 @@ mwi_query_v(JObj) -> mwi_query_v(kz_json:to_proplist(JObj)).
 publish_mwi_query(JObj) -> publish_mwi_query(JObj, ?DEFAULT_CONTENT_TYPE).
 publish_mwi_query(Req, ContentType) ->
     {'ok', Payload} = kz_api:prepare_api_payload(Req, ?MWI_QUERY_VALUES, fun mwi_query/1),
-    amqp_util:presence_publish(mwi_query_routing_key(Req), Payload, ContentType).
+    kz_amqp_util:presence_publish(mwi_query_routing_key(Req), Payload, ContentType).
 
 -spec mwi_query_routing_key(kz_term:api_terms() | kz_term:ne_binary()) -> kz_term:ne_binary().
 mwi_query_routing_key(Prop) when is_list(Prop) ->
     mwi_query_routing_key(props:get_value(<<"Realm">>, Prop));
 mwi_query_routing_key(Realm) when is_binary(Realm) ->
-    <<"mwi_queries.", (amqp_util:encode(Realm))/binary>>;
+    <<"mwi_queries.", (kz_amqp_util:encode(Realm))/binary>>;
 mwi_query_routing_key(JObj) ->
     mwi_query_routing_key(kz_json:get_value(<<"Realm">>, JObj)).
 
@@ -461,14 +461,14 @@ register_overwrite_v(JObj) -> register_overwrite_v(kz_json:to_proplist(JObj)).
 publish_register_overwrite(JObj) -> publish_register_overwrite(JObj, ?DEFAULT_CONTENT_TYPE).
 publish_register_overwrite(Req, ContentType) when is_list(Req) ->
     {'ok', Payload} = kz_api:prepare_api_payload(Req, ?REGISTER_OVERWRITE_VALUES, fun register_overwrite/1),
-    amqp_util:presence_publish(register_overwrite_routing_key(Req), Payload, ContentType);
+    kz_amqp_util:presence_publish(register_overwrite_routing_key(Req), Payload, ContentType);
 publish_register_overwrite(JObj, ContentType) ->
     publish_register_overwrite(kz_json:to_proplist(JObj), ContentType).
 
 register_overwrite_routing_key(Prop) when is_list(Prop) ->
     register_overwrite_routing_key(props:get_value(<<"Realm">>, Prop));
 register_overwrite_routing_key(Realm) when is_binary(Realm) ->
-    <<"register_overwrites.", (amqp_util:encode(Realm))/binary>>;
+    <<"register_overwrites.", (kz_amqp_util:encode(Realm))/binary>>;
 register_overwrite_routing_key(JObj) ->
     register_overwrite_routing_key(kz_json:get_value(<<"Realm">>, JObj)).
 
@@ -498,7 +498,7 @@ publish_reset(JObj) ->
     publish_reset(JObj, ?DEFAULT_CONTENT_TYPE).
 publish_reset(Req, ContentType) ->
     {'ok', Payload} = kz_api:prepare_api_payload(Req, ?RESET_VALUES, fun reset/1),
-    amqp_util:presence_publish(reset_routing_key(Req), Payload, ContentType).
+    kz_amqp_util:presence_publish(reset_routing_key(Req), Payload, ContentType).
 
 -spec reset_routing_key(kz_term:ne_binary() | kz_term:api_terms()) -> kz_term:ne_binary().
 -spec reset_routing_key(kz_term:ne_binary(), kz_term:ne_binary()) -> kz_term:ne_binary().
@@ -513,9 +513,9 @@ reset_routing_key(Req) ->
 
 reset_routing_key(Realm, Username) when is_binary(Realm) ->
     list_to_binary([<<"presence.reset.">>
-                   ,amqp_util:encode(Realm)
+                   ,kz_amqp_util:encode(Realm)
                    ,"."
-                   ,amqp_util:encode(Username)
+                   ,kz_amqp_util:encode(Username)
                    ]).
 
 %%--------------------------------------------------------------------
@@ -542,7 +542,7 @@ publish_flush(JObj) ->
     publish_flush(JObj, ?DEFAULT_CONTENT_TYPE).
 publish_flush(Req, ContentType) ->
     {'ok', Payload} = kz_api:prepare_api_payload(Req, ?FLUSH_VALUES, fun flush/1),
-    amqp_util:presence_publish(<<"flush">>, Payload, ContentType).
+    kz_amqp_util:presence_publish(<<"flush">>, Payload, ContentType).
 
 %%--------------------------------------------------------------------
 %% @doc
@@ -568,7 +568,7 @@ publish_sync(JObj) ->
     publish_sync(JObj, ?DEFAULT_CONTENT_TYPE).
 publish_sync(Req, ContentType) ->
     {'ok', Payload} = kz_api:prepare_api_payload(Req, ?SYNC_VALUES, fun sync/1),
-    amqp_util:presence_publish(<<"sync">>, Payload, ContentType).
+    kz_amqp_util:presence_publish(<<"sync">>, Payload, ContentType).
 
 %%--------------------------------------------------------------------
 %% @doc
@@ -582,66 +582,66 @@ bind_q(Queue, Props) ->
 
 -spec bind_q(kz_term:ne_binary(), kz_term:api_binaries(), kz_term:proplist()) -> 'ok'.
 bind_q(Queue, 'undefined', _) ->
-    amqp_util:bind_q_to_presence(Queue, <<"#">>);
+    kz_amqp_util:bind_q_to_presence(Queue, <<"#">>);
 bind_q(Queue, ['search_req'|Restrict], Props) ->
     Realm = props:get_value('realm', Props, <<"*">>),
     RoutingKey = search_req_routing_key(Realm),
-    amqp_util:bind_q_to_presence(Queue, RoutingKey),
+    kz_amqp_util:bind_q_to_presence(Queue, RoutingKey),
     bind_q(Queue, Restrict, Props);
 bind_q(Queue, ['sync'|Restrict], Props) ->
-    amqp_util:bind_q_to_presence(Queue, <<"sync">>),
+    kz_amqp_util:bind_q_to_presence(Queue, <<"sync">>),
     bind_q(Queue, Restrict, Props);
 bind_q(Queue, ['subscribe'|Restrict], Props) ->
     User = props:get_value('user', Props, <<"*">>),
     RoutingKey = subscribe_routing_key(User),
-    amqp_util:bind_q_to_presence(Queue, RoutingKey),
+    kz_amqp_util:bind_q_to_presence(Queue, RoutingKey),
     bind_q(Queue, Restrict, Props);
 bind_q(Queue, ['update'|Restrict], Props) ->
     PresenceId = props:get_value('presence-id', Props, <<"*@*">>),
     CallId = props:get_value('call', Props, <<"*">>),
     RoutingKey = update_routing_key(CallId, PresenceId),
-    amqp_util:bind_q_to_presence(Queue, RoutingKey),
+    kz_amqp_util:bind_q_to_presence(Queue, RoutingKey),
     bind_q(Queue, Restrict, Props);
 bind_q(Queue, ['dialog'|Restrict], Props) ->
     PresenceId = props:get_value('presence-id', Props, <<"*@*">>),
     CallId = props:get_value('call', Props, <<"*">>),
     RoutingKey = dialog_routing_key(CallId, PresenceId),
-    amqp_util:bind_q_to_presence(Queue, RoutingKey),
+    kz_amqp_util:bind_q_to_presence(Queue, RoutingKey),
     bind_q(Queue, Restrict, Props);
 bind_q(Queue, ['probe'|Restrict], Props) ->
     ProbeType = props:get_value('probe_type', Props, <<"*">>),
     RoutingKey = probe_routing_key(ProbeType),
-    amqp_util:bind_q_to_presence(Queue, RoutingKey),
+    kz_amqp_util:bind_q_to_presence(Queue, RoutingKey),
     bind_q(Queue, Restrict, Props);
 bind_q(Queue, ['mwi_update'|Restrict], Props) ->
     User = props:get_value('user', Props, <<"*">>),
     Realm = props:get_value('realm', Props, <<"*">>),
     RoutingKey = mwi_update_routing_key(User, Realm),
-    amqp_util:bind_q_to_presence(Queue, RoutingKey),
+    kz_amqp_util:bind_q_to_presence(Queue, RoutingKey),
     bind_q(Queue, Restrict, Props);
 bind_q(Queue, ['mwi_unsolicited_update'|Restrict], Props) ->
     User = props:get_value('user', Props, <<"*">>),
     RoutingKey = mwi_unsolicited_update_routing_key(User),
-    amqp_util:bind_q_to_presence(Queue, RoutingKey),
+    kz_amqp_util:bind_q_to_presence(Queue, RoutingKey),
     bind_q(Queue, Restrict, Props);
 bind_q(Queue, ['mwi_query'|Restrict], Props) ->
     User = props:get_value('user', Props, <<"*">>),
     RoutingKey = mwi_query_routing_key(User),
-    amqp_util:bind_q_to_presence(Queue, RoutingKey),
+    kz_amqp_util:bind_q_to_presence(Queue, RoutingKey),
     bind_q(Queue, Restrict, Props);
 bind_q(Queue, ['register_overwrite'|Restrict], Props) ->
     Realm = props:get_value('realm', Props, <<"*">>),
     RoutingKey = register_overwrite_routing_key(Realm),
-    amqp_util:bind_q_to_presence(Queue, RoutingKey),
+    kz_amqp_util:bind_q_to_presence(Queue, RoutingKey),
     bind_q(Queue, Restrict, Props);
 bind_q(Queue, ['flush'|Restrict], Props) ->
-    amqp_util:bind_q_to_presence(Queue, <<"flush">>),
+    kz_amqp_util:bind_q_to_presence(Queue, <<"flush">>),
     bind_q(Queue, Restrict, Props);
 bind_q(Queue, ['reset'|Restrict], Props) ->
     Username = props:get_value('username', Props, <<"*">>),
     Realm = props:get_value('realm', Props, <<"*">>),
     RoutingKey = reset_routing_key(Realm, Username),
-    amqp_util:bind_q_to_presence(Queue, RoutingKey),
+    kz_amqp_util:bind_q_to_presence(Queue, RoutingKey),
     bind_q(Queue, Restrict, Props);
 bind_q(Queue, [_|Restrict], Props) ->
     bind_q(Queue, Restrict, Props);
@@ -654,66 +654,66 @@ unbind_q(Queue, Props) ->
 
 -spec unbind_q(kz_term:ne_binary(), kz_term:api_binary(), kz_term:proplist()) -> 'ok'.
 unbind_q(Queue, 'undefined', _) ->
-    amqp_util:unbind_q_from_presence(Queue, <<"#">>);
+    kz_amqp_util:unbind_q_from_presence(Queue, <<"#">>);
 unbind_q(Queue, ['search_req'|Restrict], Props) ->
     Realm = props:get_value('realm', Props, <<"*">>),
     RoutingKey = search_req_routing_key(Realm),
-    'ok' = amqp_util:unbind_q_from_presence(Queue, RoutingKey),
+    'ok' = kz_amqp_util:unbind_q_from_presence(Queue, RoutingKey),
     unbind_q(Queue, Restrict, Props);
 unbind_q(Queue, ['sync'|Restrict], Props) ->
-    'ok' = amqp_util:unbind_q_from_presence(Queue, <<"sync">>),
+    'ok' = kz_amqp_util:unbind_q_from_presence(Queue, <<"sync">>),
     unbind_q(Queue, Restrict, Props);
 unbind_q(Queue, ['subscribe'|Restrict], Props) ->
     User = props:get_value('user', Props, <<"*">>),
     RoutingKey = subscribe_routing_key(User),
-    'ok' = amqp_util:unbind_q_from_presence(Queue, RoutingKey),
+    'ok' = kz_amqp_util:unbind_q_from_presence(Queue, RoutingKey),
     unbind_q(Queue, Restrict, Props);
 unbind_q(Queue, ['update'|Restrict], Props) ->
     PresenceId = props:get_value('presence-id', Props, <<"*">>),
     CallId = props:get_value('call', Props, <<"*">>),
     RoutingKey = update_routing_key(CallId, PresenceId),
-    'ok' = amqp_util:unbind_q_from_presence(Queue, RoutingKey),
+    'ok' = kz_amqp_util:unbind_q_from_presence(Queue, RoutingKey),
     unbind_q(Queue, Restrict, Props);
 unbind_q(Queue, ['dialog'|Restrict], Props) ->
     PresenceId = props:get_value('presence-id', Props, <<"*@*">>),
     CallId = props:get_value('call', Props, <<"*">>),
     RoutingKey = dialog_routing_key(CallId, PresenceId),
-    'ok' = amqp_util:unbind_q_from_presence(Queue, RoutingKey),
+    'ok' = kz_amqp_util:unbind_q_from_presence(Queue, RoutingKey),
     unbind_q(Queue, Restrict, Props);
 unbind_q(Queue, ['probe'|Restrict], Props) ->
     ProbeType = props:get_value('probe_type', Props, <<"*">>),
     RoutingKey = probe_routing_key(ProbeType),
-    'ok' = amqp_util:unbind_q_from_presence(Queue, RoutingKey),
+    'ok' = kz_amqp_util:unbind_q_from_presence(Queue, RoutingKey),
     unbind_q(Queue, Restrict, Props);
 unbind_q(Queue, ['mwi_update'|Restrict], Props) ->
     User = props:get_value('user', Props, <<"*">>),
     Realm = props:get_value('realm', Props, <<"*">>),
     RoutingKey = mwi_update_routing_key(User, Realm),
-    'ok' = amqp_util:unbind_q_from_presence(Queue, RoutingKey),
+    'ok' = kz_amqp_util:unbind_q_from_presence(Queue, RoutingKey),
     unbind_q(Queue, Restrict, Props);
 unbind_q(Queue, ['mwi_unsolicited_update'|Restrict], Props) ->
     User = props:get_value('user', Props, <<"*">>),
     RoutingKey = mwi_unsolicited_update_routing_key(User),
-    'ok' = amqp_util:unbind_q_from_presence(Queue, RoutingKey),
+    'ok' = kz_amqp_util:unbind_q_from_presence(Queue, RoutingKey),
     bind_q(Queue, Restrict, Props);
 unbind_q(Queue, ['mwi_query'|Restrict], Props) ->
     User = props:get_value('user', Props, <<"*">>),
     RoutingKey = mwi_query_routing_key(User),
-    'ok' = amqp_util:unbind_q_from_presence(Queue, RoutingKey),
+    'ok' = kz_amqp_util:unbind_q_from_presence(Queue, RoutingKey),
     unbind_q(Queue, Restrict, Props);
 unbind_q(Queue, ['register_overwrite'|Restrict], Props) ->
     Realm = props:get_value('realm', Props, <<"*">>),
     RoutingKey = register_overwrite_routing_key(Realm),
-    'ok' = amqp_util:unbind_q_from_presence(Queue, RoutingKey),
+    'ok' = kz_amqp_util:unbind_q_from_presence(Queue, RoutingKey),
     unbind_q(Queue, Restrict, Props);
 unbind_q(Queue, ['flush'|Restrict], Props) ->
-    'ok' = amqp_util:unbind_q_from_presence(Queue, <<"flush">>),
+    'ok' = kz_amqp_util:unbind_q_from_presence(Queue, <<"flush">>),
     unbind_q(Queue, Restrict, Props);
 unbind_q(Queue, ['reset'|Restrict], Props) ->
     Username = props:get_value('username', Props, <<"*">>),
     Realm = props:get_value('realm', Props, <<"*">>),
     RoutingKey = reset_routing_key(Realm, Username),
-    'ok' = amqp_util:unbind_q_from_presence(Queue, RoutingKey),
+    'ok' = kz_amqp_util:unbind_q_from_presence(Queue, RoutingKey),
     unbind_q(Queue, Restrict, Props);
 unbind_q(Queue, [_|Restrict], Props) ->
     unbind_q(Queue, Restrict, Props);
@@ -747,4 +747,4 @@ is_valid_state(JObj) ->
 %%--------------------------------------------------------------------
 -spec declare_exchanges() -> 'ok'.
 declare_exchanges() ->
-    amqp_util:presence_exchange().
+    kz_amqp_util:presence_exchange().
