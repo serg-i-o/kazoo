@@ -64,7 +64,7 @@
         ,validate_message/4
         ]).
 
--include_lib("amqp_util.hrl").
+-include_lib("kz_amqp_util.hrl").
 
 -ifdef(TEST).
 -export([has_any/2, has_all/2]).
@@ -347,7 +347,7 @@ publish_error(TargetQ, JObj) ->
     publish_error(TargetQ, JObj, ?DEFAULT_CONTENT_TYPE).
 publish_error(TargetQ, Error, ContentType) ->
     {'ok', Payload} = prepare_api_payload(Error, ?ERROR_RESP_VALUES, fun error_resp/1),
-    amqp_util:targeted_publish(TargetQ, Payload, ContentType).
+    kz_amqp_util:targeted_publish(TargetQ, Payload, ContentType).
 
 %%%===================================================================
 %%% Internal functions
