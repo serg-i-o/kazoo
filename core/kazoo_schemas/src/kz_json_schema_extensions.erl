@@ -94,15 +94,15 @@ extra_validation(<<"storage.plan.database.attachment.handler">>, Value, State) -
 extra_validation(<<"storage.attachment.common_properties.oauth_doc_id">>, Value, State) ->
     lager:debug("extra_validation: Value: ~p, State: ~p", [Value, State]),
     State;
-    %JObj = jesse_state:get_current_value(State),
-    %Keys = kz_json:get_keys(<<"attachments">>, JObj),
-    %case lists:member(Value, Keys) of
-    %    'true' -> State;
-    %    'false' -> jesse_error:handle_data_invalid('external_error'
-    %                                              ,?INVALID_STORAGE_ATTACHMENT_REFERENCE(Value)
-    %                                              ,State
-    %                                              )
-    %end;
+                                                %JObj = jesse_state:get_current_value(State),
+                                                %Keys = kz_json:get_keys(<<"attachments">>, JObj),
+                                                %case lists:member(Value, Keys) of
+                                                %    'true' -> State;
+                                                %    'false' -> jesse_error:handle_data_invalid('external_error'
+                                                %                                              ,?INVALID_STORAGE_ATTACHMENT_REFERENCE(Value)
+                                                %                                              ,State
+                                                %                                              )
+                                                %end;
 extra_validation(_Key, _Value, State) ->
     lager:debug("extra validation of ~s not handled for value ~p", [_Key, _Value]),
     State.

@@ -25366,6 +25366,28 @@
             ],
             "type": "object"
         },
+        "storage.attachment.common_properties": {
+            "description": "Common schema properties for storage attachments",
+            "properties": {
+                "settings": {
+                    "description": "Common settings for storage accounts",
+                    "properties": {
+                        "oauth_doc_id": {
+                            "description": "Doc ID in the system 'auth' database",
+                            "type": "string"
+                        }
+                    },
+                    "required": [
+                        "oauth_doc_id"
+                    ],
+                    "type": "object"
+                }
+            },
+            "required": [
+                "settings"
+            ],
+            "type": "object"
+        },
         "storage.attachment.dropbox": {
             "description": "schema for dropbox attachment entry",
             "properties": {
@@ -25377,16 +25399,8 @@
                     "type": "string"
                 },
                 "settings": {
+                    "$ref": "#/definitions/storage.attachment.common_properties",
                     "description": "Settings for the DropBox account",
-                    "properties": {
-                        "oauth_doc_id": {
-                            "description": "Doc ID in the system 'auth' database",
-                            "type": "string"
-                        }
-                    },
-                    "required": [
-                        "oauth_doc_id"
-                    ],
                     "type": "object"
                 }
             },
@@ -25407,21 +25421,8 @@
                     "type": "string"
                 },
                 "settings": {
-                    "description": "Settings for the Google Drive account",
-                    "properties": {
-                        "folder_id": {
-                            "description": "Folder ID in which to store the file, if any",
-                            "type": "string"
-                        },
-                        "oauth_doc_id": {
-                            "description": "Doc ID in the system 'auth' database",
-                            "type": "string"
-                        }
-                    },
-                    "required": [
-                        "oauth_doc_id"
-                    ],
-                    "type": "object"
+                    "$ref": "#/definitions/storage.attachment.common_properties",
+                    "description": "Settings for the Google Drive account"
                 }
             },
             "required": [

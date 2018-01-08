@@ -48,6 +48,16 @@ Key | Description | Type | Default | Required
 `settings.key` | the azure api key | `string()` |   | `true`
 `settings` | Settings for the Azure account | `object()` |   | `true`
 
+##### storage.attachment.common_properties
+
+Common schema properties for storage attachments
+
+
+Key | Description | Type | Default | Required
+--- | ----------- | ---- | ------- | --------
+`settings.oauth_doc_id` | Doc ID in the system 'auth' database | `string()` |   | `true`
+`settings` | Common settings for storage accounts | `object()` |   | `true`
+
 ##### storage.attachment.dropbox
 
 schema for dropbox attachment entry
@@ -56,7 +66,6 @@ schema for dropbox attachment entry
 Key | Description | Type | Default | Required
 --- | ----------- | ---- | ------- | --------
 `handler` | What handler module to use | `string('dropbox')` |   | `true`
-`settings.oauth_doc_id` | Doc ID in the system 'auth' database | `string()` |   | `true`
 `settings` | Settings for the DropBox account | `object()` |   | `true`
 
 ##### storage.attachment.google_drive
@@ -67,9 +76,7 @@ schema for google drive attachment entry
 Key | Description | Type | Default | Required
 --- | ----------- | ---- | ------- | --------
 `handler` | What handler module to use | `string('google_drive')` |   | `true`
-`settings.folder_id` | Folder ID in which to store the file, if any | `string()` |   | `false`
-`settings.oauth_doc_id` | Doc ID in the system 'auth' database | `string()` |   | `true`
-`settings` | Settings for the Google Drive account | `object()` |   | `true`
+`settings` | Settings for the Google Drive account | [#/definitions/storage.attachment.common_properties](#storageattachment.common_properties) |   | `true`
 
 ##### storage.attachment.google_storage
 
