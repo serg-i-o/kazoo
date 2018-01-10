@@ -145,7 +145,7 @@ queue_name(_) -> 'undefined'.
 other_legs(Srv) ->
     gen_server:call(Srv, 'other_legs', ?MILLISECONDS_IN_SECOND).
 
--spec update_node(atom(), kz_term:ne_binary() | pids()) -> 'ok'.
+-spec update_node(atom(), kz_term:ne_binary() | kz_term:pids()) -> 'ok'.
 update_node(Node, CallId) when is_binary(CallId) ->
     update_node(Node, gproc:lookup_pids({'p', 'l', {'call_control', CallId}}));
 update_node(Node, Pids) when is_list(Pids) ->
@@ -374,6 +374,8 @@ handle_info(?LOOPBACK_BOWOUT_MSG(Node, Props), #state{call_id=ResigningUUID
             {'noreply', State}
     end;
 handle_info({switch_reply, _}, State) ->
+    {'noreply', State};
+handle_info({route_resp, _, _}, State) ->
     {'noreply', State};
 handle_info(_Msg, State) ->
     lager:debug("unhandled message: ~p", [_Msg]),
@@ -618,7 +620,7 @@ force_queue_advance(#state{call_id=CallId
 %%
 %% @end
 %%--------------------------------------------------------------------
--spec handle_execute_complete(kz_term:api_binary(), kz_json:object(), state()) -> state().
+-spec handle_execute_complete(kz_term:api_binary(), kz_term:api_binary(), kz_json:object(), state()) -> state().
 handle_execute_complete('undefined', _, _JObj, State) ->
     lager:debug_unsafe("call control received undefined : ~s", [kz_json:encode(_JObj, ['pretty'])]),
     State;
@@ -657,6 +659,9 @@ handle_execute_complete(<<"playback">> = AppName, EventUUID, JObj, #state{curren
                 State#state{command_q=flush_group_id(CmdQ, GroupId, AppName)}
         end,
     forward_queue(S);
+handle_execute_complete(AppName, <<"null">>, _, State) ->
+    lager:debug("ignoring execute complete for ~s", [AppName]),
+    State;
 handle_execute_complete(AppName, EventUUID, _, #state{current_app=AppName
                                                      ,current_cmd_uuid=EventUUID
                                                      }=State) ->
@@ -1030,7 +1035,7 @@ get_module(Category, Name) ->
 %%
 %% @end
 %%--------------------------------------------------------------------
--spec execute_control_request(kz_json:object(), state()) -> 'ok' | {'ok', ne_binary()} | {'error', any()}.
+-spec execute_control_request(kz_json:object(), state()) -> 'ok' | {'ok', kz_term:ne_binary()} | {'error', any()}.
 execute_control_request(Cmd, #state{node=Node
                                    ,call_id=CallId
                                    ,other_legs=OtherLegs
@@ -1112,7 +1117,6 @@ which_call_leg(CmdLeg, OtherLegs, CallId) ->
     end.
 
 -spec maybe_send_error_resp(kz_term:ne_binary(), kz_json:object()) -> 'ok'.
--spec maybe_send_error_resp(kz_term:ne_binary(), kz_term:ne_binary(), kz_json:object()) -> 'ok'.
 maybe_send_error_resp(CallId, Cmd) ->
     AppName = kz_json:get_ne_binary_value(<<"Application-Name">>, Cmd),
     Msg = <<"Could not execute dialplan action: "
@@ -1120,6 +1124,7 @@ maybe_send_error_resp(CallId, Cmd) ->
           >>,
     maybe_send_error_resp(AppName, CallId, Cmd, Msg).
 
+-spec maybe_send_error_resp(kz_term:ne_binary(), kz_term:ne_binary(), kz_json:object(), kz_term:ne_binary()) -> 'ok'.
 maybe_send_error_resp(<<"hangup">>, _CallId, _Cmd, _Msg) -> 'ok';
 maybe_send_error_resp(_, CallId, Cmd, Msg) ->
     send_error_resp(CallId, Cmd, Msg).
@@ -1188,7 +1193,7 @@ bind(Node, CallId) ->
     'true' = gproc:reg({'p', 'l', {'call_event', Node, CallId}}),
     'true' = gproc:reg({'p', 'l', ?LOOPBACK_BOWOUT_REG(CallId)}).
 
--spec unbind(atom(), ne_binary()) -> 'true'.
+-spec unbind(atom(), kz_term:ne_binary()) -> 'true'.
 unbind(Node, CallId) ->
     lager:debug("unbinding from call ~s events on node ~s", [CallId, Node]),
     _ = (catch gproc:unreg({'p', 'l', {'call_event', Node, CallId}})),
