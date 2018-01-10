@@ -958,7 +958,7 @@ break(Call) ->
 %% @end
 %%--------------------------------------------------------------------
 -spec queued_hangup(kapps_call:call()) -> 'ok'.
--spec queued_hangup(kapps_call:call(), api_ne_binary()) -> 'ok'.
+-spec queued_hangup(kapps_call:call(), kz_term:api_ne_binary()) -> 'ok'.
 -spec hangup(kapps_call:call()) -> 'ok'.
 -spec hangup(boolean(), kapps_call:call()) -> 'ok'.
 
