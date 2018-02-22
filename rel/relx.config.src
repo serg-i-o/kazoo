@@ -6,9 +6,11 @@ Deps = [list_to_atom(App)  ||         "deps/"++App = Dir <- filelib:wildcard(   
 
 ToFilterOut = [rabbitmq_codegen
               ,'.erlang.mk'
+              ,'ci.erlang.mk'
               ,'.settings'
               ,skel
               ,parse_trans
+              ,meck
               ]
 ++ case os:getenv("KAZOO_DEV") of
        Str when is_list(Str) ->
@@ -22,6 +24,8 @@ Preparer = fun (List) -> [{E,load} || E <- List, not lists:member(E, ToFilterOut
 Base = [runtime_tools
        ,wx
        ,observer
+       ,debugger
+       ,sasl
        ],
 
 Config = "/etc/kazoo/app.config", %% SHOULD rename app.config to sys.config as OTP prefers it.

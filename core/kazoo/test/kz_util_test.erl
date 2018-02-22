@@ -1,5 +1,5 @@
 %%%-------------------------------------------------------------------
-%%% @copyright (C) 2010-2017, 2600Hz INC
+%%% @copyright (C) 2010-2018, 2600Hz INC
 %%% @doc
 %%% Various utilities - a veritable cornicopia
 %%% @end
@@ -196,7 +196,7 @@ account_formats_test_() ->
     AccountDbEn = list_to_binary(["account%2F", A, "%2F", B, "%2F", Rest]),
 
     {Y, M, _} = erlang:date(),
-    TS = kz_time:current_tstamp(),
+    TS = kz_time:now_s(),
     Now = os:timestamp(),
     Year = kz_term:to_binary(Y),
     Month = kz_date:pad_month(M),

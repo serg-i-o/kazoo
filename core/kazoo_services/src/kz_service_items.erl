@@ -1,5 +1,5 @@
 %%%-------------------------------------------------------------------
-%%% @copyright (C) 2012-2017, 2600Hz INC
+%%% @copyright (C) 2012-2018, 2600Hz INC
 %%% @doc
 %%%
 %%% @end
@@ -14,7 +14,7 @@
 -export([find/3]).
 -export([update/2]).
 
--type items() :: dict:dict().
+-opaque items() :: dict:dict().
 -export_type([items/0]).
 
 -include("services.hrl").
@@ -35,17 +35,17 @@ empty() ->
 %%
 %% @end
 %%--------------------------------------------------------------------
+
 -spec get_updated_items(items(), items()) -> items().
--spec get_updated_items(any(), kz_service_item:item(), items(), items()) -> items().
 get_updated_items(UpdatedItems, ExistingItems) ->
-    dict:fold(
-      fun(Key, UpdatedItem, DifferingItems) ->
-              get_updated_items(Key, UpdatedItem, ExistingItems, DifferingItems)
-      end
+    dict:fold(fun(Key, UpdatedItem, DifferingItems) ->
+                      get_updated_items(Key, UpdatedItem, ExistingItems, DifferingItems)
+              end
              ,dict:new()
              ,UpdatedItems
-     ).
+             ).
 
+-spec get_updated_items(any(), kz_service_item:item(), items(), items()) -> items().
 get_updated_items(Key, UpdatedItem, ExistingItems, DifferingItems) ->
     case get_item(Key, ExistingItems) of
         'error' -> DifferingItems;
@@ -120,7 +120,7 @@ public_json_fold({_, ServiceItem}, JObj) ->
 %%
 %% @end
 %%--------------------------------------------------------------------
--spec find(ne_binary(), ne_binary(), items()) -> kz_service_item:item().
+-spec find(kz_term:ne_binary(), kz_term:ne_binary(), items()) -> kz_service_item:item().
 find(Category, Item, ServiceItems) ->
     Key = {Category, Item},
     case dict:find(Key, ServiceItems) of
@@ -154,7 +154,7 @@ log_update(ServiceItem) ->
     _ = log_update_cumulative_discount(Category, Item, ServiceItem),
     log_update_single_discount(Category, Item, ServiceItem).
 
--spec log_update_rate(ne_binary(), ne_binary(), kz_service_item:item()) -> 'ok'.
+-spec log_update_rate(kz_term:ne_binary(), kz_term:ne_binary(), kz_service_item:item()) -> 'ok'.
 log_update_rate(Category, Item, ServiceItem) ->
     case kz_service_item:rate(ServiceItem) of
         'undefined' -> 'ok';
@@ -164,7 +164,7 @@ log_update_rate(Category, Item, ServiceItem) ->
                        )
     end.
 
--spec log_update_cumulative_discount(ne_binary(), ne_binary(), kz_service_item:item()) -> 'ok'.
+-spec log_update_cumulative_discount(kz_term:ne_binary(), kz_term:ne_binary(), kz_service_item:item()) -> 'ok'.
 log_update_cumulative_discount(Category, Item, ServiceItem) ->
     CumulativeDiscount = kz_service_item:cumulative_discount(ServiceItem),
     case kz_term:is_empty(CumulativeDiscount)
@@ -177,7 +177,7 @@ log_update_cumulative_discount(Category, Item, ServiceItem) ->
                        )
     end.
 
--spec log_update_single_discount(ne_binary(), ne_binary(), kz_service_item:item()) -> 'ok'.
+-spec log_update_single_discount(kz_term:ne_binary(), kz_term:ne_binary(), kz_service_item:item()) -> 'ok'.
 log_update_single_discount(Category, Item, ServiceItem) ->
     case kz_service_item:single_discount(ServiceItem)
         andalso kz_service_item:single_discount_rate(ServiceItem)

@@ -12,6 +12,11 @@
                  , lager
                  , kazoo_config
                  , kazoo_amqp
+                 , kazoo_attachments
                  ]}
  ,{mod, {kazoo_data_app, []}}
+ ,{env, [{'default_archive_folder', <<"/tmp">>}
+        ,{'max_bulk_insert', 2000}
+        ,{'max_bulk_read', 2000}
+        ]}
  ]}.

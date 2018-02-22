@@ -1,5 +1,5 @@
 %%%-------------------------------------------------------------------
-%%% @copyright (C) 2011-2017, 2600Hz INC
+%%% @copyright (C) 2011-2018, 2600Hz INC
 %%% @doc
 %%%
 %%%
@@ -58,10 +58,12 @@ init() ->
 %% going to be responded to.
 %% @end
 %%--------------------------------------------------------------------
+
 -spec allowed_methods() -> http_methods().
--spec allowed_methods(path_token()) -> http_methods().
 allowed_methods() ->
     [?HTTP_GET, ?HTTP_POST].
+
+-spec allowed_methods(path_token()) -> http_methods().
 allowed_methods(?PATH_PLAN) ->
     [?HTTP_GET];
 allowed_methods(?PATH_AUDIT) ->
@@ -78,9 +80,11 @@ allowed_methods(?PATH_STATUS) ->
 %%    /services/foo/bar => [<<"foo">>, <<"bar">>]
 %% @end
 %%--------------------------------------------------------------------
+
 -spec resource_exists() -> 'true'.
--spec resource_exists(path_token()) -> boolean().
 resource_exists() -> 'true'.
+
+-spec resource_exists(path_token()) -> boolean().
 resource_exists(?PATH_PLAN) -> 'true';
 resource_exists(?PATH_AUDIT) -> 'true';
 resource_exists(?PATH_STATUS) -> 'true';
@@ -103,9 +107,8 @@ content_types_provided(Context, ?PATH_AUDIT) ->
 %% Generally, use crossbar_doc to manipulate the cb_context{} record
 %% @end
 %%--------------------------------------------------------------------
--spec validate(cb_context:context()) -> cb_context:context().
--spec validate(cb_context:context(), path_token()) -> cb_context:context().
 
+-spec validate(cb_context:context()) -> cb_context:context().
 validate(Context) ->
     validate_services(Context, cb_context:req_verb(Context)).
 
@@ -130,6 +133,7 @@ validate_services(Context, ?HTTP_POST) ->
             crossbar_util:response('error', kz_term:to_binary(Error), 400, R, Context)
     end.
 
+-spec validate(cb_context:context(), path_token()) -> cb_context:context().
 validate(Context, ?PATH_PLAN) ->
     crossbar_util:response(kz_services:service_plan_json(cb_context:account_id(Context)), Context);
 validate(Context, ?PATH_AUDIT) ->
@@ -149,12 +153,12 @@ validate(Context0, ?PATH_STATUS) ->
 %% the resource into the resp_data, resp_headers, etc...
 %% @end
 %%--------------------------------------------------------------------
--spec get(cb_context:context()) -> cb_context:context().
--spec get(cb_context:context(), path_token()) -> cb_context:context().
 
+-spec get(cb_context:context()) -> cb_context:context().
 get(Context) ->
     Context.
 
+-spec get(cb_context:context(), path_token()) -> cb_context:context().
 get(Context, ?PATH_PLAN) ->
     Context;
 get(Context, ?PATH_AUDIT) ->
@@ -237,40 +241,10 @@ maybe_save_services(Context, Services) ->
 
 -spec load_audit_logs(cb_context:context()) -> cb_context:context().
 load_audit_logs(Context) ->
-    case create_view_options(Context) of
-        {'ok', ViewOptions} ->
-            crossbar_doc:load_view(?AUDIT_LOG_LIST
-                                  ,ViewOptions
-                                  ,Context
-                                  ,fun normalize_audit_logs/2
-                                  );
-        Context1 -> Context1
-    end.
-
--spec normalize_audit_logs(kz_json:object(), kz_json:objects()) -> kz_json:objects().
-normalize_audit_logs(JObj, Acc) ->
-    [kz_json:get_value(<<"doc">>, JObj) | Acc].
-
-%%--------------------------------------------------------------------
-%% @private
-%% @doc
-%% @end
-%%--------------------------------------------------------------------
--spec create_view_options(cb_context:context()) ->
-                                 {'ok', kz_proplist()} |
-                                 cb_context:context().
-create_view_options(Context) ->
-    AccountId = cb_context:account_id(Context),
-    case cb_modules_util:range_view_options(Context) of
-        {CreatedFrom, CreatedTo} ->
-            {'ok', [{'startkey', CreatedTo}
-                   ,{'endkey', CreatedFrom}
-                   ,{'databases', lists:reverse(kazoo_modb:get_range(AccountId, CreatedFrom, CreatedTo))}
-                   ,'descending'
-                   ,'include_docs'
-                   ]};
-        Context1 -> Context1
-    end.
+    Options = [{'mapper', crossbar_view:map_doc_fun()}
+              ,'include_docs'
+              ],
+    crossbar_view:load_modb(Context, ?AUDIT_LOG_LIST, Options).
 
 %%--------------------------------------------------------------------
 %% @private

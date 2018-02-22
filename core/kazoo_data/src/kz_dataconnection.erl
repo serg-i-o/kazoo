@@ -1,5 +1,5 @@
 %%%-------------------------------------------------------------------
-%%% @copyright (C) 2012-2017, 2600Hz INC
+%%% @copyright (C) 2012-2018, 2600Hz INC
 %%% @doc
 %%%
 %%% @end
@@ -30,7 +30,7 @@
 %%--------------------------------------------------------------------
 %% @doc Starts the server
 %%--------------------------------------------------------------------
--spec start_link(data_connection()) -> startlink_ret().
+-spec start_link(data_connection()) -> kz_types:startlink_ret().
 start_link(#data_connection{}=Connection) ->
     gen_server:start_link(?SERVER, [Connection], []).
 
@@ -69,7 +69,7 @@ init([Connection]) ->
 %%                                   {stop, Reason, State}
 %% @end
 %%--------------------------------------------------------------------
--spec handle_call(any(), pid_ref(), state()) -> handle_call_ret_state(state()).
+-spec handle_call(any(), kz_term:pid_ref(), state()) -> kz_types:handle_call_ret_state(state()).
 handle_call(_Request, _From, Connection) ->
     {'reply', {'error', 'not_implemented'}, Connection}.
 
@@ -83,7 +83,7 @@ handle_call(_Request, _From, Connection) ->
 %%                                  {stop, Reason, State}
 %% @end
 %%--------------------------------------------------------------------
--spec handle_cast(any(), state()) -> handle_cast_ret_state(state()).
+-spec handle_cast(any(), state()) -> kz_types:handle_cast_ret_state(state()).
 handle_cast(_Msg, Connection) ->
     {'noreply', Connection}.
 
@@ -97,7 +97,7 @@ handle_cast(_Msg, Connection) ->
 %%                                   {stop, Reason, State}
 %% @end
 %%--------------------------------------------------------------------
--spec handle_info(any(), state()) -> handle_info_ret_state(state()).
+-spec handle_info(any(), state()) -> kz_types:handle_info_ret_state(state()).
 handle_info('maintain_connection', #data_connection{connected = 'false'}=Connection) ->
     case try_connection(Connection) of
         {'error', _} ->
@@ -185,7 +185,7 @@ connection_ready(Connection) ->
 reset_connection(Connection) ->
     C = Connection#data_connection{connected = false, ready = false},
     %% TODO: this is disabled for the moment to maintain backward
-    %% compatablity with couch_mgr which always assumed the connection
+    %% compatibility with couch_mgr which always assumed the connection
     %% was available
     %%    kz_dataconnections:update(C),
     C.

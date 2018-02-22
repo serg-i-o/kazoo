@@ -1,5 +1,5 @@
 %%%-------------------------------------------------------------------
-%%% @copyright (C) 2011-2017, 2600Hz INC
+%%% @copyright (C) 2011-2018, 2600Hz INC
 %%% @doc
 %%% Functions shared between crossbar modules
 %%% @end
@@ -12,6 +12,7 @@
         ,update_mwi/2
         ,get_devices_owned_by/2
         ,maybe_originate_quickcall/1
+        ,cavs_from_context/1
 
         ,attachment_name/2
         ,parse_media_type/1
@@ -19,10 +20,6 @@
         ,bucket_name/1
         ,token_cost/1, token_cost/2, token_cost/3
         ,bind/2
-
-        ,range_view_options/1, range_view_options/2, range_view_options/3, range_view_options/5
-
-        ,range_modb_view_options/1, range_modb_view_options/2, range_modb_view_options/3, range_modb_view_options/5
 
         ,take_sync_field/1
 
@@ -33,6 +30,9 @@
         ,log_assignment_updates/1
 
         ,normalize_media_upload/5
+
+        ,get_request_action/1
+        ,normalize_alphanum_name/1
         ]).
 
 -include("crossbar.hrl").
@@ -40,126 +40,7 @@
 
 -define(QCALL_NUMBER_FILTER, [<<" ">>, <<",">>, <<".">>, <<"-">>, <<"(">>, <<")">>]).
 
--spec range_view_options(cb_context:context()) ->
-                                {gregorian_seconds(), gregorian_seconds()} |
-                                cb_context:context().
--spec range_view_options(cb_context:context(), pos_integer()) ->
-                                {gregorian_seconds(), gregorian_seconds()} |
-                                cb_context:context().
--spec range_view_options(cb_context:context(), pos_integer(), ne_binary()) ->
-                                {gregorian_seconds(), gregorian_seconds()} |
-                                cb_context:context().
--spec range_view_options(cb_context:context(), pos_integer(), ne_binary(), pos_integer(), pos_integer()) ->
-                                {gregorian_seconds(), gregorian_seconds()} |
-                                cb_context:context().
-range_view_options(Context) ->
-    range_view_options(Context, ?MAX_RANGE).
-range_view_options(Context, MaxRange) ->
-    range_view_options(Context, MaxRange, <<"created">>).
-range_view_options(Context, MaxRange, Key) ->
-    TStamp =  kz_time:current_tstamp(),
-    RangeTo = range_to(Context, TStamp, Key),
-    RangeFrom = range_from(Context, RangeTo, MaxRange, Key),
-    range_view_options(Context, MaxRange, Key, RangeFrom, RangeTo).
-range_view_options(Context, MaxRange, Key, RangeFrom, RangeTo) ->
-    Path = <<Key/binary, "_from">>,
-    case RangeTo - RangeFrom of
-        N when N < 0 ->
-            Msg = kz_json:from_list(
-                    [{<<"message">>, <<Path/binary, " is prior to ", Key/binary, "_to">>}
-                    ,{<<"cause">>, RangeFrom}
-                    ]),
-            cb_context:add_validation_error(Path, <<"date_range">>, Msg, Context);
-        N when N > MaxRange ->
-            Msg = kz_json:from_list(
-                    [{<<"message">>, <<Key/binary, "_to is more than "
-                                       ,(integer_to_binary(MaxRange))/binary
-                                       ," seconds from ", Path/binary>>}
-                    ,{<<"cause">>, RangeTo}
-                    ]),
-            cb_context:add_validation_error(Path, <<"date_range">>, Msg, Context);
-        _ ->
-            {RangeFrom, RangeTo}
-    end.
-
--spec range_modb_view_options(cb_context:context()) ->
-                                     {'ok', crossbar_doc:view_options()} |
-                                     cb_context:context().
-range_modb_view_options(Context) ->
-    range_modb_view_options(Context, 'undefined', 'undefined').
-
--spec range_modb_view_options(cb_context:context(), api_binaries()) ->
-                                     {'ok', crossbar_doc:view_options()} |
-                                     cb_context:context().
-range_modb_view_options(Context, PrefixKeys) ->
-    range_modb_view_options(Context, PrefixKeys, 'undefined').
-
--spec range_modb_view_options(cb_context:context(), api_binaries(), api_binaries()) ->
-                                     {'ok', crossbar_doc:view_options()} |
-                                     cb_context:context().
-range_modb_view_options(Context, 'undefined', SuffixKeys) ->
-    range_modb_view_options(Context, [], SuffixKeys);
-range_modb_view_options(Context, PrefixKeys, 'undefined') ->
-    range_modb_view_options(Context, PrefixKeys, []);
-range_modb_view_options(Context, PrefixKeys, SuffixKeys) ->
-    case range_view_options(Context) of
-        {CreatedFrom, CreatedTo} ->
-            range_modb_view_options1(Context, PrefixKeys, SuffixKeys, CreatedFrom, CreatedTo);
-        Context1 -> Context1
-    end.
-
--spec range_modb_view_options(cb_context:context(), api_binaries(), api_binaries(), gregorian_seconds(), gregorian_seconds()) ->
-                                     {'ok', crossbar_doc:view_options()} |
-                                     cb_context:context().
-range_modb_view_options(Context, PrefixKeys, SuffixKeys, CreatedFrom, CreatedTo) ->
-    case range_view_options(Context, ?MAX_RANGE, <<"created">>, CreatedFrom, CreatedTo) of
-        {CreatedFrom, CreatedTo} ->
-            range_modb_view_options1(Context, PrefixKeys, SuffixKeys, CreatedFrom, CreatedTo);
-        Context1 -> Context1
-    end.
-
--spec range_modb_view_options1(cb_context:context(), api_binaries(), api_binaries(), gregorian_seconds(), gregorian_seconds()) ->
-                                      {'ok', crossbar_doc:view_options()} |
-                                      cb_context:context().
-range_modb_view_options1(Context, [], [], CreatedFrom, CreatedTo) ->
-    lager:debug("from ~p to ~p (range: ~p)"
-               ,[CreatedFrom, CreatedTo, (CreatedTo - CreatedFrom)]
-               ),
-    {'ok'
-    ,[{'startkey', CreatedFrom}
-     ,{'endkey', CreatedTo}
-     ,{'databases', kazoo_modb:get_range(cb_context:account_id(Context), CreatedFrom, CreatedTo)}
-     ]
-    };
-range_modb_view_options1(Context, PrefixKeys, SuffixKeys, CreatedFrom, CreatedTo) ->
-    lager:debug("prefix/suffix'd from ~p to ~p (range: ~p)"
-               ,[CreatedFrom, CreatedTo, (CreatedTo - CreatedFrom)]
-               ),
-    {'ok'
-    ,[{'startkey', PrefixKeys ++ [CreatedFrom] ++ SuffixKeys}
-     ,{'endkey',   PrefixKeys ++ [CreatedTo]   ++ SuffixKeys}
-     ,{'databases', kazoo_modb:get_range(cb_context:account_id(Context), CreatedFrom, CreatedTo)}
-     ]
-    }.
-
--spec range_to(cb_context:context(), pos_integer(), ne_binary()) -> pos_integer().
-range_to(Context, TStamp, Key) ->
-    case crossbar_doc:start_key(Context) of
-        'undefined' ->
-            lager:debug("building ~s_to from req value", [Key]),
-            kz_term:to_integer(cb_context:req_value(Context, <<Key/binary, "_to">>, TStamp));
-        StartKey ->
-            lager:debug("found startkey ~p as ~s_to", [StartKey, Key]),
-            kz_term:to_integer(StartKey)
-    end.
-
--spec range_from(cb_context:context(), pos_integer(), pos_integer(), ne_binary()) -> pos_integer().
-range_from(Context, CreatedTo, MaxRange, Key) ->
-    MaxFrom = CreatedTo - MaxRange,
-    lager:debug("building from req value '~s_from' or default ~p", [Key, MaxFrom]),
-    kz_term:to_integer(cb_context:req_value(Context, <<Key/binary, "_from">>, MaxFrom)).
-
--type binding() :: {ne_binary(), atom()}.
+-type binding() :: {kz_term:ne_binary(), atom()}.
 -type bindings() :: [binding(),...].
 -spec bind(atom(), bindings()) -> 'ok'.
 bind(Module, Bindings) ->
@@ -168,18 +49,18 @@ bind(Module, Bindings) ->
         ],
     'ok'.
 
--spec pass_hashes(ne_binary(), ne_binary()) -> {ne_binary(), ne_binary()}.
+-spec pass_hashes(kz_term:ne_binary(), kz_term:ne_binary()) -> {kz_term:ne_binary(), kz_term:ne_binary()}.
 pass_hashes(Username, Password) ->
     Creds = list_to_binary([Username, ":", Password]),
     SHA1 = kz_term:to_hex_binary(crypto:hash('sha', Creds)),
     MD5 = kz_term:to_hex_binary(crypto:hash('md5', Creds)),
     {MD5, SHA1}.
 
--spec update_mwi(ne_binary(), ne_binary()) -> pid().
+-spec update_mwi(kz_term:ne_binary(), kz_term:ne_binary()) -> pid().
 update_mwi(BoxId, AccountId) ->
     kz_util:spawn(fun() -> send_mwi_update(BoxId, AccountId) end).
 
--spec send_mwi_update(ne_binary(), ne_binary()) -> 'ok'.
+-spec send_mwi_update(kz_term:ne_binary(), kz_term:ne_binary()) -> 'ok'.
 send_mwi_update(BoxId, AccountId) ->
     timer:sleep(?MILLISECONDS_IN_SECOND),
 
@@ -188,12 +69,12 @@ send_mwi_update(BoxId, AccountId) ->
     OwnerId = kzd_voicemail_box:owner_id(BoxJObj),
     BoxNumber = kzd_voicemail_box:mailbox_number(BoxJObj),
 
-    _ = kz_util:spawn(fun cf_util:unsolicited_owner_mwi_update/2, [AccountDb, OwnerId]),
-    {New, Saved} = kvm_messages:count_none_deleted(AccountId, BoxId),
+    _ = kz_util:spawn(fun kz_endpoint:unsolicited_owner_mwi_update/2, [AccountDb, OwnerId]),
+    {New, Saved} = kvm_messages:count_non_deleted(AccountId, BoxId),
     _ = kz_util:spawn(fun send_mwi_update/4, [New, Saved, BoxNumber, AccountId]),
     lager:debug("sent MWI updates for vmbox ~s in account ~s (~b/~b)", [BoxNumber, AccountId, New, Saved]).
 
--spec send_mwi_update(non_neg_integer(), non_neg_integer(), ne_binary(), ne_binary()) -> 'ok'.
+-spec send_mwi_update(non_neg_integer(), non_neg_integer(), kz_term:ne_binary(), kz_term:ne_binary()) -> 'ok'.
 send_mwi_update(New, Saved, BoxNumber, AccountId) ->
     Realm = kz_account:fetch_realm(AccountId),
     To = <<BoxNumber/binary, "@", Realm/binary>>,
@@ -206,7 +87,7 @@ send_mwi_update(New, Saved, BoxNumber, AccountId) ->
     lager:debug("updating MWI for vmbox ~s@~s (~b/~b)", [BoxNumber, Realm, New, Saved]),
     kz_amqp_worker:cast(Command, fun kapi_presence:publish_mwi_update/1).
 
--spec get_devices_owned_by(ne_binary(), ne_binary()) -> kz_json:objects().
+-spec get_devices_owned_by(kz_term:ne_binary(), kz_term:ne_binary()) -> kz_json:objects().
 get_devices_owned_by(OwnerID, DB) ->
     case kz_datamgr:get_results(DB
                                ,<<"attributes/owned">>
@@ -227,6 +108,7 @@ maybe_originate_quickcall(Context) ->
     Call = create_call_from_context(Context),
     case get_endpoints(Call, Context) of
         [] ->
+            lager:info("no endpoints found"),
             cb_context:add_system_error('unspecified_fault', Context);
         Endpoints ->
             originate_quickcall(Endpoints, Call, Context)
@@ -235,24 +117,23 @@ maybe_originate_quickcall(Context) ->
 -spec create_call_from_context(cb_context:context()) -> kapps_call:call().
 create_call_from_context(Context) ->
     Routines =
-        [{F, V} ||
-            {F, V} <-
-                [{fun kapps_call:set_account_db/2, cb_context:account_db(Context)}
-                ,{fun kapps_call:set_account_id/2, cb_context:account_id(Context)}
-                ,{fun kapps_call:set_resource_type/2, <<"audio">>}
-                ,{fun kapps_call:set_owner_id/2, kz_json:get_ne_value(<<"owner_id">>, cb_context:doc(Context))}
-                 | request_specific_extraction_funs(Context)
-                ],
+        [{F, V}
+         || {F, V} <- [{fun kapps_call:set_account_db/2, cb_context:account_db(Context)}
+                      ,{fun kapps_call:set_account_id/2, cb_context:account_id(Context)}
+                      ,{fun kapps_call:set_resource_type/2, <<"audio">>}
+                      ,{fun kapps_call:set_owner_id/2, kz_json:get_ne_binary_value(<<"owner_id">>, cb_context:doc(Context))}
+                       | request_specific_extraction_funs(Context)
+                      ],
             'undefined' =/= V
         ],
     kapps_call:exec(Routines, kapps_call:new()).
 
 -spec request_specific_extraction_funs(cb_context:context()) -> kapps_call:exec_funs().
--spec request_specific_extraction_funs_from_nouns(cb_context:context(), req_nouns()) ->
-                                                         kapps_call:exec_funs().
 request_specific_extraction_funs(Context) ->
     request_specific_extraction_funs_from_nouns(Context, cb_context:req_nouns(Context)).
 
+-spec request_specific_extraction_funs_from_nouns(cb_context:context(), req_nouns()) ->
+                                                         kapps_call:exec_funs().
 request_specific_extraction_funs_from_nouns(Context, ?DEVICES_QCALL_NOUNS(DeviceId, Number)) ->
     NumberURI = build_number_uri(Context, Number),
     [{fun kapps_call:set_authorizing_id/2, DeviceId}
@@ -270,7 +151,7 @@ request_specific_extraction_funs_from_nouns(Context, ?USERS_QCALL_NOUNS(UserId, 
 request_specific_extraction_funs_from_nouns(_Context, _ReqNouns) ->
     [].
 
--spec filter_number_regex(ne_binary(), ne_binary()) -> ne_binary().
+-spec filter_number_regex(kz_term:ne_binary(), kz_term:ne_binary()) -> kz_term:ne_binary().
 filter_number_regex(Number, Regex) ->
     case re:run(Number, Regex, [{'capture', 'all_but_first', 'binary'}]) of
         {'match', [Match|_]} ->
@@ -282,7 +163,7 @@ filter_number_regex(Number, Regex) ->
             Number
     end.
 
--spec build_number_uri(cb_context:context(), ne_binary()) -> ne_binary().
+-spec build_number_uri(cb_context:context(), kz_term:ne_binary()) -> kz_term:ne_binary().
 build_number_uri(Context, Number) ->
     QueryStr  = cb_context:query_string(Context),
     FilterVal = kz_json:get_value(<<"number_filter">>, QueryStr, <<"true">>),
@@ -297,10 +178,10 @@ build_number_uri(Context, Number) ->
     <<UseNumber/binary, "@", Realm/binary>>.
 
 -spec get_endpoints(kapps_call:call(), cb_context:context()) -> kz_json:objects().
--spec get_endpoints(kapps_call:call(), cb_context:context(), req_nouns()) -> kz_json:objects().
 get_endpoints(Call, Context) ->
     get_endpoints(Call, Context, cb_context:req_nouns(Context)).
 
+-spec get_endpoints(kapps_call:call(), cb_context:context(), req_nouns()) -> kz_json:objects().
 get_endpoints(Call, _Context, ?DEVICES_QCALL_NOUNS(DeviceId, Number)) ->
     Properties = kz_json:from_list([{<<"can_call_self">>, 'true'}
                                    ,{<<"suppress_clid">>, 'true'}
@@ -327,13 +208,29 @@ get_endpoints(Call, _Context, ?USERS_QCALL_NOUNS(_UserId, Number)) ->
 get_endpoints(_Call, _Context, _ReqNouns) ->
     [].
 
--spec aleg_cid(ne_binary(), kapps_call:call()) -> kapps_call:call().
+-spec aleg_cid(kz_term:ne_binary(), kapps_call:call()) -> kapps_call:call().
 aleg_cid(Number, Call) ->
     Routines = [{fun kapps_call:set_custom_channel_var/3, <<"Retain-CID">>, <<"true">>}
                ,{fun kapps_call:set_caller_id_name/2, <<"QuickCall">>}
                ,{fun kapps_call:set_caller_id_number/2, kz_term:to_binary(Number)}
                ],
     kapps_call:exec(Routines, Call).
+
+-spec cavs_from_context(cb_context:context()) -> kz_term:proplist().
+cavs_from_context(Context) ->
+    ReqData = cb_context:req_data(Context),
+    QueryString = cb_context:query_string(Context),
+    cavs_from_request(ReqData, QueryString).
+
+-spec cavs_from_request(kz_term:api_object(), kz_term:api_object()) -> kz_term:proplist().
+cavs_from_request('undefined', 'undefined') -> [];
+cavs_from_request('undefined', QueryString) ->
+    kapps_call_util:filter_ccvs(QueryString);
+cavs_from_request(ReqData, 'undefined') ->
+    kapps_call_util:filter_ccvs(kz_json:get_json_value(<<"custom_application_vars">>, ReqData));
+cavs_from_request(ReqData, QueryString) ->
+    CAVs = kz_json:get_json_value(<<"custom_application_vars">>, ReqData, kz_json:new()),
+    kapps_call_util:filter_ccvs(kz_json:merge(CAVs, QueryString)).
 
 -spec originate_quickcall(kz_json:objects(), kapps_call:call(), cb_context:context()) ->
                                  cb_context:context().
@@ -345,6 +242,9 @@ originate_quickcall(Endpoints, Call, Context) ->
            ,{<<"Authorizing-Type">>, kapps_call:authorizing_type(Call)}
            ,{<<"Authorizing-ID">>, kapps_call:authorizing_id(Call)}
            ],
+
+    CAVs = cavs_from_context(Context),
+
     MsgId = case kz_term:is_empty(cb_context:req_id(Context)) of
                 'true' -> kz_binary:rand_hex(16);
                 'false' -> cb_context:req_id(Context)
@@ -359,13 +259,15 @@ originate_quickcall(Endpoints, Call, Context) ->
     {DefaultCIDNumber, DefaultCIDName} = kz_attributes:caller_id(CIDType, Call),
     lager:debug("quickcall default cid ~s : ~s : ~s", [CIDType, DefaultCIDNumber, DefaultCIDName]),
 
+    CallTimeoutS = get_timeout(Context),
+
     Request =
         kz_json:from_list(
           [{<<"Application-Name">>, <<"transfer">>}
           ,{<<"Application-Data">>, get_application_data(Context)}
           ,{<<"Msg-ID">>, MsgId}
           ,{<<"Endpoints">>, update_quickcall_endpoints(AutoAnswer, Endpoints)}
-          ,{<<"Timeout">>, get_timeout(Context)}
+          ,{<<"Timeout">>, CallTimeoutS}
           ,{<<"Ignore-Early-Media">>, get_ignore_early_media(Context)}
           ,{<<"Media">>, get_media(Context)}
           ,{<<"Outbound-Caller-ID-Name">>, <<"Device QuickCall">>}
@@ -375,8 +277,8 @@ originate_quickcall(Endpoints, Call, Context) ->
           ,{<<"Dial-Endpoint-Method">>, <<"simultaneous">>}
           ,{<<"Continue-On-Fail">>, 'false'}
           ,{<<"Custom-Channel-Vars">>, kz_json:from_list(CCVs)}
-          ,{<<"Export-Custom-Channel-Vars">>, [
-                                               <<"Account-ID">>
+          ,{<<"Custom-Application-Vars">>, kz_json:from_list(CAVs)}
+          ,{<<"Export-Custom-Channel-Vars">>, [ <<"Account-ID">>
                                               , <<"Retain-CID">>
                                               , <<"Authorizing-ID">>
                                               , <<"Authorizing-Type">>
@@ -385,9 +287,62 @@ originate_quickcall(Endpoints, Call, Context) ->
                                               ]}
            | kz_api:default_headers(<<"resource">>, <<"originate_req">>, ?APP_NAME, ?APP_VERSION)
           ]),
+
+    originate(Request, Context, cb_context:req_verb(Context), CallTimeoutS).
+
+originate(Request, Context, ?HTTP_GET, _CallTimeoutS) ->
     kz_amqp_worker:cast(Request, fun kapi_resource:publish_originate_req/1),
     JObj = kz_json:normalize(kz_api:remove_defaults(Request)),
-    crossbar_util:response_202(<<"quickcall initiated">>, JObj, cb_context:set_resp_data(Context, Request)).
+    crossbar_util:response_202(<<"quickcall initiated">>, JObj, cb_context:set_resp_data(Context, Request));
+originate(Request, Context, ?HTTP_POST, CallTimeoutS) ->
+    case kz_amqp_worker:call_collect(Request
+                                    ,fun kapi_resource:publish_originate_req/1
+                                    ,fun([Resp | _Resps]) ->
+                                             kapi_resource:originate_resp_v(Resp)
+                                                 orelse kz_api:error_resp_v(Resp)
+                                     end
+                                    ,CallTimeoutS * ?MILLISECONDS_IN_SECOND
+                                    )
+    of
+        {'ok', JObjs} ->
+            handle_originate_resp(Request, Context, JObjs);
+        {'error', E} ->
+            lager:info("error starting quickcall: ~p", [E]),
+            cb_context:add_system_error(E, Context)
+    end.
+
+-spec handle_originate_resp(kz_json:object(), cb_context:context(), kz_json:objects()) ->
+                                   cb_context:context().
+handle_originate_resp(Request, Context, JObjs) ->
+    case lists:filter(fun kapi_resource:originate_resp_v/1, JObjs) of
+        [Resp] -> send_originate_resp(Request, Context, Resp);
+        [] -> send_error_resp(Context, lists:filter(fun kz_api:error_resp_v/1, JObjs))
+    end.
+
+-spec send_originate_resp(kz_json:object(), cb_context:context(), kz_json:object()) ->
+                                 cb_context:context().
+send_originate_resp(Request, Context, Response) ->
+    RequestJObj = kz_json:normalize(kz_api:remove_defaults(Request)),
+    ResponseJObj = kz_json:normalize(kz_api:remove_defaults(Response)),
+    APIResponse = kz_json:merge(RequestJObj, ResponseJObj),
+    crossbar_util:response_202(<<"quickcall initiated">>, APIResponse, cb_context:set_resp_data(Context, APIResponse)).
+
+-spec send_error_resp(cb_context:context(), kz_json:objects()) ->
+                             cb_context:context().
+send_error_resp(Context, []) ->
+    crossbar_util:response('error'
+                          ,<<"quickcall initiation failed">>
+                          ,500
+                          ,Context
+                          );
+send_error_resp(Context, [Error]) ->
+    ErrorJObj = kz_json:normalize(kz_api:remove_defaults(Error)),
+    crossbar_util:response('error'
+                          ,<<"quickcall initiation failed">>
+                          ,500
+                          ,ErrorJObj
+                          ,cb_context:set_resp_data(Context, ErrorJObj)
+                          ).
 
 -spec update_quickcall_endpoints(boolean(), kz_json:objects()) -> kz_json:objects().
 update_quickcall_endpoints(AutoAnswer, [Endpoint]) ->
@@ -402,10 +357,10 @@ set_quickcall_outbound_call_id(Endpoint) ->
     kz_json:set_value(<<"Outbound-Call-ID">>, CallId, Endpoint).
 
 -spec get_application_data(cb_context:context()) -> kz_json:object().
--spec get_application_data_from_nouns(req_nouns()) -> kz_json:object().
 get_application_data(Context) ->
     get_application_data_from_nouns(cb_context:req_nouns(Context)).
 
+-spec get_application_data_from_nouns(req_nouns()) -> kz_json:object().
 get_application_data_from_nouns(?DEVICES_QCALL_NOUNS(_DeviceId, Number)) ->
     kz_json:from_list([{<<"Route">>, Number}]);
 get_application_data_from_nouns(?USERS_QCALL_NOUNS(_UserId, Number)) ->
@@ -427,21 +382,21 @@ get_timeout(Context) ->
 get_ignore_early_media(Context) ->
     kz_term:is_true(cb_context:req_value(Context, <<"ignore-early-media">>, 'true')).
 
--spec get_media(cb_context:context()) -> ne_binary().
+-spec get_media(cb_context:context()) -> kz_term:ne_binary().
 get_media(Context) ->
     case cb_context:req_value(Context, <<"media">>) of
         <<"bypass">> -> <<"bypass">>;
         _Else -> <<"process">>
     end.
 
--spec get_cid_name(cb_context:context(), api_binary()) -> api_binary().
+-spec get_cid_name(cb_context:context(), kz_term:api_binary()) -> kz_term:api_binary().
 get_cid_name(Context, Default) ->
     case cb_context:req_value(Context, <<"cid-name">>, Default) of
         'undefined' -> 'undefined';
         CIDName -> kz_util:uri_decode(CIDName)
     end.
 
--spec get_cid_number(cb_context:context(), api_binary()) -> api_binary().
+-spec get_cid_number(cb_context:context(), kz_term:api_binary()) -> kz_term:api_binary().
 get_cid_number(Context, Default) ->
     case cb_context:req_value(Context, <<"cid-number">>, Default) of
         'undefined' -> 'undefined';
@@ -455,7 +410,7 @@ get_cid_number(Context, Default) ->
 %% it has an extension (for the associated content type)
 %% @end
 %%--------------------------------------------------------------------
--spec attachment_name(binary(), text()) -> ne_binary().
+-spec attachment_name(binary(), kz_term:text()) -> kz_term:ne_binary().
 attachment_name(Filename, CT) ->
     Generators = [fun(A) ->
                           case kz_term:is_empty(A) of
@@ -473,17 +428,21 @@ attachment_name(Filename, CT) ->
                  ],
     lists:foldl(fun(F, A) -> F(A) end, Filename, Generators).
 
--spec parse_media_type(ne_binary()) ->
-                              {'error', 'badarg'} |
-                              media_values().
+-spec parse_media_type(kz_term:ne_binary()) -> media_values() |
+                                               {'error', 'badarg'}.
 parse_media_type(MediaType) ->
-    cowboy_http:nonempty_list(MediaType, fun cowboy_http:media_range/2).
+    try cow_http_hd:parse_accept(MediaType)
+    catch
+        _E:_R ->
+            lager:debug("failed to parse ~p: ~s: ~p", [MediaType, _E, _R]),
+            {'error', 'badarg'}
+    end.
 
--spec bucket_name(cb_context:context()) -> ne_binary().
--spec bucket_name(api_ne_binary(), api_ne_binary()) -> ne_binary().
+-spec bucket_name(cb_context:context()) -> kz_term:ne_binary().
 bucket_name(Context) ->
     bucket_name(cb_context:client_ip(Context), cb_context:account_id(Context)).
 
+-spec bucket_name(kz_term:api_ne_binary(), kz_term:api_ne_binary()) -> kz_term:ne_binary().
 bucket_name('undefined', 'undefined') ->
     <<"no_ip/no_account">>;
 bucket_name(IP, 'undefined') ->
@@ -493,13 +452,12 @@ bucket_name('undefined', AccountId) ->
 bucket_name(IP, AccountId) ->
     <<IP/binary, "/", AccountId/binary>>.
 
--spec token_cost(cb_context:context()) -> non_neg_integer().
--spec token_cost(cb_context:context(), non_neg_integer() | kz_json:path()) -> non_neg_integer().
--spec token_cost(cb_context:context(), non_neg_integer(), kz_json:path()) -> non_neg_integer().
 
+-spec token_cost(cb_context:context()) -> non_neg_integer().
 token_cost(Context) ->
     token_cost(Context, 1).
 
+-spec token_cost(cb_context:context(), non_neg_integer() | kz_json:path()) -> non_neg_integer().
 token_cost(Context, <<_/binary>> = Suffix) ->
     token_cost(Context, 1, [Suffix]);
 token_cost(Context, [_|_]=Suffix) ->
@@ -507,6 +465,7 @@ token_cost(Context, [_|_]=Suffix) ->
 token_cost(Context, Default) ->
     token_cost(Context, Default, []).
 
+-spec token_cost(cb_context:context(), non_neg_integer(), kz_json:path()) -> non_neg_integer().
 token_cost(Context, Default, Suffix) when is_integer(Default), Default >= 0 ->
     Costs = kapps_config:get_integer(?CONFIG_CAT, <<"token_costs">>, 1),
     find_token_cost(Costs
@@ -522,7 +481,7 @@ token_cost(Context, Default, Suffix) when is_integer(Default), Default >= 0 ->
                      ,kz_json:path()
                      ,req_nouns()
                      ,http_method()
-                     ,api_ne_binary()
+                     ,kz_term:api_ne_binary()
                      ) ->
                              integer() | Default.
 find_token_cost(N, _Default, _Suffix, _Nouns, _ReqVerb, _AccountId) when is_integer(N) ->
@@ -571,7 +530,7 @@ remove_plaintext_password(Context) ->
     cb_context:set_doc(Context, Doc).
 
 %% @public
--spec validate_number_ownership(ne_binaries(), cb_context:context()) ->
+-spec validate_number_ownership(kz_term:ne_binaries(), cb_context:context()) ->
                                        cb_context:context().
 validate_number_ownership(Numbers, Context) ->
     Options = [{'auth_by', cb_context:auth_account_id(Context)}],
@@ -585,8 +544,8 @@ validate_number_ownership(Numbers, Context) ->
             cb_context:add_system_error(403, 'forbidden', Message, Context)
     end.
 
--spec validate_number_ownership_fold(knm_numbers:num(), knm_numbers:ko(), ne_binaries()) ->
-                                            ne_binaries().
+-spec validate_number_ownership_fold(knm_numbers:num(), knm_numbers:ko(), kz_term:ne_binaries()) ->
+                                            kz_term:ne_binaries().
 validate_number_ownership_fold(_, Reason, Unauthorized) when is_atom(Reason) ->
     %% Ignoring atom reasons, i.e. 'not_found' or 'not_reconcilable'
     Unauthorized;
@@ -596,13 +555,13 @@ validate_number_ownership_fold(Number, ReasonJObj, Unauthorized) ->
         _ -> Unauthorized
     end.
 
--type assignment_to_apply() :: {ne_binary(), api_binary()}.
+-type assignment_to_apply() :: {kz_term:ne_binary(), kz_term:api_binary()}.
 -type assignments_to_apply() :: [assignment_to_apply()].
--type port_req_assignment() :: {ne_binary(), api_binary(), kz_json:object()}.
+-type port_req_assignment() :: {kz_term:ne_binary(), kz_term:api_binary(), kz_json:object()}.
 -type port_req_assignments() :: [port_req_assignment()].
--type assignment_update() :: {ne_binary(), knm_number:knm_number_return()} |
-                             {ne_binary(), {'ok', kz_json:object()}} |
-                             {ne_binary(), {'error', any()}}.
+-type assignment_update() :: {kz_term:ne_binary(), knm_number:knm_number_return()} |
+                             {kz_term:ne_binary(), {'ok', kz_json:object()}} |
+                             {kz_term:ne_binary(), {'error', any()}}.
 -type assignment_updates() :: [assignment_update()].
 
 -spec apply_assignment_updates(assignments_to_apply(), cb_context:context()) ->
@@ -641,7 +600,7 @@ assign_to_port_number(PRUpdates) ->
      || {Num, Assign, JObj} <- PRUpdates
     ].
 
--spec maybe_assign_to_app(assignments_to_apply(), ne_binary()) ->
+-spec maybe_assign_to_app(assignments_to_apply(), kz_term:ne_binary()) ->
                                  assignment_updates().
 maybe_assign_to_app(NumUpdates, AccountId) ->
     Options = [{'auth_by', AccountId}],
@@ -651,7 +610,7 @@ maybe_assign_to_app(NumUpdates, AccountId) ->
                       format_assignment_results(Results) ++ Acc
               end, [], Groups).
 
--type assign_to_groups() :: #{api_binary() => ne_binaries()}.
+-type assign_to_groups() :: #{kz_term:api_binary() => kz_term:ne_binaries()}.
 
 -spec group_by_assign_to(assignments_to_apply()) -> assign_to_groups().
 group_by_assign_to(NumUpdates) ->
@@ -696,7 +655,7 @@ log_assignment_update({DID, {'ok', _Number}}) ->
 log_assignment_update({DID, {'error', E}}) ->
     lager:debug("failed to update ~s: ~p", [DID, E]).
 
--spec normalize_media_upload(cb_context:context(), ne_binary(), ne_binary(), kz_json:object(), kz_media_util:normalization_options()) ->
+-spec normalize_media_upload(cb_context:context(), kz_term:ne_binary(), kz_term:ne_binary(), kz_json:object(), kz_media_util:normalization_options()) ->
                                     {cb_context:context(), kz_json:object()}.
 normalize_media_upload(Context, FromExt, ToExt, FileJObj, NormalizeOptions) ->
     NormalizedResult = kz_media_util:normalize_media(FromExt
@@ -706,7 +665,7 @@ normalize_media_upload(Context, FromExt, ToExt, FileJObj, NormalizeOptions) ->
                                                     ),
     handle_normalized_upload(Context, FileJObj, ToExt, NormalizedResult).
 
--spec handle_normalized_upload(cb_context:context(), kz_json:object(), ne_binary(), kz_media_util:normalized_media()) ->
+-spec handle_normalized_upload(cb_context:context(), kz_json:object(), kz_term:ne_binary(), kz_media_util:normalized_media()) ->
                                       {cb_context:context(), kz_json:object()}.
 handle_normalized_upload(Context, FileJObj, ToExt, {'ok', Contents}) ->
     lager:debug("successfully normalized to ~s", [ToExt]),
@@ -734,3 +693,24 @@ handle_normalized_upload(Context, FileJObj, ToExt, {'error', _R}) ->
     UpdatedDoc = kz_json:set_value(<<"normalization_error">>, Reason, cb_context:doc(Context)),
     UpdatedContext = cb_context:set_doc(Context, UpdatedDoc),
     {UpdatedContext, FileJObj}.
+
+%% Before, we used cb_context:req_value/2 which searched "data" then the envelope
+%% but we want "action" on the envelope to be respected for these PUTs against
+%% /channels or /conferences, so we reverse the order here (just in case people are
+%% only putting "action" in "data"
+-spec get_request_action(cb_context:context()) -> kz_term:api_ne_binary().
+get_request_action(Context) ->
+    kz_json:find(<<"action">>, [cb_context:req_json(Context)
+                               ,cb_context:req_data(Context)
+                               ]
+                ).
+
+-spec normalize_alphanum_name(kz_term:api_binary() | cb_context:context()) -> cb_context:context() | kz_term:api_binary().
+normalize_alphanum_name('undefined') ->
+    'undefined';
+normalize_alphanum_name(Name) when is_binary(Name) ->
+    re:replace(kz_term:to_lower_binary(Name), <<"[^a-z0-9]">>, <<>>, [global, {return, binary}]);
+normalize_alphanum_name(Context) ->
+    Doc = cb_context:doc(Context),
+    Name = kz_json:get_ne_binary_value(<<"name">>, Doc),
+    cb_context:set_doc(Context, kz_json:set_value(<<"pvt_alphanum_name">>, normalize_alphanum_name(Name), Doc)).

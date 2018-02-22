@@ -46,7 +46,7 @@ If you feel that this system secret is compromised, use this API to reset it.
 ```shell
 curl -v -X PUT \
     -H "X-Auth-Token: {AUTH_TOKEN}" \
-    -d '{ "action": "reset_signature_secret", "data": {} }'
+    -d '{ "action": "reset_signature_secret", "data": {} }' \
     http://{SERVER}:8000/v2/auth
 ```
 
@@ -73,7 +73,7 @@ If you feel that an account or a user secret is compromised, use this API to res
 
 > **Caution:** Resetting signature secret will invalidate user's issued token! In other words if the user is already login, it will be logout from the system and can't make any further request until login again.
 
-> **Note:** Only an account admin can a user's secret!
+> **Note:** Only the user or an account admin can reset the user's secret.
 
 ##### To Reset an Account Signature Secret
 
@@ -82,8 +82,21 @@ If you feel that an account or a user secret is compromised, use this API to res
 ```shell
 curl -v -X PUT \
     -H "X-Auth-Token: {AUTH_TOKEN}" \
-    -d '{ "action": "reset_signature_secret", "data": {} }'
+    -d '{ "action": "reset_signature_secret", "data": {} }' \
     http://{SERVER}:8000/v2/accounts/290ac723eb6e73dd4a0adcd77785e04e/auth
+```
+
+#### Request a new token while current token is still valid
+
+> **Note:** This will fail if your password or User Signature Secret is reset.
+
+> PUT /v2/auth
+
+```shell
+curl -v -X PUT \
+    -H "X-Auth-Token: {AUTH_TOKEN}" \
+    -d '{ "action": "refresh_token", "data": {} }'
+    http://{SERVER}:8000/v2/auth
 ```
 
 ##### To Reset a User Signature Secret
@@ -93,7 +106,7 @@ curl -v -X PUT \
 ```shell
 curl -v -X PUT \
     -H "X-Auth-Token: {AUTH_TOKEN}" \
-    -d '{ "action": "reset_signature_secret", "data": {} }'
+    -d '{ "action": "reset_signature_secret", "data": {} }' \
     http://{SERVER}:8000/v2/accounts/290ac723eb6e73dd4a0adcd77785e04e/users/3bedb94b3adfc4873a548b41d28778b5/auth
 ```
 

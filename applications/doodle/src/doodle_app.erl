@@ -1,5 +1,5 @@
 %%%-------------------------------------------------------------------
-%%% @copyright (C) 2017, 2600Hz
+%%% @copyright (C) 2018, 2600Hz
 %%% @doc
 %%%
 %%% @end
@@ -10,6 +10,7 @@
 -behaviour(application).
 
 -include("doodle.hrl").
+-define(ACCOUNT_CRAWLER_BINDING, <<"tasks.account_crawler">>).
 
 -export([start/2, stop/1]).
 
@@ -19,7 +20,7 @@
 %% Implement the application start behaviour
 %% @end
 %%--------------------------------------------------------------------
--spec start(application:start_type(), any()) -> startapp_ret().
+-spec start(application:start_type(), any()) -> kz_types:startapp_ret().
 start(_Type, _Args) ->
     _ = declare_exchanges(),
     case kapps_config:get_json(?CONFIG_CAT, <<"reschedule">>) =:= undefined
@@ -29,6 +30,10 @@ start(_Type, _Args) ->
         {'error', Err} -> lager:error("default sms is undefined and cannot read default from file: ~p", [Err]);
         JObj -> kapps_config:set(?CONFIG_CAT, <<"reschedule">>, JObj)
     end,
+    lager:debug("Start listening for tasks.account_crawler trigger"),
+    _ = kazoo_bindings:bind(?ACCOUNT_CRAWLER_BINDING,
+                            'doodle_maintenance',
+                            'start_check_sms_by_account'),
     doodle_sup:start_link().
 
 %%--------------------------------------------------------------------
@@ -37,6 +42,9 @@ start(_Type, _Args) ->
 %%--------------------------------------------------------------------
 -spec stop(any()) -> any().
 stop(_State) ->
+    _ = kazoo_bindings:unbind(?ACCOUNT_CRAWLER_BINDING,
+                              'doodle_maintenance',
+                              'start_check_sms_by_account'),
     'ok'.
 
 -spec declare_exchanges() -> 'ok'.

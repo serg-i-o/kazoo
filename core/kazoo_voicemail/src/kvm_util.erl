@@ -1,5 +1,5 @@
 %%%-------------------------------------------------------------------
-%%% @copyright (C) 2017, 2600Hz
+%%% @copyright (C) 2018, 2600Hz
 %%% @doc
 %%% Voice mailbox utility functions
 %%% @end
@@ -9,15 +9,16 @@
 -module(kvm_util).
 
 -export([get_db/1, get_db/2
-        ,get_range_db/1, get_range_db/2, create_range_dbs/2
+        ,get_range_db/1, get_range_db/2, split_to_modbs/2
         ,open_modb_doc/3, open_accountdb_doc/3
         ,check_doc_type/3
 
         ,check_msg_belonging/2
         ,get_change_vmbox_funs/4, get_change_vmbox_funs/5
 
+        ,retention_days/1
         ,retention_seconds/0, retention_seconds/1
-        ,maybe_set_deleted_by_retention/1, maybe_set_deleted_by_retention/2
+        ,enforce_retention/1, enforce_retention/2, is_prior_to_retention/2
 
         ,publish_saved_notify/5, publish_voicemail_saved/5
         ,get_notify_completed_message/1
@@ -31,12 +32,12 @@
 %% @doc Generate database name based on DocId
 %% @end
 %%--------------------------------------------------------------------
--spec get_db(ne_binary()) -> ne_binary().
--spec get_db(ne_binary(), kazoo_data:docid() | kz_json:object()) -> ne_binary().
--spec get_db(ne_binary(), ne_binary(), ne_binary()) -> ne_binary().
+
+-spec get_db(kz_term:ne_binary()) -> kz_term:ne_binary().
 get_db(AccountId) ->
     kz_util:format_account_db(AccountId).
 
+-spec get_db(kz_term:ne_binary(), kazoo_data:docid() | kz_json:object()) -> kz_term:ne_binary().
 get_db(AccountId, {_, ?MATCH_MODB_PREFIX(Year, Month, _)}) ->
     get_db(AccountId, Year, Month);
 get_db(AccountId, ?MATCH_MODB_PREFIX(Year, Month, _)) ->
@@ -46,6 +47,7 @@ get_db(AccountId, ?NE_BINARY = _DocId) ->
 get_db(AccountId, Doc) ->
     get_db(AccountId, kz_doc:id(Doc)).
 
+-spec get_db(kz_term:ne_binary(), kz_term:ne_binary(), kz_term:ne_binary()) -> kz_term:ne_binary().
 get_db(AccountId, Year, Month) ->
     kazoo_modb:get_modb(AccountId, kz_term:to_integer(Year), kz_term:to_integer(Month)).
 
@@ -54,29 +56,30 @@ get_db(AccountId, Year, Month) ->
 %% @doc Generate a range of database names
 %% @end
 %%--------------------------------------------------------------------
--spec get_range_db(ne_binary()) -> ne_binaries().
--spec get_range_db(ne_binary(), pos_integer()) -> ne_binaries().
+
+-spec get_range_db(kz_term:ne_binary()) -> {kz_time:gregorian_seconds(), kz_time:gregorian_seconds(), kz_term:ne_binaries()}.
 get_range_db(AccountId) ->
-    get_range_db(AccountId, ?RETENTION_DAYS).
+    get_range_db(AccountId, retention_days(AccountId)).
 
+-spec get_range_db(kz_term:ne_binary(), pos_integer()) -> {kz_time:gregorian_seconds(), kz_time:gregorian_seconds(), kz_term:ne_binaries()}.
 get_range_db(AccountId, Days) ->
-    To = kz_time:current_tstamp(),
+    To = kz_time:now_s(),
     From = To - retention_seconds(Days),
-    lists:reverse([Db || Db <- kazoo_modb:get_range(AccountId, From, To)]).
+    {From, To, lists:reverse([Db || Db <- kazoo_modb:get_range(AccountId, From, To)])}.
 
--spec create_range_dbs(ne_binary(), ne_binaries()) -> dict:dict().
-create_range_dbs(AccountId, MsgIds) ->
-    lists:foldl(fun(Id, Acc) ->
+-spec split_to_modbs(kz_term:ne_binary(), kz_term:ne_binaries()) -> map().
+split_to_modbs(AccountId, MsgIds) ->
+    lists:foldl(fun(Id, Map) ->
                         Db = get_db(AccountId, Id),
-                        dict:append(Db, Id, Acc)
-                end, dict:new(), MsgIds).
+                        maps:update_with(Db, fun(List) -> [Id|List] end, [Id], Map)
+                end, #{}, MsgIds).
 
 %%--------------------------------------------------------------------
 %% @public
 %% @doc
 %% @end
 %%--------------------------------------------------------------------
--spec open_modb_doc(ne_binary(), kazoo_data:docid(), ne_binary()) -> db_ret().
+-spec open_modb_doc(kz_term:ne_binary(), kazoo_data:docid(), kz_term:ne_binary()) -> db_ret().
 open_modb_doc(AccountId, DocId, Type) ->
     case kazoo_modb:open_doc(AccountId, DocId) of
         {'ok', JObj}-> check_doc_type(JObj, Type, kz_doc:type(JObj));
@@ -88,7 +91,7 @@ open_modb_doc(AccountId, DocId, Type) ->
 %% @doc
 %% @end
 %%--------------------------------------------------------------------
--spec open_accountdb_doc(ne_binary(), kazoo_data:docid(), ne_binary()) -> db_ret().
+-spec open_accountdb_doc(kz_term:ne_binary(), kazoo_data:docid(), kz_term:ne_binary()) -> db_ret().
 open_accountdb_doc(AccountId, DocId, Type) ->
     case kz_datamgr:open_doc(get_db(AccountId), DocId) of
         {'ok', JObj} -> check_doc_type(JObj, Type, kz_doc:type(JObj));
@@ -101,7 +104,7 @@ open_accountdb_doc(AccountId, DocId, Type) ->
 %% (especially for requests from crossbar)
 %% @end
 %%--------------------------------------------------------------------
--spec check_doc_type(kz_json:object(), ne_binary(), ne_binary()) -> db_ret().
+-spec check_doc_type(kz_json:object(), kz_term:ne_binary(), kz_term:ne_binary()) -> db_ret().
 check_doc_type(Doc, Type, Type) ->
     {'ok', Doc};
 check_doc_type(_Doc, _ExpectedType, _DocType) ->
@@ -113,11 +116,12 @@ check_doc_type(_Doc, _ExpectedType, _DocType) ->
 %% @doc
 %% @end
 %%--------------------------------------------------------------------
--spec check_msg_belonging(api_ne_binary(), kz_json:object()) -> boolean().
--spec check_msg_belonging(api_ne_binary(), kz_json:object(), api_ne_binary()) -> boolean().
+
+-spec check_msg_belonging(kz_term:api_ne_binary(), kz_json:object()) -> boolean().
 check_msg_belonging(BoxId, JObj) ->
     check_msg_belonging(BoxId, JObj, kzd_box_message:source_id(JObj)).
 
+-spec check_msg_belonging(kz_term:api_ne_binary(), kz_json:object(), kz_term:api_ne_binary()) -> boolean().
 check_msg_belonging(_BoxId, _JObj, 'undefined') -> 'true';
 check_msg_belonging('undefined', _JObj, _SourceId) -> 'true';
 check_msg_belonging(BoxId, _JObj, BoxId) -> 'true';
@@ -131,13 +135,25 @@ check_msg_belonging(_BoxId, _JObj, _SourceId) ->
 %% @doc
 %% @end
 %%--------------------------------------------------------------------
--spec retention_seconds() -> pos_integer().
--spec retention_seconds(pos_integer()) -> pos_integer().
+-spec retention_seconds() -> kz_time:gregorian_seconds().
 retention_seconds() ->
     retention_seconds(?RETENTION_DAYS).
 
-retention_seconds(Days) ->
-    ?SECONDS_IN_DAY * Days + ?SECONDS_IN_HOUR.
+-spec retention_seconds(integer() | kz_term:api_binary()) -> kz_time:gregorian_seconds().
+retention_seconds(Days) when is_integer(Days)
+                             andalso Days > 0 ->
+    ?SECONDS_IN_DAY * Days + ?SECONDS_IN_HOUR;
+retention_seconds(?NE_BINARY=AccountId) ->
+    retention_seconds(retention_days(AccountId));
+retention_seconds(_) ->
+    retention_seconds(?RETENTION_DAYS).
+
+-spec retention_days(kz_term:ne_binary()) -> integer().
+retention_days(AccountId) ->
+    case kapps_account_config:get_pos_integer(AccountId, ?CF_CONFIG_CAT, [?KEY_VOICEMAIL, ?KEY_RETENTION_DURATION]) of
+        'undefined' -> ?RETENTION_DAYS;
+        Days -> try kz_term:to_integer(Days) catch _:_ -> ?RETENTION_DAYS end
+    end.
 
 %%--------------------------------------------------------------------
 %% @private
@@ -145,35 +161,46 @@ retention_seconds(Days) ->
 %% if message is older than retention duration, set folder to deleted
 %% @end
 %%--------------------------------------------------------------------
--spec maybe_set_deleted_by_retention(kz_json:object()) -> kz_json:object().
--spec maybe_set_deleted_by_retention(kz_json:object(), pos_integer()) -> kz_json:object().
-maybe_set_deleted_by_retention(JObj) ->
-    maybe_set_deleted_by_retention(JObj, retention_seconds()).
+-spec enforce_retention(kz_json:object()) -> kz_json:object().
+enforce_retention(JObj) ->
+    enforce_retention(JObj, kz_time:now_s() - retention_seconds(kz_doc:account_id(JObj))).
 
-maybe_set_deleted_by_retention(JObj, Timestamp) ->
-    TsTampPath = [<<"utc_seconds">>, <<"timestamp">>],
-    MsgTstamp = kz_term:to_integer(kz_json:get_first_defined(TsTampPath, JObj, 0)),
-    case MsgTstamp =/= 0
-        andalso MsgTstamp < Timestamp
-    of
-        'true' -> kzd_box_message:set_folder_deleted(JObj);
-        'false' -> JObj
+-spec enforce_retention(kz_json:object(), kz_time:gregorian_seconds() | boolean()) -> kz_json:object().
+enforce_retention(JObj, RetentionTimestamp)
+  when is_integer(RetentionTimestamp) ->
+    enforce_retention(JObj, is_prior_to_retention(JObj, RetentionTimestamp));
+enforce_retention(JObj, 'false') ->
+    JObj;
+enforce_retention(JObj, 'true') ->
+    case kzd_box_message:metadata(JObj) of
+        'undefined' -> kzd_box_message:set_folder_deleted(JObj);
+        Metadata ->
+            kzd_box_message:set_metadata(kzd_box_message:set_folder_deleted(Metadata), JObj)
     end.
+
+-spec is_prior_to_retention(kz_json:object(), kz_time:api_seconds()) -> boolean().
+is_prior_to_retention(_, 'undefined') ->
+    'false';
+is_prior_to_retention(JObj, RetentionTimestamp) ->
+    TsTampPath = [<<"utc_seconds">>, <<"timestamp">>, [<<"metadata">>, <<"timestamp">>], <<"pvt_create">>],
+    MsgTstamp = kz_term:to_integer(kz_json:get_first_defined(TsTampPath, JObj, 0)),
+    MsgTstamp =/= 0
+        andalso MsgTstamp < RetentionTimestamp.
 
 %%--------------------------------------------------------------------
 %% @public
 %% @doc
 %% @end
 %%--------------------------------------------------------------------
--spec get_change_vmbox_funs(ne_binary(), ne_binary(), kz_json:object(), ne_binary()) ->
-                                   {ne_binary(), update_funs()}.
+-spec get_change_vmbox_funs(kz_term:ne_binary(), kz_term:ne_binary(), kz_json:object(), kz_term:ne_binary()) ->
+                                   {kz_term:ne_binary(), update_funs()}.
 get_change_vmbox_funs(AccountId, NewBoxId, NBoxJ, OldBoxId) ->
     get_change_vmbox_funs(AccountId, NewBoxId, NBoxJ, OldBoxId, 'undefined').
 
--spec get_change_vmbox_funs(ne_binary(), ne_binary(), kz_json:object(), ne_binary(), api_binary()) ->
-                                   {ne_binary(), update_funs()}.
+-spec get_change_vmbox_funs(kz_term:ne_binary(), kz_term:ne_binary(), kz_json:object(), kz_term:ne_binary(), kz_term:api_binary()) ->
+                                   {kz_term:ne_binary(), update_funs()}.
 get_change_vmbox_funs(AccountId, NewBoxId, NBoxJ, OldBoxId, ToId) ->
-    Timestamp = kz_time:current_tstamp(),
+    Timestamp = kz_time:now_s(),
     {{Y, M, _}, _} = calendar:gregorian_seconds_to_datetime(Timestamp),
     Year = kz_term:to_binary(Y),
     Month = kz_date:pad_month(M),
@@ -204,7 +231,7 @@ get_change_vmbox_funs(AccountId, NewBoxId, NBoxJ, OldBoxId, ToId) ->
 %% @doc
 %% @end
 %%--------------------------------------------------------------------
--spec get_caller_id_name(kapps_call:call()) -> ne_binary().
+-spec get_caller_id_name(kapps_call:call()) -> kz_term:ne_binary().
 get_caller_id_name(Call) ->
     CallerIdName = kapps_call:caller_id_name(Call),
     case kapps_call:kvs_fetch('prepend_cid_name', Call) of
@@ -219,7 +246,7 @@ get_caller_id_name(Call) ->
 %% @doc
 %% @end
 %%--------------------------------------------------------------------
--spec get_caller_id_number(kapps_call:call()) -> ne_binary().
+-spec get_caller_id_number(kapps_call:call()) -> kz_term:ne_binary().
 get_caller_id_number(Call) ->
     CallerIdNumber = kapps_call:caller_id_number(Call),
     case kapps_call:kvs_fetch('prepend_cid_number', Call) of
@@ -238,7 +265,7 @@ get_caller_id_number(Call) ->
 %% @doc
 %% @end
 %%--------------------------------------------------------------------
--spec publish_saved_notify(ne_binary(), ne_binary(), kapps_call:call(), pos_integer(), kz_proplist()) ->
+-spec publish_saved_notify(kz_term:ne_binary(), kz_term:ne_binary(), kapps_call:call(), pos_integer(), kz_term:proplist()) ->
                                   kz_amqp_worker:request_return().
 publish_saved_notify(MediaId, BoxId, Call, Length, Props) ->
     MaybeTranscribe = props:get_value(<<"Transcribe-Voicemail">>, Props, 'false'),
@@ -254,7 +281,7 @@ publish_saved_notify(MediaId, BoxId, Call, Length, Props) ->
                  ,{<<"Voicemail-ID">>, MediaId}
                  ,{<<"Caller-ID-Number">>, get_caller_id_number(Call)}
                  ,{<<"Caller-ID-Name">>, get_caller_id_name(Call)}
-                 ,{<<"Voicemail-Timestamp">>, kz_time:current_tstamp()}
+                 ,{<<"Voicemail-Timestamp">>, kz_time:now_s()}
                  ,{<<"Voicemail-Length">>, Length}
                  ,{<<"Voicemail-Transcription">>, Transcription}
                  ,{<<"Call-ID">>, kapps_call:call_id_direct(Call)}
@@ -269,7 +296,7 @@ publish_saved_notify(MediaId, BoxId, Call, Length, Props) ->
 %% @doc
 %% @end
 %%--------------------------------------------------------------------
--spec publish_voicemail_saved(pos_integer(), ne_binary(), kapps_call:call(), ne_binary(), gregorian_seconds()) -> 'ok'.
+-spec publish_voicemail_saved(pos_integer(), kz_term:ne_binary(), kapps_call:call(), kz_term:ne_binary(), kz_time:gregorian_seconds()) -> 'ok'.
 publish_voicemail_saved(Length, BoxId, Call, MediaId, Timestamp) ->
     Prop = [{<<"From-User">>, kapps_call:from_user(Call)}
            ,{<<"From-Realm">>, kapps_call:from_realm(Call)}
@@ -294,11 +321,12 @@ publish_voicemail_saved(Length, BoxId, Call, MediaId, Timestamp) ->
 %% @doc
 %% @end
 %%--------------------------------------------------------------------
+
 -spec get_notify_completed_message(kz_json:objects()) -> kz_json:object().
--spec get_notify_completed_message(kz_json:objects(), kz_json:object()) -> kz_json:object().
 get_notify_completed_message(JObjs) ->
     get_notify_completed_message(JObjs, kz_json:new()).
 
+-spec get_notify_completed_message(kz_json:objects(), kz_json:object()) -> kz_json:object().
 get_notify_completed_message([], Acc) -> Acc;
 get_notify_completed_message([JObj|JObjs], Acc) ->
     case kz_json:get_value(<<"Status">>, JObj) of
@@ -315,8 +343,8 @@ get_notify_completed_message([JObj|JObjs], Acc) ->
 %% @doc
 %% @end
 %%--------------------------------------------------------------------
--spec maybe_transcribe(ne_binary(), ne_binary(), boolean()) -> api_object().
--spec maybe_transcribe(ne_binary(), kz_json:object(), binary(), api_binary()) -> api_object().
+
+-spec maybe_transcribe(kz_term:ne_binary(), kz_term:ne_binary(), boolean()) -> kz_term:api_object().
 maybe_transcribe(AccountId, MediaId, 'true') ->
     Db = get_db(AccountId, MediaId),
     {'ok', MediaDoc} = kz_datamgr:open_doc(Db, MediaId),
@@ -337,6 +365,7 @@ maybe_transcribe(AccountId, MediaId, 'true') ->
     end;
 maybe_transcribe(_, _, 'false') -> 'undefined'.
 
+-spec maybe_transcribe(kz_term:ne_binary(), kz_json:object(), binary(), kz_term:api_binary()) -> kz_term:api_object().
 maybe_transcribe(_, _, _, 'undefined') -> 'undefined';
 maybe_transcribe(_, _, <<>>, _) -> 'undefined';
 maybe_transcribe(Db, MediaDoc, Bin, ContentType) ->
@@ -354,7 +383,7 @@ maybe_transcribe(Db, MediaDoc, Bin, ContentType) ->
             'undefined'
     end.
 
--spec is_valid_transcription(api_binary(), binary(), kz_json:object()) -> api_object().
+-spec is_valid_transcription(kz_term:api_binary(), binary(), kz_json:object()) -> kz_term:api_object().
 is_valid_transcription(<<"success">>, ?NE_BINARY, Resp) -> Resp;
 is_valid_transcription(_Res, _Txt, _) ->
     lager:info("not valid transcription: ~s: '~s'", [_Res, _Txt]),

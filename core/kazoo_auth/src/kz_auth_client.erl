@@ -1,5 +1,5 @@
 %%%-------------------------------------------------------------------
-%%% @copyright (C) 2012-2017, 2600Hz, INC
+%%% @copyright (C) 2012-2018, 2600Hz, INC
 %%% @doc
 %%%
 %%% @end
@@ -19,11 +19,11 @@
         ]).
 
 
--spec token_for_auth_id(ne_binary()) -> {ok | error, map()}.
+-spec token_for_auth_id(kz_term:ne_binary()) -> {ok | error, map()}.
 token_for_auth_id(AuthId) ->
     token_for_auth_id(AuthId, #{}).
 
--spec token_for_auth_id(ne_binary(), map()) -> {ok | error, map()}.
+-spec token_for_auth_id(kz_term:ne_binary(), map()) -> {ok | error, map()}.
 token_for_auth_id(AuthId, Options) ->
     Map = #{options => Options#{auth_id => AuthId}},
     Routines = [fun add_subject/1
@@ -40,11 +40,11 @@ token_for_auth_id(AuthId, Options) ->
     kz_auth_util:run(Map, Routines).
 
 
--spec token_for_app(ne_binary()) -> {ok | error, map()}.
+-spec token_for_app(kz_term:ne_binary()) -> {ok | error, map()}.
 token_for_app(AppId) ->
     token_for_app(AppId, #{}).
 
--spec token_for_app(ne_binary(), map()) -> {ok | error, map()}.
+-spec token_for_app(kz_term:ne_binary(), map()) -> {ok | error, map()}.
 token_for_app(AppId, Options) ->
     Map = #{app_id => AppId
            ,options => Options
@@ -201,6 +201,9 @@ authorization_header(#{token := #{token_type := TokenType
     Map#{token => Token#{authorization => Authorization}};
 authorization_header(Map) -> Map.
 
+request_token(#{subject := #{pvt_static_token := JObj}}=Map) ->
+    M = kz_maps:keys_to_atoms(kz_json:to_map(JObj)),
+    Map#{token => M};
 request_token(#{subject := #{pvt_refresh_token := Token}}=Map) ->
     refresh_token_flow(Map#{refresh_token => Token});
 request_token(Map) ->
@@ -275,7 +278,8 @@ refresh_token_flow(#{auth_app := #{name := AppId
              ,{"refresh_token",kz_term:to_list(RefreshToken)}
              ],
     Body = string:join(lists:append(lists:map(fun({K,V}) -> [string:join([K,V], "=")] end, Fields)), "&"),
-    case kz_http:post(kz_term:to_list(URL), Headers, Body) of
+    Options = kz_maps:get([options, http_options], Map, []),
+    case kz_http:post(kz_term:to_list(URL), Headers, Body, Options) of
         {'ok', 200, RespHeaders, RespBody} ->
             JObj = kz_json:decode(RespBody),
             M = kz_maps:keys_to_atoms(kz_json:to_map(JObj)),

@@ -1,5 +1,5 @@
 %%%-------------------------------------------------------------------
-%%% @copyright (C) 2014-2017, 2600Hz INC
+%%% @copyright (C) 2014-2018, 2600Hz INC
 %%% @doc
 %%% "data":{
 %%%   "text":"This is what should be said"
@@ -36,6 +36,7 @@ handle(Data, Call) ->
                                    ,kz_json:get_binary_value(<<"engine">>, Data)
                                    ,Call
                                    ),
+    lager:debug("tts is waiting for noop ~s", [NoopId]),
     case cf_util:wait_for_noop(Call, NoopId) of
         {'ok', Call1} ->
             %% Give control back to cf_exe process

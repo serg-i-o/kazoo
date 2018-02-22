@@ -10,40 +10,51 @@
             ],
             "type": "string"
         },
-        "name": {
-            "description": "Friendly name for this configuration",
-            "type": "string"
-        },
         "settings": {
             "description": "AWS API settings",
             "properties": {
                 "bucket": {
                     "description": "Bucket name to store data to",
+                    "maxLength": 63,
+                    "minLength": 6,
+                    "pattern": "^[^\\s]*$",
+                    "type": "string"
+                },
+                "bucket_access_method": {
+                    "description": "how to access the host.",
+                    "enum": [
+                        "auto",
+                        "vhost",
+                        "path"
+                    ],
                     "type": "string"
                 },
                 "bucket_after_host": {
                     "description": "use bucket after host as part of url",
                     "type": "boolean"
                 },
-                "folder_base_path": {
-                    "description": "Base path to use as a prefix when saving files",
-                    "type": "string"
-                },
-                "folder_path": {
-                    "description": "Custom path to use as a prefix when saving files",
-                    "type": "string"
-                },
                 "host": {
-                    "description": "the s3 host",
+                    "description": "the s3 host, leave empty for default",
+                    "minLength": 1,
+                    "pattern": "^[^\\s]*$",
                     "type": "string"
                 },
                 "key": {
                     "description": "AWS Key to use",
+                    "maxLength": 128,
+                    "minLength": 1,
+                    "pattern": "^[^\\s]*$",
                     "type": "string"
                 },
                 "port": {
                     "description": "port to use",
                     "type": "integer"
+                },
+                "region": {
+                    "description": "the region where the bucket is located",
+                    "minLength": 1,
+                    "pattern": "^[^\\s]*$",
+                    "type": "string"
                 },
                 "scheme": {
                     "description": "scheme to use to access host",
@@ -55,6 +66,9 @@
                 },
                 "secret": {
                     "description": "AWS Secret to use",
+                    "maxLength": 128,
+                    "minLength": 1,
+                    "pattern": "^[^\\s]*$",
                     "type": "string"
                 }
             },

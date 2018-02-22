@@ -17,18 +17,40 @@
         },
         "manual_recurring": {
             "description": "Monthly recurring items",
-            "properties": {
-                "name": {
-                    "description": "A friendly name for the item",
-                    "type": "string"
+            "items": {
+                "properties": {
+                    "name": {
+                        "description": "A friendly name for the item",
+                        "type": "string"
+                    },
+                    "quantity": {
+                        "description": "How many of the item are allowed",
+                        "type": "integer"
+                    },
+                    "rates": {
+                        "description": "Item's rate",
+                        "type": "number"
+                    }
                 },
-                "quantity": {
-                    "description": "How many of the item are allowed",
+                "type": "object"
+            },
+            "type": "array"
+        },
+        "merge": {
+            "description": "Optionally defines a strategy and priorty to merge multiple service plans together",
+            "properties": {
+                "priority": {
+                    "description": "The priority among the service plans with the merge strategy",
+                    "minimum": 0,
                     "type": "integer"
                 },
-                "rates": {
-                    "description": "Item's rate",
-                    "type": "number"
+                "strategy": {
+                    "description": "The merge strategy, like strategies are merged together based on their priority",
+                    "enum": [
+                        "simple",
+                        "cumulative"
+                    ],
+                    "type": "string"
                 }
             },
             "type": "object"

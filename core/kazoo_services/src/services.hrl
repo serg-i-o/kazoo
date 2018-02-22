@@ -16,18 +16,17 @@
 
 -type bookkeeper_sync_result() :: 'ok' | 'delinquent' | 'retry'.
 
--define(SUPPORT_BILLING_ID
-       ,kapps_config:get_is_true(?CONFIG_CAT, <<"support_billing_id">>, 'true')).
+-define(MAYBE_RESELLER_BOOKKEEPER_LOOKUP
+       ,kapps_config:get_is_true(?CONFIG_CAT, <<"reseller_bookkeeper_lookup">>, 'false')
+       ).
 
--define(MAYBE_RESELLER_BOOKKEEPER_LOOKUP,
-        kapps_config:get_is_true(?CONFIG_CAT, <<"reseller_bookkeeper_lookup">>, 'false')).
-
--define(KZ_LOOKUP_BOOKKEEPER(ResellerId),
-        kz_term:to_atom(kapps_account_config:get_global(ResellerId
+-define(KZ_LOOKUP_BOOKKEEPER(ResellerId)
+       ,kz_term:to_atom(kapps_account_config:get_global(ResellerId
                                                        ,?CONFIG_CAT
                                                        ,<<"master_account_bookkeeper">>
                                                        ,'kz_bookkeeper_local'
-                                                       ))).
+                                                       ))
+       ).
 
 -ifdef(TEST).
 -define(A_MASTER_ACCOUNT_ID, <<"master_3dd0df9f3b3940b8a972c0e43">>).
@@ -49,18 +48,6 @@
 -define(UNRELATED_ACCOUNT_DB, <<"account%2Fun%2Fre%2Flated_29cae05bd2c7779bc706d5">>).
 
 -define(WRONG_ACCOUNT_ID, <<"non_existing_ae05bd2c7779bc706da">>).
--endif.
-
--ifdef(TEST).
--define(LOG_ERROR(F,A), io:format(user, "~s:~p  " ++ F ++ "\n", [?MODULE,?LINE|A])).
--define(LOG_WARN(F,A), io:format(user, "~s:~p  " ++ F ++ "\n", [?MODULE,?LINE|A])).
--define(LOG_DEBUG(F,A), io:format(user, "~s:~p  " ++ F ++ "\n", [?MODULE,?LINE|A])).
--define(LOG_DEBUG(F), io:format(user, "~s:~p  " ++ F ++ "\n", [?MODULE,?LINE])).
--else.
--define(LOG_ERROR(F,A), lager:error(F,A)).
--define(LOG_WARN(F,A), lager:warning(F,A)).
--define(LOG_DEBUG(F,A), lager:debug(F,A)).
--define(LOG_DEBUG(F), lager:debug(F)).
 -endif.
 
 -define(KAZOO_SERVICES_HRL, 'true').

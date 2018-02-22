@@ -1,5 +1,5 @@
 %%%-------------------------------------------------------------------
-%%% @copyright (C) 2017, 2600Hz INC
+%%% @copyright (C) 2018, 2600Hz INC
 %%% @doc
 %%%
 %%% Multi factor authentication configuration API endpoint
@@ -58,13 +58,13 @@ init() ->
 %%--------------------------------------------------------------------
 -spec authorize(cb_context:context()) ->
                        boolean() |
-                       {'halt', cb_context:context()}.
+                       {'stop', cb_context:context()}.
 authorize(Context) ->
     authorize_system_multi_factor(Context, cb_context:req_nouns(Context), cb_context:req_verb(Context)).
 
 -spec authorize(cb_context:context(), path_token()) ->
                        boolean() |
-                       {'halt', cb_context:context()}.
+                       {'stop', cb_context:context()}.
 authorize(Context, _) ->
     authorize_system_multi_factor(Context, cb_context:req_nouns(Context), cb_context:req_verb(Context)).
 
@@ -73,13 +73,13 @@ authorize(_Context, _, _) -> 'true'.
 
 -spec authorize_system_multi_factor(cb_context:context(), req_nouns(), http_method()) ->
                                            boolean() |
-                                           {'halt', cb_context:context()}.
+                                           {'stop', cb_context:context()}.
 authorize_system_multi_factor(_, [{<<"multi_factor">>, []}], ?HTTP_GET) -> 'true';
 authorize_system_multi_factor(C, [{<<"multi_factor">>, []}], ?HTTP_PUT) -> cb_context:is_superduper_admin(C);
 authorize_system_multi_factor(C, [{<<"multi_factor">>, _}], ?HTTP_GET) -> cb_context:is_superduper_admin(C);
 authorize_system_multi_factor(C, [{<<"multi_factor">>, _}], ?HTTP_POST) -> cb_context:is_superduper_admin(C);
 authorize_system_multi_factor(C, [{<<"multi_factor">>, _}], ?HTTP_PATCH) -> cb_context:is_superduper_admin(C);
-authorize_system_multi_factor(C, [{<<"multi_factor">>, _}], _) -> {'halt', cb_context:add_system_error('forbidden', C)};
+authorize_system_multi_factor(C, [{<<"multi_factor">>, _}], _) -> {'stop', cb_context:add_system_error('forbidden', C)};
 authorize_system_multi_factor(_, _, _) -> 'true'.
 
 %%--------------------------------------------------------------------
@@ -138,12 +138,10 @@ validate(Context) ->
 
 -spec validate(cb_context:context(), path_token()) -> cb_context:context().
 validate(Context, ?ATTEMPTS) ->
-    crossbar_view:load(Context
-                      ,?CB_LIST_ATTEMPT_LOG
-                      ,[{mapper, fun normalize_attempt_view_result/1}
-                       ,{key_map, <<"multi_factor">>}
-                       ]
-                      );
+    Options = [{mapper, crossbar_view:map_value_fun()}
+              ,{'range_keymap', <<"multi_factor">>}
+              ],
+    crossbar_view:load_modb(Context, ?CB_LIST_ATTEMPT_LOG, Options);
 validate(Context, ConfigId) ->
     case cb_context:req_nouns(Context) of
         [{<<"multi_factor">>, _}] ->
@@ -235,7 +233,7 @@ create(Context) ->
 %% Load an instance from the database
 %% @end
 %%--------------------------------------------------------------------
--spec read(ne_binary(), cb_context:context()) -> cb_context:context().
+-spec read(kz_term:ne_binary(), cb_context:context()) -> cb_context:context().
 read(Id, Context) ->
     crossbar_doc:load(Id, Context, ?TYPE_CHECK_OPTION(<<"provider">>)).
 
@@ -246,7 +244,7 @@ read(Id, Context) ->
 %% valid
 %% @end
 %%--------------------------------------------------------------------
--spec update(ne_binary(), cb_context:context()) -> cb_context:context().
+-spec update(kz_term:ne_binary(), cb_context:context()) -> cb_context:context().
 update(Id, Context) ->
     OnSuccess = fun(C) -> on_successful_validation(Id, C) end,
     cb_context:validate_request_data(<<"multi_factor_provider">>, Context, OnSuccess).
@@ -257,7 +255,7 @@ update(Id, Context) ->
 %% Load a login attempt log from MODB
 %% @end
 %%--------------------------------------------------------------------
--spec read_attempt_log(ne_binary(), cb_context:context()) -> cb_context:context().
+-spec read_attempt_log(kz_term:ne_binary(), cb_context:context()) -> cb_context:context().
 read_attempt_log(?MATCH_MODB_PREFIX(YYYY, MM, _) = AttemptId, Context) ->
     Year  = kz_term:to_integer(YYYY),
     Month = kz_term:to_integer(MM),
@@ -270,7 +268,7 @@ read_attempt_log(?MATCH_MODB_PREFIX(YYYY, MM, _) = AttemptId, Context) ->
 %% valid
 %% @end
 %%--------------------------------------------------------------------
--spec validate_patch(ne_binary(), cb_context:context()) -> cb_context:context().
+-spec validate_patch(kz_term:ne_binary(), cb_context:context()) -> cb_context:context().
 validate_patch(Id, Context) ->
     crossbar_doc:patch_and_validate(Id, Context, fun update/2).
 
@@ -283,42 +281,34 @@ validate_patch(Id, Context) ->
 %%--------------------------------------------------------------------
 -spec summary(cb_context:context()) -> cb_context:context().
 summary(Context) ->
-    ViewOptions = [{'startkey', [<<"multi_factor">>]}
-                  ,{'endkey', [<<"multi_factor">>, kz_json:new()]}
-                  ],
-    add_available_providers(
-      crossbar_doc:load_view(<<"auth/providers_by_type">>, ViewOptions, Context, fun normalize_view_results/2)
-     ).
+    Options = [{'startkey', [<<"multi_factor">>]}
+              ,{'endkey', [<<"multi_factor">>, kz_json:new()]}
+              ,{'unchunkable', 'true'}
+              ,{'mapper', fun(JObjs) -> normalize_summary(Context, JObjs) end}
+              ],
+    crossbar_view:load(Context, <<"auth/providers_by_type">>, Options).
 
 system_summary(Context) ->
-    ViewOptions = [{'startkey', [<<"multi_factor">>]}
-                  ,{'endkey', [<<"multi_factor">>, kz_json:new()]}
-                  ],
-    crossbar_doc:load_view(<<"providers/list_by_type">>, ViewOptions, cb_context:set_account_db(Context, ?KZ_AUTH_DB), fun normalize_view_results/2).
+    Options = [{'startkey', [<<"multi_factor">>]}
+              ,{'endkey', [<<"multi_factor">>, kz_json:new()]}
+              ,{'mapper', crossbar_view:map_value_fun()}
+              ,{'databases', [?KZ_AUTH_DB]}
+              ,{'unchunkable', 'true'}
+              ],
+    crossbar_view:load(Context, <<"providers/list_by_type">>, Options).
 
--spec add_available_providers(cb_context:context()) -> cb_context:context().
-add_available_providers(Context) ->
+-spec normalize_summary(cb_context:context(), kz_json:objects()) -> kz_json:object().
+normalize_summary(Context, JObjs) ->
     C1 = system_summary(Context),
     case cb_context:resp_status(C1) of
-        'success' ->
-            crossbar_doc:handle_json_success(merge_summary(Context, cb_context:doc(C1)), Context);
-        _ -> crossbar_doc:handle_json_success(merge_summary(Context, []), Context)
+        'success' -> merge_summary(JObjs, cb_context:doc(C1));
+        _ -> merge_summary(JObjs, [])
     end.
 
--spec merge_summary(cb_context:context(), kz_json:objects()) -> kz_json:object().
-merge_summary(Context, Available) ->
-    merge_summary(Context, Available, cb_context:resp_status(Context)).
-
--spec merge_summary(cb_context:context(), kz_json:objects(), cb_context:crossbar_status()) -> kz_json:object().
-merge_summary(Context, Available, 'success') ->
+-spec merge_summary(kz_json:objects(), kz_json:objects()) -> kz_json:object().
+merge_summary(Configured, Available) ->
     kz_json:from_list(
-      [{<<"configured">>, cb_context:doc(Context)}
-      ,{<<"multi_factor_providers">>, Available}
-      ]
-     );
-merge_summary(_Context, Available, _) ->
-    kz_json:from_list(
-      [{<<"configured">>, []}
+      [{<<"configured">>, Configured}
       ,{<<"multi_factor_providers">>, Available}
       ]
      ).
@@ -329,23 +319,9 @@ merge_summary(_Context, Available, _) ->
 %%
 %% @end
 %%--------------------------------------------------------------------
--spec on_successful_validation(api_binary(), cb_context:context()) -> cb_context:context().
+-spec on_successful_validation(kz_term:api_binary(), cb_context:context()) -> cb_context:context().
 on_successful_validation('undefined', Context) ->
     Doc = kz_json:set_value(<<"pvt_provider_type">>, <<"multi_factor">>, cb_context:doc(Context)),
     cb_context:set_doc(Context, kz_doc:set_type(Doc, <<"provider">>));
 on_successful_validation(Id, Context) ->
     crossbar_doc:load_merge(Id, Context, ?TYPE_CHECK_OPTION(<<"provider">>)).
-
-%%--------------------------------------------------------------------
-%% @private
-%% @doc
-%% Normalizes the results of a view
-%% @end
-%%--------------------------------------------------------------------
--spec normalize_view_results(kz_json:object(), kz_json:objects()) -> kz_json:objects().
-normalize_view_results(JObj, Acc) ->
-    [kz_json:get_value(<<"value">>, JObj)|Acc].
-
--spec normalize_attempt_view_result(kz_json:object()) -> kz_json:object().
-normalize_attempt_view_result(JObj) ->
-    kz_json:get_value(<<"value">>, JObj).

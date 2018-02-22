@@ -87,7 +87,7 @@ maybe_insert_schema(_F, ['undefined' | _Keys], _Default, Schema) ->
     ?DEBUG("skipping function ~p with key undefined (~p left)", [_F, _Keys]),
     Schema;
 maybe_insert_schema(F, [K|Ks], Default, Schema) ->
-    Section = kz_json:get_value([<<"properties">>, K], Schema, kz_json:new()),
+    Section = kz_json:get_json_value([<<"properties">>, K], Schema, kz_json:new()),
     Updated = maybe_insert_schema(F, Ks, Default, Section),
     kz_json:insert_value(<<"type">>
                         ,<<"object">>
@@ -105,7 +105,7 @@ check_default({_M, _F, _A}) -> 'undefined';
 check_default([<<_/binary>>|_]=L) ->
     L;
 check_default([_|_]=_L) ->
-    ?DEBUG("default list ~p~n", [L]),
+    ?DEBUG("default list ~p~n", [_L]),
     'undefined';
 check_default([]) -> [];
 check_default(?EMPTY_JSON_OBJECT=J) -> J;
@@ -144,6 +144,8 @@ guess_type('get_binary_boolean', _) ->
 guess_type('get_binary_value', _) ->
     <<"string">>;
 guess_type('get_ne_binary_value', _) ->
+    <<"string">>;
+guess_type('get_atom_value', _) ->
     <<"string">>;
 guess_type('get_is_true', _) ->
     <<"boolean">>;
@@ -324,6 +326,12 @@ process_match_mfa(#usage{data_var_name=DataName
 process_match_mfa(Acc, _VarName, M, F, As) ->
     process_mfa(Acc, M, F, As).
 
+process_mfa(#usage{data_var_name=DataName
+                  ,usages=Usages
+                  }=Acc
+           ,'kz_doc', 'id', [?VAR(DataName)]
+           ) ->
+    Acc#usage{usages=maybe_add_usage(Usages, {'kz_json', 'get_ne_binary_value', <<"id">>, DataName, 'undefined'})};
 process_mfa(#usage{data_var_name=DataName}=Acc
            ,'kz_json', 'merge_recursive', [_Arg, ?VAR(DataName)]
            ) ->
@@ -376,6 +384,7 @@ process_mfa(#usage{data_var_name=DataName
                   ,data_var_aliases=Aliases
                   }=Acc
            ,M, F, As) ->
+    ?DEBUG("looking in arg list for ~p or ~p~n", [DataName, Aliases]),
     case arg_list_has_data_var(DataName, Aliases, As) of
         {DataName, T} ->
             ?DEBUG("  found ~p in args of ~p:~p~n", [DataName, M, F]),
@@ -401,17 +410,25 @@ process_args(Acc, As) ->
 arg_list_has_data_var(DataName, _Aliases, ?LIST(?VAR(DataName), Tail)) ->
     {DataName, Tail};
 arg_list_has_data_var(_DataName, _Aliases, ?MOD_FUN_ARGS(_M, _F, _As)) ->
+    ?DEBUG("  ignoring mfa ~p:~p/~p~n", [_M, _F, length(_As)]),
     'undefined';
 arg_list_has_data_var(_DataName, _Aliases, ?FUN_ARGS(_F, _As)) ->
+    ?DEBUG("  ignoring fa ~p/~p~n", [_F, length(_As)]),
     'undefined';
 arg_list_has_data_var(_DataName, _Aliases, ?EMPTY_LIST) ->
+    ?DEBUG("  reached end of arg list~n", []),
     'undefined';
 arg_list_has_data_var(DataName, Aliases, ?LIST(?VAR(Name), Tail)) ->
     case lists:member(Name, Aliases) of
-        'true' -> {Name, Tail};
-        'false' -> arg_list_has_data_var(DataName, Aliases, Tail)
+        'true' ->
+            ?DEBUG("  name ~s is an alias of ~s~n", [Name, DataName]),
+            {Name, Tail};
+        'false' ->
+            ?DEBUG("  failed to find ~s in aliases ~p~n", [Name, Aliases]),
+            arg_list_has_data_var(DataName, Aliases, Tail)
     end;
 arg_list_has_data_var(DataName, Aliases, ?LIST(_Head, Tail)) ->
+    ?DEBUG("  skipping arg ~p~n", [_Head]),
     arg_list_has_data_var(DataName, Aliases, Tail);
 
 arg_list_has_data_var(DataName, _Aliases, [?VAR(DataName)|T]) ->
@@ -454,22 +471,22 @@ arg_list_has_data_var(DataName, Aliases, [?LIST(_H, _T)=H|T]=As) ->
     end;
 
 arg_list_has_data_var(DataName, Aliases, [_H|T]) ->
-    ?DEBUG("  ignoring arg ~p~n", [_H]),
+    ?DEBUG("  arg not data-name ~p: ~p~n", [DataName, _H]),
     arg_list_has_data_var(DataName, Aliases, T).
 
 arg_to_key(?BINARY_MATCH(Arg)) ->
-    kz_ast_util:binary_match_to_binary(Arg);
-arg_to_key(?ATOM(Arg)) ->
-    Arg;
+    try kz_ast_util:binary_match_to_binary(Arg)
+    catch 'error':'function_clause' -> 'undefined'
+    end;
+arg_to_key(?ATOM(Arg)) -> Arg;
 arg_to_key(?MOD_FUN_ARGS('kz_json', 'new', [])) ->
     kz_json:new();
 arg_to_key(?MOD_FUN_ARGS(M, F, As)) ->
     {M, F, length(As)};
 arg_to_key(?VAR(_Arg)) -> 'undefined';
-arg_to_key(?INTEGER(I)) ->
-    I;
-arg_to_key(?EMPTY_LIST) ->
-    [];
+arg_to_key(?INTEGER(I)) -> I;
+arg_to_key(?FLOAT(F)) -> F;
+arg_to_key(?EMPTY_LIST) -> [];
 arg_to_key(?LIST(Head, Tail)) ->
     list_of_keys_to_binary(Head, Tail).
 
@@ -550,6 +567,10 @@ process_mfa_call(#usage{functions=Fs
         [Clauses] when F =:= 'evaluate_rules_for_creation';
                        F =:= 'create_endpoints' ->
             process_mfa_clauses_kz_endpoint(Acc, M, F, As, Clauses);
+        [_Clauses] when M =:= 'kzc_recordings_sup',
+                        F =:= 'start_recording' ->
+            ?DEBUG("checking kzc_recording:init/1~n", []),
+            process_mfa_call(Acc, 'kzc_recording', 'init', [?VAR('_', 'Call'), ?VAR('_', 'Data')]);
         [Clauses] ->
             process_mfa_clauses(Acc, M, F, As, Clauses)
     end.
@@ -557,12 +578,15 @@ process_mfa_call(#usage{functions=Fs
 process_mfa_clauses(#usage{visited=Vs
                           ,data_var_name=DataName
                           ,usages=Usages
+                          ,data_var_aliases=Aliases
                           }=Acc
                    ,M, F, As, Clauses
                    ) ->
     #usage{usages=ModuleUsages
           ,functions=NewFs
           ,visited=ModuleVisited
+          ,data_var_name=FuntionDataVarName
+          ,data_var_aliases=FunctionAliases
           } =
         process_mfa_clauses(Acc#usage{current_module=M
                                      ,usages=[]
@@ -576,6 +600,7 @@ process_mfa_clauses(#usage{visited=Vs
     Acc#usage{usages=lists:usort(ModuleUsages ++ Usages)
              ,functions=NewFs
              ,visited=ModuleVisited
+             ,data_var_aliases=lists:usort([FuntionDataVarName | Aliases ++ FunctionAliases])
              }.
 
 process_mfa_clauses_kz_endpoint(#usage{visited=Vs}=Acc
@@ -658,7 +683,9 @@ process_mfa_clause(#usage{data_var_name=DataName}=Acc
     process_mfa_clause(Acc, Clause, DataIndex);
 process_mfa_clause(Acc, _Clause, 'undefined') ->
     Acc;
-process_mfa_clause(#usage{data_var_name=DataName}=Acc
+process_mfa_clause(#usage{data_var_name=DataName
+                         ,data_var_aliases=Aliases
+                         }=Acc
                   ,?CLAUSE(Args, _Guards, Body)
                   ,DataIndex
                   ) ->
@@ -679,6 +706,7 @@ process_mfa_clause(#usage{data_var_name=DataName}=Acc
             Acc#usage{usages=lists:usort(ClauseUsages)
                      ,functions=ClauseFs
                      ,visited=Vs
+                     ,data_var_aliases=lists:usort([NewName | Aliases])
                      };
         ?ATOM('undefined') -> Acc;
         ?LIST(?VAR(NewName), _Tail) ->
@@ -690,6 +718,7 @@ process_mfa_clause(#usage{data_var_name=DataName}=Acc
             Acc#usage{usages=lists:usort(ClauseUsages)
                      ,functions=ClauseFs
                      ,visited=Vs
+                     ,data_var_aliases=lists:usort([NewName | Aliases])
                      };
         _Unexpected ->
             ?DEBUG("unexpected arg(~p) at ~p in ~p, expected ~p~n"

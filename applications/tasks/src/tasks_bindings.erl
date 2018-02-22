@@ -1,5 +1,5 @@
 %%%-------------------------------------------------------------------
-%%% @copyright (C) 2016-2017, 2600Hz INC
+%%% @copyright (C) 2016-2018, 2600Hz INC
 %%% @doc
 %%% Store routing keys/pid bindings. When a binding is fired,
 %%% pass the payload to the pid for evaluation, accumulating
@@ -27,6 +27,7 @@
         ,unbind/3, unbind/4
         ,apply/2, apply/3
         ,map/2
+        ,pmap/2, pmap/3
         ,fold/2
         ,flush/0, flush/1
         ,filter/1
@@ -43,7 +44,7 @@
 
 -include("tasks.hrl").
 
--type payload() :: list() | kz_json:object() | ne_binary().
+-type payload() :: list() | kz_json:object() | kz_term:ne_binary().
 
 %%%===================================================================
 %%% API
@@ -56,7 +57,7 @@ apply(API, Args) ->
     ?MODULE:apply(API, Action, Args).
 
 %% @public
--spec apply(kz_json:object(), ne_binary(), list()) -> list().
+-spec apply(kz_json:object(), kz_term:ne_binary(), list()) -> list().
 apply(API, Action, Args) ->
     Category = kz_json:get_value(<<"category">>, API),
     Route = <<"tasks.", Category/binary, ".", Action/binary>>,
@@ -71,10 +72,18 @@ apply(API, Action, Args) ->
 %% is the payload, possibly modified
 %% @end
 %%--------------------------------------------------------------------
--type map_results() :: kz_proplist().
--spec map(ne_binary(), payload()) -> map_results().
+-type map_results() :: kz_term:proplist().
+-spec map(kz_term:ne_binary(), payload()) -> map_results().
 map(Routing, Payload) ->
     kazoo_bindings:map(Routing, Payload).
+
+-spec pmap(kz_term:ne_binary(), payload()) -> map_results().
+pmap(Routing, Payload) ->
+    kazoo_bindings:pmap(Routing, Payload).
+
+-spec pmap(kz_term:ne_binary(), payload(), kazoo_bindings:kz_rt_options()) -> map_results().
+pmap(Routing, Payload, Options) ->
+    kazoo_bindings:pmap(Routing, Payload, Options).
 
 %%--------------------------------------------------------------------
 %% @public
@@ -84,7 +93,7 @@ map(Routing, Payload) ->
 %% @end
 %%--------------------------------------------------------------------
 -type fold_results() :: payload().
--spec fold(ne_binary(), payload()) -> fold_results().
+-spec fold(kz_term:ne_binary(), payload()) -> fold_results().
 fold(Routing, Payload) ->
     kazoo_bindings:fold(Routing, Payload).
 
@@ -150,19 +159,19 @@ filter_out_succeeded(Term) -> kz_term:is_empty(Term).
 -type bind_result() :: 'ok' |
                        {'error', 'exists'}.
 -type bind_results() :: [bind_result()].
--spec bind(ne_binary() | ne_binaries(), atom(), atom()) ->
+-spec bind(kz_term:ne_binary() | kz_term:ne_binaries(), atom(), atom()) ->
                   bind_result() | bind_results().
 bind(Bindings, Module, Fun) ->
     bind(Bindings, Module, Fun, 'undefined').
 
--spec bind(ne_binary() | ne_binaries(), atom(), atom(), any()) ->
+-spec bind(kz_term:ne_binary() | kz_term:ne_binaries(), atom(), atom(), any()) ->
                   bind_result() | bind_results().
 bind([_|_]=Bindings, Module, Fun, Payload) ->
     [bind(Binding, Module, Fun, Payload) || Binding <- Bindings];
 bind(Binding, Module, Fun, Payload) when is_binary(Binding) ->
     kazoo_bindings:bind(Binding, Module, Fun, Payload).
 
--spec bind_actions(ne_binary(), module(), ne_binaries()) -> 'ok'.
+-spec bind_actions(kz_term:ne_binary(), module(), kz_term:ne_binaries()) -> 'ok'.
 bind_actions(RoutePrefix, Module, Actions) ->
     lists:foreach(fun (Action) ->
                           bind(<<RoutePrefix/binary, ".", Action/binary>>
@@ -173,36 +182,37 @@ bind_actions(RoutePrefix, Module, Actions) ->
                  ,Actions
                  ).
 
--spec unbind(ne_binary() | ne_binaries(), atom(), atom()) -> 'ok'.
+-spec unbind(kz_term:ne_binary() | kz_term:ne_binaries(), atom(), atom()) -> 'ok'.
 unbind(Bindings, Module, Fun) ->
     unbind(Bindings, Module, Fun, 'undefined').
 
--spec unbind(ne_binary() | ne_binaries(), atom(), atom(), any()) -> 'ok'.
+-spec unbind(kz_term:ne_binary() | kz_term:ne_binaries(), atom(), atom(), any()) -> 'ok'.
 unbind([_|_]=Bindings, Module, Fun, Payload) ->
     _ = [unbind(Binding, Module, Fun, Payload) || Binding <- Bindings],
     'ok';
 unbind(Binding, Module, Fun, Payload) when is_binary(Binding) ->
-    kazoo_bindings:unbind(Binding, Module, Fun, Payload).
+    _ = kazoo_bindings:unbind(Binding, Module, Fun, Payload),
+    'ok'.
 
 -spec flush() -> 'ok'.
 flush() ->
     lists:foreach(fun kazoo_bindings:flush_mod/1, modules_loaded()).
 
--spec flush(ne_binary()) -> 'ok'.
+-spec flush(kz_term:ne_binary()) -> 'ok'.
 flush(Binding) -> kazoo_bindings:flush(Binding).
 
 -spec filter(kazoo_bindings:filter_fun()) -> 'ok'.
 filter(Predicate) ->
     kazoo_bindings:filter(Predicate).
 
--spec modules_loaded() -> atoms().
+-spec modules_loaded() -> kz_term:atoms().
 modules_loaded() ->
     lists:usort(
       [Mod || Mod <- kazoo_bindings:modules_loaded(),
               is_task_module(Mod)
       ]).
 
--spec is_task_module(ne_binary() | atom()) -> boolean().
+-spec is_task_module(kz_term:ne_binary() | atom()) -> boolean().
 is_task_module(<<"kt_", _/binary>>) -> 'true';
 is_task_module(Mod)
   when is_atom(Mod) ->
@@ -213,7 +223,7 @@ is_task_module(_) -> 'false'.
 -spec init() -> 'ok'.
 init() ->
     lager:debug("initializing tasks bindings"),
-    kz_util:put_callid(?LOG_SYSTEM_ID),
+    kz_util:put_callid(?DEFAULT_LOG_SYSTEM_ID),
     lists:foreach(fun init_mod/1, ?TASKS).
 
 init_mod(ModuleName) ->

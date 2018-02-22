@@ -14,6 +14,11 @@ A simple script to query the Erlang VMs process count
 10
 ```
 
+## apps_of_app.escript
+
+Calculates application interdependencies, correcting .app.src files as necessary. Also can be used to detect circular references.
+
+For now, we just calculate app files in `applications/` since `core/` is a tangled mess right now (and is typically installed as one lump package anyway).
 
 ## bump-copyright-year.sh
 
@@ -68,6 +73,18 @@ Creates a release, starts it, and issues some commands to test that the release 
 ## check-scripts-readme.bash
 
 A quick script to check that all scripts in `$(ROOT)/scripts` are documented in this file!
+
+
+## check-spelling.bash
+
+Takes the misspellings.txt and checks for common mistakes.
+
+Each line on the text file has the format `{correct}|{mispelt} [{misspelt} ...]`
+
+
+## check-unstaged.bash
+
+Checks if any unstanged changes are found in the repo and exits if so. Used in CircleCI to fail builds with unstaged changes after applying code checks, spell checking, etc.
 
 
 ## check-xref.escript
@@ -218,7 +235,7 @@ done (warnings were emitted)
 
 ## dialyze-usage.bash
 
-Given a module name, such as 'props' or 'kz\_json', search core/applications for modules that make calls to the supplied module and dialyze those beam files looking for dialyzer complaints. You will likely see complaints unrelated to your supplied module - go ahead and fix those too if possilbe ;)
+Given a module name, such as 'props' or 'kz\_json', search core/applications for modules that make calls to the supplied module and dialyze those beam files looking for dialyzer complaints. You will likely see complaints unrelated to your supplied module - go ahead and fix those too if possible ;)
 
 The more heavily utilized the module is, the longer this will take to run!
 
@@ -250,6 +267,33 @@ Checks JSON schemas for empty "description" properties and exit(1) if any are fo
 
 Script for exporting `AUTH_TOKEN` and `ACCOUNT_ID` when doing Crossbar authentication. Handy when running curl commands to use `$AUTH_TOKEN` instead of the raw value (and for re-authing when auth token expires).
 
+
+## `evil_specs_remover.escript`
+
+A script to find repeated `spec` one after another (evil specs) and move them above their corresponding functions (the way which EDoc prefers). It search evil specs using `ag` (A code-searching tool similar to ack [and grep to some degrees], but faster) which has multi-line feature continued by combination of parsing AST of each file, remove the evil specs and add to above their functions.
+
+> **Note:** This script needs [`ag`](https://github.com/ggreer/the_silver_searcher) command line to run!
+
+You can pass path to directories or files. By using `--create-backup` or `-b` option, it first create a backup of the file (`{FILE_NAME}.bak`) before replacing. For searching Kazoo default directories (`applications/*`, `core/*`) use the option `--use-kazoo-dirs` or `-k`.
+
+
+
+```shell
+evil_specs_remover.escript [--create-backup|-b] [--use-kazoo-dirs|-k] <paths_to_files_or_dir>+
+```
+
+### Example
+
+In this example, the `cb_context.erl` has 115 evil specs, 119 lines were removed (some spec was multi-lines) and 200 lines were added (the script will add an empty line above the `spec` line if there isn't one to make it separate from the line above since it is more easy to read).
+
+```shell
+$ scripts/evil_specs_remover.escript -k
+Searching for evil sepcspecs...
+processing 1 file(s) with evil specspec:
+  file /home/hesaam/work/2600hz/kazoo/scripts/../applications/crossbar/src/cb_context.erl (115 specs): -119 +200
+
+🍺 finished
+```
 
 ## format-json.sh
 
@@ -290,6 +334,40 @@ Script for updating Erlang code to account for functions that have moved modules
 
 -   kz\_util to alternative modules
 -   kz\_json to kz\_doc for public/private fields
+
+
+## `list-ext-deps.escript`
+
+This escript gathers information from all `.beam` files in the filesystem tree specified by a list of directories provided to it on the command line, determines which external calls these files collectively make, and compares these calls with the applications provided by the Erlang runtime under which the script is running.
+
+The end result is a list of OTP applications that this set of `.beam` files collectively make calls to (i.e. depend on).
+
+* NOTE: The `.beam` files *must* be compiled with debug information for this script to be useful.
+
+### Example
+
+In this example, we find the names of all the Erlang applications which the `.beam` files in `applications/`, `core/`, and `deps` depend on.
+
+```
+$ scripts/list-ext-deps.escript core applications deps 2> /tmp/errors.log
+common_test
+compiler
+crypto
+erts
+eunit
+inets
+kernel
+mnesia
+observer
+public_key
+runtime_tools
+sasl
+ssl
+stdlib
+syntax_tools
+tools
+xmerl
+```
 
 
 ## `no_raw_json.escript`
@@ -559,6 +637,26 @@ Searches for undocumented APIs and reports percentage of doc coverage.
     > GET /v2/websockets
     > POST /v2/resource_selectors/rules
     > POST /v2/whitelabel/domains
+
+
+## `sync_to_remote.bash`
+
+```bash
+HOST="server.com" ERL_FILES="path/to/source.erl" BEAM_PATH="/tmp/beams" ./scripts/sync_to_remote.bash
+```
+
+Takes the provided Erlang files, finds their .beam and syncs those to the remote server provided.
+
+-   `ERL_FILES`: which source files to sync (the changed files (against master) are used by default).
+-   `HOST`: The Host to use for the scp command
+-   `BEAM_PATH`: Where on the Host to put the beam files
+
+## `sync_to_release.bash`
+
+Useful in conjunction with `sync_to_remote`. Takes .beam files in a directory and moves them into a release, into the proper application ebin, and reloads them in the default VMs
+
+-   `BEAMS`: Path to beam files, defaults to `/tmp/beams/*.beam`
+-   `DEST`: Path to the release's lib/ directory, defaults to `/opt/kazoo/lib`
 
 
 ## update-the-types.sh

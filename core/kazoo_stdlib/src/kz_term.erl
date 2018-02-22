@@ -1,5 +1,5 @@
 %%%-------------------------------------------------------------------
-%%% @copyright (C) 2010-2017, 2600Hz INC
+%%% @copyright (C) 2010-2018, 2600Hz INC
 %%% @doc
 %%% Conversion of types
 %%% @end
@@ -28,6 +28,10 @@
         ,to_lower_char/1
         ,to_pid/1
 
+        ,words_to_bytes/1
+
+        ,safe_cast/3
+
         ,error_to_binary/1
         ]).
 -export([is_true/1, is_false/1
@@ -35,14 +39,114 @@
         ,is_ne_binary/1, is_api_ne_binary/1
         ,is_ne_binaries/1
         ,is_empty/1, is_not_empty/1
-        ,is_proplist/1
+        ,is_proplist/1, is_ne_list/1
         ,identity/1
         ,always_true/1, always_false/1
         ]).
 
 -export([a1hash/3, floor/1, ceiling/1]).
 
--include_lib("kazoo_stdlib/include/kz_types.hrl").
+-type text() :: string() | atom() | binary() | iolist().
+
+-type atoms() :: [atom()].
+-type pids() :: [pid()].
+-type references() :: [reference()].
+
+-type proplist_key() :: any().
+-type proplist_value() :: any().
+-type proplist_property() :: atom() | {proplist_key(), proplist_value()}.
+-type proplist() :: [proplist_property()].
+-type proplists() :: [proplist()].
+-type proplist_kv(K, V) :: [{K, V}].
+
+-type pid_ref() :: {pid(), reference()}.
+-type pid_refs() :: [pid_ref()].
+-type api_pid_ref() :: pid_ref() | 'undefined'.
+-type api_pid_refs() :: pid_refs() | 'undefined'.
+
+-type api_terms() :: kz_json:object() | proplist().
+-type api_binary() :: binary() | 'undefined'.
+-type api_ne_binary() :: ne_binary() | 'undefined'.
+-type api_ne_binaries() :: [api_ne_binary()] | 'undefined'.
+-type api_binaries() :: [api_binary()] | 'undefined'.
+-type api_object() :: kz_json:object() | 'undefined'.
+-type api_objects() :: kz_json:objects() | 'undefined'.
+-type api_boolean() :: boolean() | 'undefined'.
+-type api_atom() :: atom() | 'undefined'.
+-type api_atoms() :: atoms() | 'undefined'.
+-type api_string() :: string() | 'undefined'.
+-type api_reference() :: reference() | 'undefined'.
+-type api_pid() :: pid() | 'undefined'.
+-type api_list() :: list() | 'undefined'.
+
+-type api_number() :: number() | 'undefined'.
+-type api_integer() :: integer() | 'undefined'.
+-type api_pos_integer() :: pos_integer() | 'undefined'.
+-type api_non_neg_integer() :: non_neg_integer() | 'undefined'.
+-type api_float() :: float() | 'undefined'.
+
+-type deeplist() :: iolist(). %[any() | deeplist()].
+
+-type std_return() :: {'ok', any()} | {'error', any()}.
+-type sup_no_return() :: 'no_return' | {'no_return', non_neg_integer()}.
+
+-type jobj_return() :: {'ok', kz_json:object()} | {'error', any()}.
+-type jobjs_return() :: {'ok', kz_json:objects()} | {'error', any()}.
+
+-type ne_binary() :: <<_:8,_:_*8>>.
+-type ne_binaries() :: [ne_binary()].
+-type binaries() :: [binary()].
+
+-type strings() :: [string()].
+-type integers() :: [integer()].
+
+-type functions() :: [function()].
+
+-export_type([text/0
+             ,atoms/0
+             ,pids/0
+             ,references/0
+             ,proplist_key/0
+             ,proplist_value/0
+             ,proplist_property/0
+             ,proplist/0
+             ,proplists/0
+             ,proplist_kv/2
+             ,pid_ref/0
+             ,pid_refs/0
+             ,api_pid_ref/0
+             ,api_pid_refs/0
+             ,api_terms/0
+             ,api_binary/0
+             ,api_ne_binary/0
+             ,api_ne_binaries/0
+             ,api_binaries/0
+             ,api_object/0
+             ,api_objects/0
+             ,api_boolean/0
+             ,api_atom/0
+             ,api_atoms/0
+             ,api_string/0
+             ,api_reference/0
+             ,api_pid/0
+             ,api_list/0
+             ,api_number/0
+             ,api_integer/0
+             ,api_pos_integer/0
+             ,api_non_neg_integer/0
+             ,api_float/0
+             ,deeplist/0
+             ,std_return/0
+             ,sup_no_return/0
+             ,jobj_return/0
+             ,jobjs_return/0
+             ,ne_binary/0
+             ,ne_binaries/0
+             ,binaries/0
+             ,strings/0
+             ,integers/0
+             ,functions/0
+             ]).
 
 %%--------------------------------------------------------------------
 %% @public
@@ -56,12 +160,12 @@ shuffle_list(List) when is_list(List) ->
     randomize_list(round(math:log(length(List)) + 0.5), List).
 
 -spec randomize_list(list()) -> list().
--spec randomize_list(pos_integer(), list()) -> list().
 randomize_list(List) ->
     D = lists:keysort(1, [{rand:uniform(), A} || A <- List]),
     {_, D1} = lists:unzip(D),
     D1.
 
+-spec randomize_list(pos_integer(), list()) -> list().
 randomize_list(1, List) -> randomize_list(List);
 randomize_list(T, List) ->
     lists:foldl(fun(_E, Acc) ->
@@ -83,9 +187,9 @@ to_hex_binary(S) ->
 
 
 -spec to_integer(string() | binary() | integer() | float()) -> integer().
--spec to_integer(string() | binary() | integer() | float(), 'strict' | 'notstrict') -> integer().
 to_integer(X) -> to_integer(X, 'notstrict').
 
+-spec to_integer(string() | binary() | integer() | float(), 'strict' | 'notstrict') -> integer().
 to_integer(X, _) when is_integer(X) -> X;
 to_integer(X, 'strict') when is_float(X) -> erlang:error('badarg');
 to_integer(X, 'notstrict') when is_float(X) -> round(X);
@@ -102,9 +206,9 @@ to_integer(X, S) when is_list(X) ->
     end.
 
 -spec to_float(string() | binary() | integer() | float()) -> float().
--spec to_float(string() | binary() | integer() | float(), 'strict' | 'notstrict') -> float().
 to_float(X) -> to_float(X, 'notstrict').
 
+-spec to_float(string() | binary() | integer() | float(), 'strict' | 'notstrict') -> float().
 to_float(X, _) when is_float(X) -> X;
 to_float(X, strict) when is_binary(X) -> binary_to_float(X);
 to_float(X, notstrict) when is_binary(X) ->
@@ -131,8 +235,10 @@ to_number(X) when is_list(X) ->
         'error':'badarg' -> list_to_float(X)
     end.
 
--spec to_pid(list() | binary() | undefined) -> pid().
-to_pid(undefined) -> undefined;
+-spec to_pid(pid() | list() | binary() | atom()) -> api_pid().
+to_pid('undefined') -> 'undefined';
+to_pid(A) when is_atom(A) -> to_pid(whereis(A));
+to_pid(P) when is_pid(P) -> P;
 to_pid(X) when is_binary(X) -> to_pid(binary_to_list(X));
 to_pid(X) when is_list(X) -> list_to_pid(X).
 
@@ -147,13 +253,18 @@ to_list(X) when is_pid(X) -> pid_to_list(X).
 
 %% Known limitations:
 %%   Converting [256 | _], lists with integers > 255
--spec to_binary(atom() | string() | binary() | integer() | float() | pid() | iolist()) -> binary().
+-spec to_binary(kz_json:object() | atom() | string() | binary() | integer() | float() | pid() | iolist()) -> binary().
 to_binary(X) when is_binary(X) -> X;
 to_binary(X) when is_float(X) -> to_binary(kz_mochinum:digits(X));
 to_binary(X) when is_integer(X) -> integer_to_binary(X);
 to_binary(X) when is_atom(X) -> atom_to_binary(X, utf8);
 to_binary(X) when is_list(X) -> iolist_to_binary(X);
-to_binary(X) when is_pid(X) -> to_binary(pid_to_list(X)).
+to_binary(X) when is_pid(X) -> to_binary(pid_to_list(X));
+to_binary(X) ->
+    case kz_json:is_json_object(X) of
+        'true' -> kz_json:encode(X);
+        'false' -> error('badarg')
+    end.
 
 -spec to_api_binary(atom() | string() | binary() | integer() | float() | pid() | iolist()) -> api_binary().
 to_api_binary('undefined') -> 'undefined';
@@ -190,12 +301,12 @@ to_boolean(<<"false">>) -> 'false';
 to_boolean("false") -> 'false';
 to_boolean('false') -> 'false'.
 
--spec to_date(binary() | string() | integer()) -> kz_date().
+-spec to_date(binary() | string() | integer()) -> kz_time:date().
 to_date(X) ->
     {Date, _ } = to_datetime(X),
     Date.
 
--spec to_datetime(binary() | string() | integer()) -> kz_datetime().
+-spec to_datetime(binary() | string() | integer()) -> kz_time:datetime().
 to_datetime(X) when is_integer(X) -> calendar:gregorian_seconds_to_datetime(X);
 to_datetime(X) when is_binary(X) -> to_datetime(to_integer(X));
 to_datetime(X) when is_list(X) -> to_datetime(to_integer(X)).
@@ -205,6 +316,15 @@ is_true(<<"true">>) -> 'true';
 is_true("true") -> 'true';
 is_true('true') -> 'true';
 is_true(_) -> 'false'.
+
+
+-type caster() :: fun((any()) -> any()).
+-spec safe_cast(any(), any(), caster()) -> any().
+safe_cast(Value, Default, CastFun) ->
+    try CastFun(Value)
+    catch
+        _:_ -> Default
+    end.
 
 -spec always_true(any()) -> 'true'.
 always_true(_) -> 'true'.
@@ -269,6 +389,10 @@ is_not_empty(Term) -> not is_empty(Term).
 is_proplist(Term) when is_list(Term) ->
     lists:all(fun({_,_}) -> 'true'; (A) -> is_atom(A) end, Term);
 is_proplist(_) -> 'false'.
+
+-spec is_ne_list(any()) -> boolean().
+is_ne_list([_|_]) -> 'true';
+is_ne_list(_) -> 'false'.
 
 -spec identity(X) -> X.
 identity(X) -> X.
@@ -343,5 +467,10 @@ error_to_binary({'error', Reason}) ->
 error_to_binary(Reason) ->
     try to_binary(Reason)
     catch
-        'error':'function_clause' -> <<"Unknown Error">>
+        'error':'function_clause' -> <<"Unknown Error">>;
+        'error':'badarg' -> <<"Unknown Error">>
     end.
+
+-spec words_to_bytes(integer()) -> integer().
+words_to_bytes(Words) ->
+    Words * erlang:system_info('wordsize').

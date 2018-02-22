@@ -1,5 +1,5 @@
 %%%-------------------------------------------------------------------
-%%% @copyright (C) 2013-2017 2600Hz Inc
+%%% @copyright (C) 2013-2018 2600Hz Inc
 %%% @doc
 %%% Conference participant process
 %%% @end
@@ -66,7 +66,7 @@
                      ,muted = 'false' :: boolean()
                      ,deaf = 'false' :: boolean()
                      ,waiting_for_mod = 'false' :: boolean()
-                     ,call_event_consumers = [] :: pids()
+                     ,call_event_consumers = [] :: kz_term:pids()
                      ,in_conference = 'false' :: boolean()
                      ,join_attempts = 0 :: non_neg_integer()
                      ,conference :: kapps_conference:conference() | 'undefined'
@@ -85,7 +85,7 @@
 %%--------------------------------------------------------------------
 %% @doc Starts the server
 %%--------------------------------------------------------------------
--spec start_link(kapps_call:call()) -> startlink_ret().
+-spec start_link(kapps_call:call()) -> kz_types:startlink_ret().
 start_link(Call) ->
     CallId = kapps_call:call_id(Call),
     Bindings = [{'call', [{'callid', CallId}]}
@@ -146,13 +146,13 @@ toggle_deaf(Srv) -> gen_listener:cast(Srv, 'toggle_deaf').
 -spec hangup(pid()) -> 'ok'.
 hangup(Srv) -> gen_listener:cast(Srv, 'hangup').
 
--spec dtmf(pid(), ne_binary()) -> 'ok'.
+-spec dtmf(pid(), kz_term:ne_binary()) -> 'ok'.
 dtmf(Srv, Digit) -> gen_listener:cast(Srv,{'dtmf', Digit}).
 
 -spec consume_call_events(pid()) -> 'ok'.
 consume_call_events(Srv) -> gen_listener:cast(Srv, {'add_consumer', self()}).
 
--spec relay_amqp(kz_json:object(), kz_proplist()) -> 'ok'.
+-spec relay_amqp(kz_json:object(), kz_term:proplist()) -> 'ok'.
 relay_amqp(JObj, Props) ->
     _ = [kapps_call_command:relay_event(Pid, JObj)
          || Pid <- props:get_value('call_event_consumers', Props, []),
@@ -166,7 +166,7 @@ relay_amqp(JObj, Props) ->
             dtmf(Srv, Digit)
     end.
 
--spec handle_conference_error(kz_json:object(), kz_proplist()) -> 'ok'.
+-spec handle_conference_error(kz_json:object(), kz_term:proplist()) -> 'ok'.
 handle_conference_error(JObj, Props) ->
     'true' = kapi_conference:conference_error_v(JObj),
     lager:debug("conference error: ~p", [JObj]),
@@ -196,7 +196,16 @@ handle_conference_error(JObj, Props) ->
 init([Call]) ->
     process_flag('trap_exit', 'true'),
     kapps_call:put_callid(Call),
+    _ = start_sanity_check_timer(),
     {'ok', #participant{call=Call}}.
+
+-spec start_sanity_check_timer() -> reference().
+start_sanity_check_timer() ->
+    start_sanity_check_timer(kapps_config:get_integer(?CONFIG_CAT, <<"participant_sanity_check_ms">>, ?MILLISECONDS_IN_MINUTE)).
+
+-spec start_sanity_check_timer(pos_integer()) -> reference().
+start_sanity_check_timer(Timeout) ->
+    erlang:send_after(Timeout, self(), 'sanity_check').
 
 %%--------------------------------------------------------------------
 %% @private
@@ -212,7 +221,7 @@ init([Call]) ->
 %%                                   {stop, Reason, State}
 %% @end
 %%--------------------------------------------------------------------
--spec handle_call(any(), pid_ref(), participant()) -> handle_call_ret_state(participant()).
+-spec handle_call(any(), kz_term:pid_ref(), participant()) -> kz_types:handle_call_ret_state(participant()).
 handle_call({'get_conference'}, _, #participant{conference='undefined'}=P) ->
     {'reply', {'error', 'not_provided'}, P};
 handle_call({'get_conference'}, _, #participant{conference=Conf}=P) ->
@@ -222,7 +231,7 @@ handle_call({'get_discovery_event'}, _, #participant{discovery_event=DE}=P) ->
 handle_call({'get_call'}, _, #participant{call=Call}=P) ->
     {'reply', {'ok', Call}, P};
 handle_call({'state'}, _, Participant) ->
-    {reply, Participant, Participant};
+    {'reply', Participant, Participant};
 handle_call(_Request, _, P) ->
     {'reply', {'error', 'unimplemented'}, P}.
 
@@ -236,9 +245,20 @@ handle_call(_Request, _, P) ->
 %%                                  {stop, Reason, State}
 %% @end
 %%--------------------------------------------------------------------
--spec handle_cast(any(), participant()) -> handle_cast_ret_state(participant()).
+-spec handle_cast(any(), participant()) -> kz_types:handle_cast_ret_state(participant()).
 handle_cast('hungup', Participant) ->
     {'stop', {'shutdown', 'hungup'}, Participant};
+handle_cast('pivoted', Participant) ->
+    {'stop', 'normal', Participant};
+handle_cast({'channel_replaced', NewCallId}
+           ,#participant{call=Call}=Participant
+           ) ->
+    kz_util:put_callid(NewCallId),
+    NewCall = kapps_call:set_call_id(NewCallId, Call),
+    lager:info("updated call to use ~s instead", [NewCallId]),
+    gen_listener:add_binding(self(), 'call', [{'callid', NewCallId}]),
+    {'noreply', Participant#participant{call=NewCall}};
+
 handle_cast({'gen_listener', {'created_queue', Q}}, #participant{conference='undefined'
                                                                 ,call=Call
                                                                 }=P) ->
@@ -264,7 +284,7 @@ handle_cast({'set_conference', Conference}, Participant=#participant{call=Call})
     ConferenceId = kapps_conference:id(Conference),
     CallId = kapps_call:call_id(Call),
     lager:debug("received conference data for conference ~s", [ConferenceId]),
-    gen_listener:add_binding(self(), 'conference', [{ 'restrict_to', [{'event', {ConferenceId,CallId}}] }]),
+    gen_listener:add_binding(self(), 'conference', [{'restrict_to', [{'event', {ConferenceId,CallId}}] }]),
     {'noreply', Participant#participant{conference=Conference}};
 handle_cast({'set_discovery_event', DE}, #participant{}=Participant) ->
     {'noreply', Participant#participant{discovery_event=DE}};
@@ -312,12 +332,30 @@ handle_cast(_Cast, Participant) ->
 %%                                   {stop, Reason, State}
 %% @end
 %%--------------------------------------------------------------------
--spec handle_info(any(), participant()) -> handle_info_ret_state(participant()).
+-spec handle_info(any(), participant()) -> kz_types:handle_info_ret_state(participant()).
 handle_info({'EXIT', Consumer, _R}, #participant{call_event_consumers=Consumers}=P) ->
     lager:debug("call event consumer ~p died: ~p", [Consumer, _R]),
     Cs = [C || C <- Consumers, C =/= Consumer],
     {'noreply', P#participant{call_event_consumers=Cs}, 'hibernate'};
+handle_info('sanity_check', #participant{call=Call}=State) ->
+    _ = case kapps_call_command:b_channel_status(Call) of
+            {'ok', _} -> start_sanity_check_timer();
+            {'error', 'not_found'} ->
+                lager:info("channel not found, going down"),
+                gen_listener:cast(self(), 'hungup')
+        end,
+    {'noreply', State};
+handle_info({'hungup', CallId}, #participant{call=Call}=Participant) ->
+    case kapps_call:call_id(Call) of
+        CallId ->
+            lager:debug("recv hungup for matching call id ~s", [CallId]),
+            {'stop', {'shutdown', 'hungup'}, Participant};
+        _NewCallId ->
+            lager:debug("recv hungup for old call id ~s, ignoring", [CallId]),
+            {'noreply', Participant}
+    end;
 handle_info(_Msg, Participant) ->
+    lager:debug("unhandled message ~p", [_Msg]),
     {'noreply', Participant}.
 
 %%--------------------------------------------------------------------
@@ -332,15 +370,43 @@ handle_event(JObj, #participant{call_event_consumers=Consumers
                                }) ->
     CallId = kapps_call:call_id(Call),
     case {kz_util:get_event_type(JObj)
-         ,kz_json:get_value(<<"Call-ID">>, JObj)
+         ,kz_call_event:call_id(JObj)
          }
     of
         {{<<"call_event">>, <<"CHANNEL_DESTROY">>}, CallId} ->
-            lager:debug("received channel hangup event, terminate"),
-            gen_listener:cast(Srv, 'hungup');
+            lager:debug("received channel hangup event, maybe terminating"),
+            _Ref = erlang:send_after(3 * ?MILLISECONDS_IN_SECOND, Srv, {'hungup', CallId}),
+            'ok';
+        {{<<"call_event">>, <<"CHANNEL_PIVOT">>}, CallId} ->
+            handle_channel_pivot(JObj, Call);
+        {{<<"call_event">>, <<"CHANNEL_REPLACED">>}, CallId} ->
+            handle_channel_replaced(JObj, Srv);
         {_, _} -> 'ok'
     end,
     {'reply', [{'call_event_consumers', Consumers}]}.
+
+-spec handle_channel_replaced(kz_json:object(), kz_types:server_ref()) -> 'ok'.
+handle_channel_replaced(JObj, Srv) ->
+    NewCallId = kz_call_event:replaced_by(JObj),
+    lager:info("channel has been replaced with ~s", [NewCallId]),
+    gen_listener:cast(Srv, {'channel_replaced', NewCallId}).
+
+-spec handle_channel_pivot(kz_json:object(), kapps_call:call()) -> 'ok'.
+handle_channel_pivot(JObj, Call) ->
+    case kz_json:get_ne_binary_value(<<"Application-Data">>, JObj) of
+        'undefined' -> lager:info("no app data to pivot");
+        FlowBin ->
+            lager:info("recv channel pivot with flow ~s", [FlowBin]),
+            unbridge_from_conference(Call),
+
+            Req = [{<<"Flow">>, kz_json:decode(FlowBin)}
+                  ,{<<"Call">>, kapps_call:to_json(Call)}
+                   | kz_api:default_headers(?APP_NAME, ?APP_VERSION)
+                  ],
+            kz_amqp_worker:cast(Req, fun kapi_callflow:publish_resume/1),
+            lager:info("stopping the conf participant"),
+            gen_listener:cast(self(), 'pivoted')
+    end.
 
 %%--------------------------------------------------------------------
 %% @private
@@ -388,7 +454,7 @@ log_conference_join('true'=_Moderator, ParticipantId, Conference) ->
 log_conference_join('false'=_Moderator, ParticipantId, Conference) ->
     lager:debug("caller has joined the local conference ~s as member ~p", [kapps_conference:name(Conference), ParticipantId]).
 
--spec sync_participant(ne_binary(), kz_json:objects(), kapps_call:call(), participant()) -> participant().
+-spec sync_participant(kz_term:ne_binary(), kz_json:objects(), kapps_call:call(), participant()) -> participant().
 sync_participant(<<"add-member">>, JObj, Call, Participant) ->
     sync_participant(JObj, Call, Participant);
 sync_participant(<<"conference-destroyed">>, _JObj, _Call, Participant) -> Participant;
@@ -425,7 +491,7 @@ sync_participant(JObj, _Call, #participant{in_conference='true'}=Participant) ->
                            ,deaf=Deaf
                            }.
 
--spec notify_requestor(ne_binary(), non_neg_integer(), kz_json:object(), ne_binary()) -> 'ok'.
+-spec notify_requestor(kz_term:ne_binary(), non_neg_integer(), kz_json:object(), kz_term:ne_binary()) -> 'ok'.
 notify_requestor(MyQ, MyId, DiscoveryEvent, ConferenceId) ->
     case kz_api:server_id(DiscoveryEvent) of
         'undefined' -> 'ok';
@@ -439,8 +505,7 @@ notify_requestor(MyQ, MyId, DiscoveryEvent, ConferenceId) ->
             kz_amqp_worker:cast(Resp, Publisher)
     end.
 
-
--spec bridge_to_conference(ne_binary(), kapps_conference:conference(), kapps_call:call(), conf_pronounced_name:name_pronounced()) -> ok.
+-spec bridge_to_conference(kz_term:ne_binary(), kapps_conference:conference(), kapps_call:call(), conf_pronounced_name:name_pronounced()) -> 'ok'.
 bridge_to_conference(Route, Conference, Call, Name) ->
     lager:debug("bridging to conference running at '~s'", [Route]),
     Endpoint = kz_json:from_list([{<<"Invite-Format">>, <<"route">>}
@@ -468,24 +533,29 @@ bridge_to_conference(Route, Conference, Call, Name) ->
               ],
     kapps_call_command:send_command(Command, Call).
 
--spec get_account_realm(kapps_call:call()) -> ne_binary().
+-spec unbridge_from_conference(kapps_call:call()) -> 'ok'.
+unbridge_from_conference(Call) ->
+    kapps_call_command:unbridge(Call, 'undefined').
+
+-spec get_account_realm(kapps_call:call()) -> kz_term:ne_binary().
 get_account_realm(Call) ->
     case kz_account:fetch_realm(kapps_call:account_id(Call)) of
-        undefined -> <<"unknown">>;
+        'undefined' -> <<"unknown">>;
         Realm -> Realm
     end.
 
--spec name_pronounced_headers(conf_pronounced_name:name_pronounced()) -> kz_proplist().
+-spec name_pronounced_headers(conf_pronounced_name:name_pronounced()) -> kz_term:proplist().
 name_pronounced_headers('undefined') -> [];
 name_pronounced_headers({_, AccountId, MediaId}) ->
     [{<<"X-Conf-Values-Pronounced-Name-Account-ID">>, AccountId}
-    ,{<<"X-Conf-Values-Pronounced-Name-Media-ID">>, MediaId}].
+    ,{<<"X-Conf-Values-Pronounced-Name-Media-ID">>, MediaId}
+    ].
 
 -spec send_conference_command(kapps_conference:conference(), kapps_call:call()) -> 'ok'.
 send_conference_command(Conference, Call) ->
     Profile = list_to_binary([kapps_conference:account_id(Conference)
                              ,"_"
-                             ,kapps_conference:id(Conference)
+                             ,kapps_conference:profile(Conference)
                              ]),
     kapps_call_command:conference(kapps_conference:id(Conference)
                                  ,is_muted(Conference)
@@ -509,7 +579,7 @@ is_deaf(Conference) ->
         'false' -> kapps_conference:member_join_deaf(Conference)
     end.
 
--spec handle_conference_event(kz_json:object(), kz_proplist()) -> 'ok'.
+-spec handle_conference_event(kz_json:object(), kz_term:proplist()) -> 'ok'.
 handle_conference_event(JObj, Props) ->
     Srv = props:get_value('server', Props),
     gen_listener:cast(Srv, {'sync_participant', JObj}).
@@ -538,14 +608,14 @@ set_enter_exit_sounds({_, AccountId, MediaId}, #participant{conference=Conferenc
     kapps_call_command:media_macro(Sounds, Call).
 
 %% @private
--spec play_exit_tone(boolean(), kapps_conference:conference()) -> api_binary().
+-spec play_exit_tone(boolean(), kapps_conference:conference()) -> kz_term:api_binary().
 play_exit_tone('false', Conference) ->
     play_exit_tone_media(?EXIT_TONE(kapps_conference:account_id(Conference)), Conference);
 play_exit_tone('true', Conference) ->
     play_exit_tone_media(?MOD_EXIT_TONE(kapps_conference:account_id(Conference)), Conference).
 
 %% @private
--spec play_exit_tone_media(ne_binary(), kapps_conference:conference()) -> api_binary().
+-spec play_exit_tone_media(kz_term:ne_binary(), kapps_conference:conference()) -> kz_term:api_binary().
 play_exit_tone_media(Tone, Conference) ->
     case kapps_conference:play_exit_tone(Conference) of
         'false' -> 'undefined';
@@ -554,13 +624,13 @@ play_exit_tone_media(Tone, Conference) ->
     end.
 
 %% @private
--spec play_entry_tone(boolean(), kapps_conference:conference()) -> api_binary().
+-spec play_entry_tone(boolean(), kapps_conference:conference()) -> kz_term:api_binary().
 play_entry_tone('false', Conference) ->
     play_entry_tone_media(?ENTRY_TONE(kapps_conference:account_id(Conference)), Conference);
 play_entry_tone('true', Conference) ->
     play_entry_tone_media(?MOD_ENTRY_TONE(kapps_conference:account_id(Conference)), Conference).
 
--spec play_entry_tone_media(ne_binary(), kapps_conference:conference()) -> api_binary().
+-spec play_entry_tone_media(kz_term:ne_binary(), kapps_conference:conference()) -> kz_term:api_binary().
 play_entry_tone_media(Tone, Conference) ->
     case kapps_conference:play_entry_tone(Conference) of
         'false' -> 'false';

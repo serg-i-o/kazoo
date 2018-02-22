@@ -1,5 +1,5 @@
 %%%-------------------------------------------------------------------
-%%% @copyright (C) 2011-2017, 2600Hz INC
+%%% @copyright (C) 2011-2018, 2600Hz INC
 %%% @doc
 %%%
 %%% @end
@@ -56,7 +56,7 @@ consumer_pid() ->
         _Else -> self()
     end.
 
--spec consumer_pid(pid()) -> api_pid().
+-spec consumer_pid(pid()) -> kz_term:api_pid().
 consumer_pid(Pid) when is_pid(Pid) ->
     put('$kz_amqp_consumer_pid', Pid).
 
@@ -79,14 +79,14 @@ consumer_channel(Channel) ->
 remove_consumer_channel() ->
     put('$kz_amqp_consumer_channel', 'undefined').
 
--spec consumer_broker() -> api_binary().
+-spec consumer_broker() -> kz_term:api_binary().
 consumer_broker() ->
     case get('$kz_amqp_consumer_broker') of
         Broker when is_binary(Broker) -> Broker;
         _Else -> 'undefined'
     end.
 
--spec consumer_broker(ne_binary()) -> api_binary().
+-spec consumer_broker(kz_term:ne_binary()) -> kz_term:api_binary().
 consumer_broker(Broker) when is_binary(Broker) ->
     put('$kz_amqp_consumer_broker', Broker).
 
@@ -111,14 +111,14 @@ channel_publish_method(Method)
 -spec requisition() -> boolean().
 requisition() -> requisition(consumer_pid()).
 
--spec requisition(pid() | api_binary()) -> boolean().
+-spec requisition(pid() | kz_term:api_binary()) -> boolean().
 requisition(Consumer) when is_pid(Consumer) ->
     requisition(Consumer, consumer_broker());
 requisition(Broker) ->
     put('$kz_amqp_consumer_broker', Broker),
     requisition(consumer_pid(), Broker).
 
--spec requisition(pid(), api_binary()) -> boolean().
+-spec requisition(pid(), kz_term:api_binary()) -> boolean().
 requisition(Consumer, Broker) when is_pid(Consumer) ->
     case kz_amqp_assignments:request_channel(Consumer, Broker) of
         #kz_amqp_assignment{channel=Channel}
@@ -135,10 +135,10 @@ release(Pid) when is_pid(Pid) ->
     _ = kz_amqp_history:remove(Pid),
     kz_amqp_assignments:release(Pid).
 
--spec close(api_pid()) -> 'ok'.
+-spec close(kz_term:api_pid()) -> 'ok'.
 close(Channel) -> close(Channel, []).
 
--spec close(api_pid(), list()) -> 'ok'.
+-spec close(kz_term:api_pid(), list()) -> 'ok'.
 close(Channel, []) when is_pid(Channel) ->
     _ = (catch gen_server:call(Channel, {'close', 200, <<"Goodbye">>}, 5 * ?MILLISECONDS_IN_SECOND)),
     lager:debug("closed amqp channel ~p", [Channel]);
@@ -187,6 +187,16 @@ publish(#'basic.publish'{routing_key=RoutingKey}=BasicPub, AmqpMsg) ->
                          )
     end.
 
+-spec extract_msg_id(binary()) -> binary().
+extract_msg_id(Msg) ->
+    case binary:split(Msg, <<"Msg-ID\":\"">>) of
+        [_First, Last] ->
+            [MsgId, _] = binary:split(Last, <<"\",">>),
+            MsgId;
+        _AnyOther ->
+            <<"undefined">>
+    end.
+
 -spec basic_publish(kz_amqp_assignment() | pid() | {'error', 'no_channel'}, basic_publish(), amqp_msg()) -> 'ok'.
 basic_publish(#kz_amqp_assignment{channel=Channel
                                  ,broker=_Broker
@@ -198,8 +208,9 @@ basic_publish(#kz_amqp_assignment{channel=Channel
   when is_pid(Channel) ->
     assert_valid_amqp_method(BasicPub),
     _ = basic_publish(Assignment, BasicPub, AmqpMsg, channel_publish_method()),
-    lager:debug("published to ~s(~s) exchange (routing key ~s) via ~p"
-               ,[_Exchange, _Broker, _RK, Channel]
+    MsgId = extract_msg_id(AmqpMsg#'amqp_msg'.payload),
+    lager:debug("published(~s) to ~s(~s) exchange (routing key ~s) via ~p"
+               ,[MsgId, _Exchange, _Broker, _RK, Channel]
                );
 basic_publish({'error', 'no_channel'}
              ,#'basic.publish'{exchange=_Exchange
@@ -242,7 +253,7 @@ basic_publish(Channel
   when is_pid(Channel) ->
     amqp_channel:Method(Channel, BasicPub, AmqpMsg).
 
--spec maybe_split_routing_key(binary()) -> {api_pid(), binary()}.
+-spec maybe_split_routing_key(binary()) -> {kz_term:api_pid(), binary()}.
 maybe_split_routing_key(<<"consumer://", _/binary>> = RoutingKey) ->
     Size = byte_size(RoutingKey),
     {Start, _} = lists:last(binary:matches(RoutingKey, <<"/">>)),
@@ -253,7 +264,6 @@ maybe_split_routing_key(RoutingKey) ->
     {'undefined', RoutingKey}.
 
 -spec command(kz_amqp_command()) -> command_ret().
--spec command(kz_amqp_assignment(), kz_amqp_command()) -> command_ret().
 command(#'exchange.declare'{exchange=_Ex, type=_Ty}=Exchange) ->
     kz_amqp_history:add_exchange(Exchange);
 command(Command) ->
@@ -261,6 +271,7 @@ command(Command) ->
     %% all commands need to block till completion...
     command(kz_amqp_assignments:get_channel(), Command).
 
+-spec command(kz_amqp_assignment(), kz_amqp_command()) -> command_ret().
 command(Assignment, Command) ->
     assert_valid_amqp_method(Command),
     exec_command(Assignment, Command).

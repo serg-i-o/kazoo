@@ -13,6 +13,14 @@
             "description": "services master account bookkeeper",
             "type": "string"
         },
+        "merge_strategy_priority": {
+            "default": {
+                "cumulative": 20,
+                "simple": 10
+            },
+            "description": "the object keys map to merge strategies and the values are expected to be an integer defining the merge priority between strategies",
+            "type": "object"
+        },
         "modules": {
             "description": "services modules",
             "items": {
@@ -28,7 +36,6 @@
         "scan_rate": {
             "default": 20000,
             "description": "services scan rate",
-            "minimum": 0,
             "type": "integer"
         },
         "should_save_master_audit_logs": {
@@ -44,7 +51,6 @@
         "sync_buffer_period": {
             "default": 600,
             "description": "services sync buffer period",
-            "minimum": 0,
             "type": "integer"
         },
         "sync_services": {

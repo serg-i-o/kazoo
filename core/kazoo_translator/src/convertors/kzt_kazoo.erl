@@ -1,5 +1,5 @@
 %%%-------------------------------------------------------------------
-%%% @copyright (C) 2013-2017, 2600Hz
+%%% @copyright (C) 2013-2018, 2600Hz
 %%% @doc
 %%% Process dynamicly generated callflow "flow"
 %%% @end
@@ -30,14 +30,15 @@ exec(Call, FlowJObj) ->
 
 -spec resume_callflow(kapps_call:call(), kz_json:object()) -> usurp_return().
 resume_callflow(Call, FlowJObj) ->
-    Prop = [{<<"Call">>, kapps_call:to_json(Call)}
-           ,{<<"Flow">>, FlowJObj}
-            | kz_api:default_headers(?APP_NAME, ?APP_VERSION)
-           ],
-    kapi_callflow:publish_resume(Prop),
+    Event = [{<<"Event-Name">>, <<"CHANNEL_PIVOT">>}
+            ,{<<"Application-Data">>, kz_json:encode(FlowJObj)}
+            ,{<<"Call-ID">>, kapps_call:call_id_direct(Call)}
+             | kz_api:default_headers(?APP_NAME, ?APP_VERSION)
+            ],
+    'ok' = kz_amqp_worker:cast(Event, fun kapi_call:publish_event/1),
     {'usurp', Call}.
 
--spec parse_cmds(ne_binary()) ->
+-spec parse_cmds(kz_term:ne_binary()) ->
                         {'ok', kz_json:object()} |
                         {'error', 'not_parsed'}.
 parse_cmds(<<_/binary>> = JSON) ->
@@ -60,7 +61,7 @@ parse_cmds(<<_/binary>> = JSON) ->
             {'error', 'not_parsed'}
     end.
 
--spec req_params(kapps_call:call()) -> kz_proplist().
+-spec req_params(kapps_call:call()) -> kz_term:proplist().
 req_params(Call) ->
     Owners = case kz_attributes:owner_ids(kapps_call:authorizing_id(Call), Call) of
                  [] -> 'undefined';

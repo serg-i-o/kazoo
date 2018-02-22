@@ -1,5 +1,5 @@
 %%%-------------------------------------------------------------------
-%%% @copyright (C) 2011-2017, 2600Hz INC
+%%% @copyright (C) 2011-2018, 2600Hz INC
 %%% @doc
 %%%
 %%% @end
@@ -21,7 +21,7 @@
 %% @doc
 %% Entry point for this module, attempts to call an endpoint as defined
 %% in the Data payload.  Returns continue if fails to connect or
-%% stop when successfull.
+%% stop when successful.
 %% @end
 %%--------------------------------------------------------------------
 -spec handle(kz_json:object(), kapps_call:call()) -> 'ok'.
@@ -85,17 +85,16 @@ build_endpoints(JObj, Call) ->
     lists:flatten(
       [Endpoint
        || {_, {'ok', Endpoint}} <-
-              lists:foldl(
-                fun(F, E) -> F(E, Members, Call) end
+              lists:foldl(fun(F, E) -> F(E, Members, Call) end
                          ,[]
                          ,Routines
-               )
+                         )
       ]
      ).
 
--type endpoints_acc() :: [{ne_binary(), {'ok', kz_json:objects()}}].
+-type endpoints_acc() :: [{kz_term:ne_binary(), {'ok', kz_json:objects()}}].
 
--spec build_device_endpoints(endpoints_acc(), kz_proplist(), kapps_call:call()) ->
+-spec build_device_endpoints(endpoints_acc(), kz_term:proplist(), kapps_call:call()) ->
                                     endpoints_acc().
 build_device_endpoints(Endpoints, [], _) -> Endpoints;
 build_device_endpoints(Endpoints, [{MemberId, Member} | Members], Call) ->
@@ -110,7 +109,7 @@ build_device_endpoints(Endpoints, [{MemberId, Member} | Members], Call) ->
         'false' -> build_device_endpoints(Endpoints, Members, Call)
     end.
 
--spec build_user_endpoints(endpoints_acc(), kz_proplist(), kapps_call:call()) -> endpoints_acc().
+-spec build_user_endpoints(endpoints_acc(), kz_term:proplist(), kapps_call:call()) -> endpoints_acc().
 build_user_endpoints(Endpoints, [], _) -> Endpoints;
 build_user_endpoints(Endpoints, [{MemberId, Member} | Members], Call) ->
     case <<"user">> =:= kz_json:get_value(<<"type">>, Member, <<"user">>) of

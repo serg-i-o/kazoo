@@ -1,5 +1,5 @@
 %%%-------------------------------------------------------------------
-%%% @copyright (C) 2010-2017, 2600Hz Inc
+%%% @copyright (C) 2010-2018, 2600Hz Inc
 %%% @doc
 %%%
 %%% @end
@@ -16,7 +16,7 @@
 
 -type cb_return() :: {'ok', bh_context:context()}.
 
--spec open(pid(), binary(), any()) -> cb_return().
+-spec open(pid(), binary(), inet:ip_address()) -> cb_return().
 open(Pid, Id, Ipaddr) ->
     IPBin = kz_term:to_binary(inet_parse:ntoa(Ipaddr)),
     lager:debug("opening socket (~p) ~p, peer: ~p", [Pid, Id, IPBin]),
@@ -29,6 +29,7 @@ open(Pid, Id, Ipaddr) ->
 
 -spec recv({binary(), kz_json:object()}, bh_context:context()) -> cb_return() | 'error'.
 recv({Action, Payload}, Context) ->
+    lager:debug("received ~s with payload ~s",[Action, kz_json:encode(kz_json:delete_key(<<"auth_token">>, Payload))]),
     Routines = [fun rate/3
                ,fun authenticate/3
                ,fun validate/3
@@ -43,6 +44,7 @@ recv({Action, Payload}, Context) ->
 exec(Context, _Action, _Payload, []) ->
     {'ok', Context};
 exec(Context, Action, Payload, [Fun | Funs]) ->
+    lager:debug("executing ~p for ~s with payload ~s",[Fun, Action, kz_json:encode(kz_json:delete_key(<<"auth_token">>, Payload))]),
     Ctx = Fun(Context, Action, Payload),
     case bh_context:success(Ctx) of
         'true' -> exec(Ctx, Action, Payload, Funs);

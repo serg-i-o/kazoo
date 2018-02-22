@@ -1,5 +1,5 @@
 %%%-------------------------------------------------------------------
-%%% @copyright (C) 2011-2017, 2600Hz INC
+%%% @copyright (C) 2011-2018, 2600Hz INC
 %%% @doc
 %%% Simple authorization module
 %%%
@@ -21,12 +21,13 @@
 
 -define(SERVER, ?MODULE).
 -define(VIEW_SUMMARY, <<"accounts/listing_by_id">>).
--define(SYS_ADMIN_MODS, [<<"global_resources">>
-                        ,<<"templates">>
-                        ,<<"rates">>
-                        ,<<"acls">>
+-define(SYS_ADMIN_MODS, [<<"acls">>
                         ,<<"global_provisioner_templates">>
+                        ,<<"global_resources">>
+                        ,<<"ips">>
+                        ,<<"rates">>
                         ,<<"sup">>
+                        ,<<"templates">>
                         ]).
 
 %% Endpoints performing their own auth
@@ -38,11 +39,12 @@
 
 -spec init() -> 'ok'.
 init() ->
-    crossbar_bindings:bind(<<"*.authorize">>, ?MODULE, 'authorize'),
+    _ = crossbar_bindings:bind(<<"*.authorize">>, ?MODULE, 'authorize'),
     'ok'.
 
 -spec authorize(cb_context:context()) -> boolean().
 authorize(Context) ->
+    _ = cb_context:put_reqid(Context),
     authorize(Context, cb_context:req_verb(Context), cb_context:req_nouns(Context)).
 
 authorize(Context, Verb, [{?KZ_ACCOUNTS_DB, []}]) ->

@@ -1,5 +1,5 @@
 %%%-------------------------------------------------------------------
-%%% @copyright (C) 2012-2017, 2600Hz INC
+%%% @copyright (C) 2012-2018, 2600Hz INC
 %%% @doc
 %%% Renders a custom account email template, or the system default,
 %%% and sends the email with fax attachment to the user.
@@ -28,7 +28,7 @@ init() ->
     {'ok', _} = notify_util:compile_default_subject_template(?DEFAULT_SUBJ_TMPL, ?MOD_CONFIG_CAT),
     lager:debug("init done for ~s", [?MODULE]).
 
--spec handle_req(kz_json:object(), kz_proplist()) -> any().
+-spec handle_req(kz_json:object(), kz_term:proplist()) -> any().
 handle_req(JObj, _Props) ->
     'true' = kapi_notifications:fax_inbound_v(JObj),
 
@@ -68,6 +68,7 @@ handle_req(JObj, _Props) ->
     {'ok', HTMLBody} = notify_util:render_template(CustomHtmlTemplate, ?DEFAULT_HTML_TMPL, Props),
     {'ok', Subject} = notify_util:render_template(CustomSubjectTemplate, ?DEFAULT_SUBJ_TMPL, Props),
 
+    notify_util:send_update(RespQ, MsgId, <<"pending">>),
     notify_util:maybe_send_update(build_and_send_email(TxtBody, HTMLBody, Subject, Emails, props:filter_empty(Props))
                                  ,RespQ
                                  ,MsgId
@@ -79,9 +80,9 @@ handle_req(JObj, _Props) ->
 %% create the props used by the template render function
 %% @end
 %%--------------------------------------------------------------------
--spec create_template_props(kz_json:object(), kz_json:objects(), kz_json:object()) -> kz_proplist().
+-spec create_template_props(kz_json:object(), kz_json:objects(), kz_json:object()) -> kz_term:proplist().
 create_template_props(Event, [FaxDoc | _Others]=_Docs, Account) ->
-    Now = kz_time:current_tstamp(),
+    Now = kz_time:now_s(),
 
     CIDName = kz_json:get_value(<<"Caller-ID-Name">>, Event),
     CIDNum = kz_json:get_value(<<"Caller-ID-Number">>, Event),
@@ -124,7 +125,7 @@ fax_values(Event) ->
 %% process the AMQP requests
 %% @end
 %%--------------------------------------------------------------------
--spec build_and_send_email(iolist(), iolist(), iolist(), ne_binary() | ne_binaries(), kz_proplist()) -> send_email_return().
+-spec build_and_send_email(iolist(), iolist(), iolist(), kz_term:ne_binary() | kz_term:ne_binaries(), kz_term:proplist()) -> send_email_return().
 build_and_send_email(TxtBody, HTMLBody, Subject, To, Props) when is_list(To) ->
     [build_and_send_email(TxtBody, HTMLBody, Subject, T, Props) || T <- To];
 build_and_send_email(_TxtBody, _HTMLBody, _Subject, 'undefined', _Props) ->

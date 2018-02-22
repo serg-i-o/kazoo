@@ -1,5 +1,5 @@
 %%%-------------------------------------------------------------------
-%%% @copyright (C) 2013-2017, 2600Hz INC
+%%% @copyright (C) 2013-2018, 2600Hz INC
 %%% @doc
 %%%
 %%% @end
@@ -73,11 +73,12 @@ flatten(Else, _) -> Else.
 %% going to be responded to.
 %% @end
 %%--------------------------------------------------------------------
+
 -spec allowed_methods() -> http_methods().
--spec allowed_methods(path_token()) -> http_methods().
 allowed_methods() ->
     [?HTTP_GET].
 
+-spec allowed_methods(path_token()) -> http_methods().
 allowed_methods(?CURRENT_BALANCE) ->
     [?HTTP_GET];
 allowed_methods(?CREDIT) ->
@@ -98,9 +99,11 @@ allowed_methods(?SUBSCRIPTIONS) ->
 %%    /transactions/foo/bar => [<<"foo">>, <<"bar">>]
 %% @end
 %%--------------------------------------------------------------------
+
 -spec resource_exists() -> 'true'.
--spec resource_exists(path_token()) -> 'true'.
 resource_exists() -> 'true'.
+
+-spec resource_exists(path_token()) -> 'true'.
 resource_exists(_) -> 'true'.
 
 %%--------------------------------------------------------------------
@@ -303,20 +306,21 @@ create_debit_tansaction(Context) ->
 %%
 %% @end
 %%--------------------------------------------------------------------
+
 -spec validate_transactions(cb_context:context(), http_method()) -> cb_context:context().
--spec validate_transaction(cb_context:context(), path_token(), http_method()) -> cb_context:context().
 validate_transactions(Context, ?HTTP_GET) ->
-    case cb_modules_util:range_view_options(Context) of
+    case crossbar_view:time_range(Context) of
         {CreatedFrom, CreatedTo} ->
             Reason = cb_context:req_value(Context, <<"reason">>),
             fetch_transactions(Context, CreatedFrom, CreatedTo, Reason);
         Context1 -> Context1
     end.
 
+-spec validate_transaction(cb_context:context(), path_token(), http_method()) -> cb_context:context().
 validate_transaction(Context, ?CURRENT_BALANCE, ?HTTP_GET) ->
     CurrentBalance = case wht_util:current_balance(cb_context:account_id(Context)) of
                          {'ok', Bal} -> Bal;
-                         {'error', _} -> 0
+                         {'error', _} -> 0 %% shouldn't we use crossbar_doc:handle_datamgr_errors/3 here?
                      end,
     Balance = wht_util:units_to_dollars(CurrentBalance),
     JObj = kz_json:from_list([{<<"balance">>, Balance}]),
@@ -325,7 +329,7 @@ validate_transaction(Context, ?CURRENT_BALANCE, ?HTTP_GET) ->
                        ,{fun cb_context:set_resp_data/2, JObj}
                        ]);
 validate_transaction(Context, ?MONTHLY, ?HTTP_GET) ->
-    case cb_modules_util:range_view_options(Context) of
+    case crossbar_view:time_range(Context) of
         {CreatedFrom, CreatedTo} ->
             Reason = cb_context:req_value(Context, <<"reason">>),
             fetch_monthly_recurring(Context, CreatedFrom, CreatedTo, Reason);
@@ -346,8 +350,8 @@ validate_transaction(Context, _PathToken, _Verb) ->
 %%
 %% @end
 %%--------------------------------------------------------------------
+
 -spec validate_credit(cb_context:context()) -> cb_context:context().
--spec validate_credit(cb_context:context(), api_float()) -> cb_context:context().
 validate_credit(Context) ->
     Amount = kz_json:get_float_value(<<"amount">>, cb_context:req_data(Context)),
     {'ok', MasterAccountId} = kapps_util:get_master_account_id(),
@@ -364,27 +368,17 @@ validate_credit(Context) ->
             end
     end.
 
+-spec validate_credit(cb_context:context(), kz_term:api_float()) -> cb_context:context().
 validate_credit(Context, 'undefined') ->
-    Message = <<"Amount is required">>,
-    cb_context:add_validation_error(
-      <<"amount">>
-                                   ,<<"required">>
-                                   ,kz_json:from_list([{<<"message">>, Message}])
-                                   ,Context
-     );
+    Message = kz_json:from_list([{<<"message">>, <<"Amount is required">>}]),
+    cb_context:add_validation_error(<<"amount">>, <<"required">>, Message, Context);
 validate_credit(Context, Amount) when Amount =< 0 ->
-    Message = <<"Amount must be greater than 0">>,
-    cb_context:add_validation_error(
-      <<"amount">>
-                                   ,<<"minimum">>
-                                   ,kz_json:from_list([{<<"message">>, Message}])
-                                   ,Context
-     );
+    Message = kz_json:from_list([{<<"message">>, <<"Amount must be greater than 0">>}]),
+    cb_context:add_validation_error(<<"amount">>, <<"minimum">>, Message, Context);
 validate_credit(Context, _) ->
     cb_context:set_resp_status(Context, 'success').
 
 -spec validate_debit(cb_context:context()) -> cb_context:context().
--spec validate_debit(cb_context:context(), api_float()) -> cb_context:context().
 validate_debit(Context) ->
     Amount = kz_json:get_float_value(<<"amount">>, cb_context:req_data(Context)),
 
@@ -397,21 +391,13 @@ validate_debit(Context) ->
             end
     end.
 
+-spec validate_debit(cb_context:context(), kz_term:api_float()) -> cb_context:context().
 validate_debit(Context, 'undefined') ->
-    Message = <<"Amount is required">>,
-    cb_context:add_validation_error(
-      <<"amount">>
-                                   ,<<"required">>
-                                   ,kz_json:from_list([{<<"message">>, Message}])
-                                   ,Context
-     );
+    Message = kz_json:from_list([{<<"message">>, <<"Amount is required">>}]),
+    cb_context:add_validation_error(<<"amount">>, <<"required">>, Message, Context);
 validate_debit(Context, Amount) when Amount =< 0 ->
-    Message = <<"Amount must be more than 0">>,
-    cb_context:add_validation_error(<<"amount">>
-                                   ,<<"minimum">>
-                                   ,kz_json:from_list([{<<"message">>, Message}])
-                                   ,Context
-                                   );
+    Message = kz_json:from_list([{<<"message">>, <<"Amount must be more than 0">>}]),
+    cb_context:add_validation_error(<<"amount">>, <<"minimum">>, Message, Context);
 validate_debit(Context, Amount) ->
     {'ok', MasterAccountId} = kapps_util:get_master_account_id(),
     AuthAccountId = cb_context:auth_account_id(Context),
@@ -431,14 +417,8 @@ validate_debit(Context, Amount) ->
                     cb_context:set_resp_status(Context, 'success');
                 'true' ->
                     Message = <<"Available credit can not be less than 0">>,
-                    cb_context:add_validation_error(<<"amount">>
-                                                   ,<<"minimum">>
-                                                   ,kz_json:from_list(
-                                                      [{<<"message">>, Message}
-                                                      ,{<<"cause">>, FuturAmount}
-                                                      ])
-                                                   ,Context
-                                                   )
+                    JObj = kz_json:from_list([{<<"message">>, Message},{<<"cause">>, FuturAmount}]),
+                    cb_context:add_validation_error(<<"amount">>, <<"minimum">>, JObj, Context)
             end
     end.
 
@@ -448,7 +428,7 @@ validate_debit(Context, Amount) ->
 %%
 %% @end
 %%--------------------------------------------------------------------
--spec fetch_transactions(cb_context:context(), gregorian_seconds(), gregorian_seconds(), api_binary()) ->
+-spec fetch_transactions(cb_context:context(), kz_time:gregorian_seconds(), kz_time:gregorian_seconds(), kz_term:api_binary()) ->
                                 cb_context:context().
 
 fetch_transactions(Context, From, To, 'undefined') ->
@@ -491,7 +471,7 @@ fetch_transactions(Context, From, To, Reason) ->
 %%
 %% @end
 %%--------------------------------------------------------------------
--spec fetch_monthly_recurring(cb_context:context(), gregorian_seconds(), gregorian_seconds(), api_binary()) ->
+-spec fetch_monthly_recurring(cb_context:context(), kz_time:gregorian_seconds(), kz_time:gregorian_seconds(), kz_term:api_binary()) ->
                                      cb_context:context().
 fetch_monthly_recurring(Context, From, To, Reason) ->
     case kz_bookkeeper_braintree:transactions(cb_context:account_id(Context), From, To) of
@@ -575,7 +555,7 @@ correct_date_braintree_subscription(BSubscription) ->
            ],
     lists:foldl(fun correct_date_braintree_subscription_fold/2, BSubscription, Keys).
 
--spec correct_date_braintree_subscription_fold(ne_binary(), kz_json:object()) -> kz_json:object().
+-spec correct_date_braintree_subscription_fold(kz_term:ne_binary(), kz_json:object()) -> kz_json:object().
 correct_date_braintree_subscription_fold(Key, BSub) ->
     case kz_json:get_value(Key, BSub, 'null') of
         'null' -> BSub;
@@ -599,8 +579,4 @@ send_resp({'ok', JObj}, Context) ->
                        ,{fun cb_context:set_resp_data/2, JObj}
                        ]);
 send_resp({'error', Details}, Context) ->
-    cb_context:add_system_error(
-      'bad_identifier'
-                               ,kz_json:from_list([{<<"cause">>, Details}])
-                               ,Context
-     ).
+    cb_context:add_system_error('bad_identifier', kz_json:from_list([{<<"cause">>, Details}]), Context).

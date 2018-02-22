@@ -1,5 +1,5 @@
 %%%-------------------------------------------------------------------
-%%% @copyright (C) 2014-2017, 2600Hz INC
+%%% @copyright (C) 2014-2018, 2600Hz INC
 %%% @doc
 %%% Module for interacting with JSON schema docs
 %%% @end
@@ -40,7 +40,7 @@
  [jesse_error:error_reason()])} |
 {'allowed_errors', non_neg_integer() | 'infinity'} |
 {'default_schema_ver', binary()} |
-{'schema_loader_fun', fun((ne_binary()) -> {'ok', kz_json:object()} | kz_json:object() | 'not_found')} |
+{'schema_loader_fun', fun((kz_term:ne_binary()) -> {'ok', kz_json:object()} | kz_json:object() | 'not_found')} |
 {'extra_validator', extra_validator()} |
 {'setter_fun', fun((kz_json:path(), kz_json:json_term(), kz_json:object()) -> kz_json:object())} |
 {'validator_options', validator_options()}.
@@ -56,7 +56,7 @@
                                                 ]}
                          ]).
 
--spec load(ne_binary() | string()) -> {'ok', kz_json:object()} |
+-spec load(kz_term:ne_binary() | string()) -> {'ok', kz_json:object()} |
                                       {'error', any()}.
 load(<<"./", Schema/binary>>) -> load(Schema);
 load(<<"file://", Schema/binary>>) -> load(Schema);
@@ -67,7 +67,7 @@ load(<<_/binary>> = Schema) ->
     end;
 load(Schema) -> load(kz_term:to_binary(Schema)).
 
--spec fload(ne_binary() | string()) -> {'ok', kz_json:object()} |
+-spec fload(kz_term:ne_binary() | string()) -> {'ok', kz_json:object()} |
                                        {'error', 'not_found'}.
 fload(<<"./", Schema/binary>>) -> fload(Schema);
 fload(<<"file://", Schema/binary>>) -> fload(Schema);
@@ -78,7 +78,7 @@ fload(<<_/binary>> = Schema) ->
     end;
 fload(Schema) -> fload(kz_term:to_binary(Schema)).
 
--spec find_and_fload(ne_binary()) ->
+-spec find_and_fload(kz_term:ne_binary()) ->
                             {'ok', kz_json:object()} |
                             {'error', 'not_found'}.
 find_and_fload(Schema) ->
@@ -89,7 +89,7 @@ find_and_fload(Schema) ->
         'false'-> {'error', 'not_found'}
     end.
 
--spec fload_file(ne_binary()) -> {'ok', kz_json:object()}.
+-spec fload_file(kz_term:ne_binary()) -> {'ok', kz_json:object()}.
 fload_file(SchemaPath) ->
     Schema = filename:basename(SchemaPath, ".json"),
     case file:read_file(SchemaPath) of
@@ -97,7 +97,7 @@ fload_file(SchemaPath) ->
         Error -> Error
     end.
 
--spec maybe_add_ext(ne_binary()) -> ne_binary().
+-spec maybe_add_ext(kz_term:ne_binary()) -> kz_term:ne_binary().
 maybe_add_ext(Schema) ->
     case filename:extension(Schema) of
         <<".json">> -> Schema;
@@ -105,23 +105,24 @@ maybe_add_ext(Schema) ->
     end.
 
 -spec flush() -> 'ok'.
--spec flush(ne_binary()) -> 'ok'.
 flush() ->
     kz_datamgr:flush_cache_docs(?KZ_SCHEMA_DB).
+
+-spec flush(kz_term:ne_binary()) -> 'ok'.
 flush(Schema) ->
     kz_datamgr:flush_cache_doc(?KZ_SCHEMA_DB, Schema).
 
--spec add_defaults(api_object() | ne_binary(), ne_binary() | kz_json:object()) -> api_object().
+-spec add_defaults(kz_term:api_object() | kz_term:ne_binary(), kz_term:ne_binary() | kz_json:object()) -> kz_term:api_object().
 add_defaults(JObj, <<_/binary>> = Schema) ->
     {'ok', SchemaJObj} = load(Schema),
     add_defaults(JObj, SchemaJObj);
 add_defaults(JObj, SchemaJObj) ->
     kz_json:foldl(fun defaults_foldl/3
                  ,JObj
-                 ,kz_json:get_value(<<"properties">>, SchemaJObj, kz_json:new())
+                 ,kz_json:get_json_value(<<"properties">>, SchemaJObj, kz_json:new())
                  ).
 
--spec defaults_foldl(kz_json:path(), kz_json:object(), api_object()) -> api_object().
+-spec defaults_foldl(kz_json:path(), kz_json:object(), kz_term:api_object()) -> kz_term:api_object().
 defaults_foldl(SchemaKey, SchemaValue, JObj) ->
     case kz_json:get_value(<<"default">>, SchemaValue) of
         'undefined' ->
@@ -133,9 +134,9 @@ defaults_foldl(SchemaKey, SchemaValue, JObj) ->
                                 )
     end.
 
--spec maybe_sub_properties(kz_json:path(), kz_json:object(), api_object()) -> api_object().
+-spec maybe_sub_properties(kz_json:path(), kz_json:object(), kz_term:api_object()) -> kz_term:api_object().
 maybe_sub_properties(SchemaKey, SchemaValue, JObj) ->
-    case kz_json:get_value(<<"type">>, SchemaValue) of
+    case kz_json:get_ne_binary_value(<<"type">>, SchemaValue) of
         <<"object">> ->
             maybe_update_data_with_sub(SchemaKey, SchemaValue, JObj);
         <<"array">> ->
@@ -143,7 +144,7 @@ maybe_sub_properties(SchemaKey, SchemaValue, JObj) ->
                                              maybe_sub_properties_foldl(SchemaKey, SchemaValue, SubJObj, Acc)
                                      end
                                     ,{1, JObj}
-                                    ,kz_json:get_value(SchemaKey, JObj, [])
+                                    ,kz_json:get_list_value(SchemaKey, JObj, [])
                                     ),
             JObj1;
         _Type -> JObj
@@ -152,7 +153,7 @@ maybe_sub_properties(SchemaKey, SchemaValue, JObj) ->
 -spec maybe_sub_properties_foldl(kz_json:path(), kz_json:object(), kz_json:json_term(), {pos_integer(), kz_json:object()}) ->
                                         {pos_integer(), kz_json:object()}.
 maybe_sub_properties_foldl(SchemaKey, SchemaValue, SubJObj, {Idx, JObj}) ->
-    case add_defaults(SubJObj, kz_json:get_value(<<"items">>, SchemaValue, kz_json:new())) of
+    case add_defaults(SubJObj, kz_json:get_json_value(<<"items">>, SchemaValue, kz_json:new())) of
         'undefined' -> {Idx+1, JObj};
         NewSubJObj -> {Idx+1, kz_json:set_value([SchemaKey, Idx], NewSubJObj, JObj)}
     end.
@@ -164,57 +165,62 @@ maybe_update_data_with_sub(SchemaKey, SchemaValue, JObj) ->
         SubJObj ->  kz_json:set_value(SchemaKey, SubJObj, JObj)
     end.
 
--spec maybe_default(kz_json:path(), kz_json:json_term(), api_object()) -> api_object().
+-spec maybe_default(kz_json:path(), kz_json:json_term(), kz_term:api_object()) -> kz_term:api_object().
+maybe_default(Key, Default, 'undefined') ->
+    kz_json:set_value(Key, Default, kz_json:new());
 maybe_default(Key, Default, JObj) ->
-    case kz_json:is_json_object(JObj)
-        andalso kz_json:get_value(Key, JObj)
-    of
-        'undefined' when JObj =/= 'undefined' -> kz_json:set_value(Key, Default, JObj);
-        'undefined' ->  kz_json:set_value(Key, Default, kz_json:new());
-        _Value -> JObj
+    case kz_json:is_defined(Key, JObj) of
+        'false' -> kz_json:set_value(Key, Default, JObj);
+        'true' -> JObj
     end.
 
--spec validate(ne_binary() | kz_json:object(), kz_json:object()) ->
-                      {'ok', kz_json:object()} |
-                      jesse_error:error().
--spec validate(ne_binary() | kz_json:object(), kz_json:object(), jesse_options()) ->
+-spec validate(kz_term:ne_binary() | kz_json:object(), kz_json:object()) ->
                       {'ok', kz_json:object()} |
                       jesse_error:error().
 validate(SchemaJObj, DataJObj) ->
     validate(SchemaJObj, DataJObj, ?DEFAULT_OPTIONS).
 
+-ifdef(TEST).
+-define(DEFAULT_LOADER, fun fload/1).
+-else.
+-define(DEFAULT_LOADER, fun load/1).
+-endif.
+
+-spec validate(kz_term:ne_binary() | kz_json:object(), kz_json:object(), jesse_options()) ->
+                      {'ok', kz_json:object()} |
+                      jesse_error:error().
 validate(<<_/binary>> = Schema, DataJObj, Options) ->
-    Fun = props:get_value('schema_loader_fun', Options, fun load/1),
+    Fun = props:get_value('schema_loader_fun', Options, ?DEFAULT_LOADER),
     {'ok', SchemaJObj} = Fun(Schema),
     validate(SchemaJObj, DataJObj, Options);
 validate(SchemaJObj, DataJObj, Options0) when is_list(Options0) ->
     jesse:validate_with_schema(SchemaJObj, DataJObj, Options0 ++ ?DEFAULT_OPTIONS).
 
--type option() :: {'version', ne_binary()} |
+-type option() :: {'version', kz_term:ne_binary()} |
                   {'error_code', integer()} |
-                  {'error_message', ne_binary()}.
+                  {'error_message', kz_term:ne_binary()}.
 -type options() :: [option()].
 
--type validation_error() :: {integer(), ne_binary(), kz_json:object()}.
+-type validation_error() :: {integer(), kz_term:ne_binary(), kz_json:object()}.
 -type validation_errors() :: [validation_error()].
 
 -spec errors_to_jobj([jesse_error:error_reason()]) ->
                             validation_errors().
--spec errors_to_jobj([jesse_error:error_reason()], options()) ->
-                            validation_errors().
 errors_to_jobj(Errors) ->
     errors_to_jobj(Errors, [{'version', ?CURRENT_VERSION}]).
 
+-spec errors_to_jobj([jesse_error:error_reason()], options()) ->
+                            validation_errors().
 errors_to_jobj(Errors, Options) ->
     [error_to_jobj(Error, Options) || Error <- Errors].
 
 -spec error_to_jobj(jesse_error:error_reason()) ->
                            validation_error().
--spec error_to_jobj(jesse_error:error_reason(), options()) ->
-                           validation_error().
 error_to_jobj(Error) ->
     error_to_jobj(Error, [{'version', ?CURRENT_VERSION}]).
 
+-spec error_to_jobj(jesse_error:error_reason(), options()) ->
+                           validation_error().
 error_to_jobj({'data_invalid'
               ,_FailedSchemaJObj
               ,'external_error'
@@ -691,7 +697,7 @@ error_to_jobj(Other, _Options) ->
 %% Add a validation error to the list of request errors
 %% @end
 %%--------------------------------------------------------------------
--spec validation_error(kz_json:path(), ne_binary(), kz_json:object(), options()) ->
+-spec validation_error(kz_json:path(), kz_term:ne_binary(), kz_json:object(), options()) ->
                                   validation_error().
 validation_error(Property, <<"type">>=C, Message, Options) ->
     depreciated_validation_error(Property, C, Message, Options);
@@ -756,7 +762,7 @@ validation_error(Property, Code, Message, Options) ->
     lager:warning("UNKNOWN ERROR CODE: ~p", [Code]),
     depreciated_validation_error(Property, Code, Message, Options).
 
--spec depreciated_validation_error(kz_json:path(), ne_binary(), kz_json:object(), options()) ->
+-spec depreciated_validation_error(kz_json:path(), kz_term:ne_binary(), kz_json:object(), options()) ->
                                           validation_error().
 depreciated_validation_error(<<"account">>, <<"expired">>, Message, Options) ->
     build_validate_error([<<"account">>]
@@ -792,7 +798,7 @@ insert_default_options(Options) ->
                        ,Options
                        ).
 
--spec build_validate_error(kz_json:path(), ne_binary(), kz_json:object(), options()) ->
+-spec build_validate_error(kz_json:path(), kz_term:ne_binary(), kz_json:object(), options()) ->
                                   validation_error().
 build_validate_error(Property, Code, Message, Options) ->
     %% Maintain the same error format we are currently using until we are ready to
@@ -808,20 +814,20 @@ build_validate_error(Property, Code, Message, Options) ->
     ,kz_json:set_values([{[Key, Code], Error}], kz_json:new())
     }.
 
--spec build_error_message(ne_binary(), kz_json:object()) -> kz_json:object() | ne_binary().
+-spec build_error_message(kz_term:ne_binary(), kz_json:object()) -> kz_json:object() | kz_term:ne_binary().
 build_error_message(?VERSION_1, JObj) ->
     kz_json:get_value(<<"message">>, JObj);
 build_error_message(_Version, JObj) ->
     JObj.
 
--spec get_disallow(kz_json:object()) -> ne_binary().
+-spec get_disallow(kz_json:object()) -> kz_term:ne_binary().
 get_disallow(JObj) ->
     case kz_json:get_value(<<"disallow">>, JObj) of
         <<_/binary>> = Disallow -> Disallow;
         Disallows when is_list(Disallows) -> kz_binary:join(Disallows)
     end.
 
--spec get_types(kz_json:object()) -> ne_binary().
+-spec get_types(kz_json:object()) -> kz_term:ne_binary().
 get_types(JObj) ->
     case kz_json:get_first_defined([<<"type">>, <<"types">>], JObj) of
         <<_/binary>> = Type -> Type;
@@ -834,16 +840,23 @@ flatten(?EMPTY_JSON_OBJECT=Empty) -> Empty;
 flatten(?JSON_WRAPPER(L) = Schema) when is_list(L) ->
     kz_json:from_list(
       lists:flatten(
-        flatten_props(kz_json:get_value(<<"properties">>, Schema)
+        flatten_props(kz_json:get_json_value(<<"properties">>, Schema)
                      ,[]
                      ,Schema
                      )
        )
      ).
 
-flatten_props(undefined, Path, Obj) -> flatten_prop(Path, Obj);
-flatten_props(?JSON_WRAPPER(L), Path, _) when is_list(L) ->
-    [ flatten_props(kz_json:get_value(<<"properties">>, V), Path ++ [K], V) || {K, V} <- L ].
+flatten_props('undefined', Path, Obj) -> flatten_prop(Path, Obj);
+flatten_props(?JSON_WRAPPER(L), Path, Obj) when is_list(L) ->
+    [maybe_flatten_props(K, V, Path, Obj)
+     || {K, V} <- L
+    ].
+
+maybe_flatten_props(K, ?JSON_WRAPPER(_)=V, Path, _Obj) ->
+    flatten_props(kz_json:get_json_value(<<"properties">>, V), Path ++ [K], V);
+maybe_flatten_props(K, _V, Path, Obj) ->
+    flatten_prop(Path ++ [K], Obj).
 
 flatten_prop(Path, ?JSON_WRAPPER(L) = Value) when is_list(L) ->
     case lists:last(Path) of
@@ -852,7 +865,10 @@ flatten_prop(Path, ?JSON_WRAPPER(L) = Value) when is_list(L) ->
     end;
 flatten_prop(Path, V) -> [{Path, V}].
 
--spec default_object(kz_json:object()) -> kz_json:object().
+-spec default_object(kz_term:ne_binary() | kz_json:object()) -> kz_json:object().
+default_object(?NE_BINARY=SchemaId) ->
+    {'ok', Schema} = load(SchemaId),
+    default_object(Schema);
 default_object(Schema) ->
     Flat = flatten(Schema),
 

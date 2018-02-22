@@ -1,5 +1,5 @@
 %%%-------------------------------------------------------------------
-%%% @copyright (C) 2011-2017, 2600Hz INC
+%%% @copyright (C) 2011-2018, 2600Hz INC
 %%% @doc
 %%% "data":{"id":"doc_id"}
 %%% @end
@@ -45,7 +45,7 @@ handle_noop_recv(Call, {'error', _E}) ->
     lager:debug("failure playing: ~p", [_E]),
     cf_exe:continue(Call).
 
--spec play(kz_json:object(), kapps_call:call(), ne_binary()) -> ne_binary().
+-spec play(kz_json:object(), kapps_call:call(), kz_term:ne_binary()) -> kz_term:ne_binary().
 play(Data, Call, Media) ->
     case kz_json:is_false(<<"answer">>, Data) of
         'true' -> 'ok';
@@ -54,4 +54,10 @@ play(Data, Call, Media) ->
             timer:sleep(?POST_ANSWER_DELAY)
     end,
     lager:info("playing media ~s", [Media]),
-    kapps_call_command:play(Media, Call).
+
+    kapps_call_command:play(Media
+                           ,kz_json:get_list_value(<<"terminators">>, Data)
+                           ,'undefined'
+                           ,kz_json:is_true(<<"endless_playback">>, Data, 'false')
+                           ,Call
+                           ).

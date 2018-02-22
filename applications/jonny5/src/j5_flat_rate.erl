@@ -1,5 +1,5 @@
 %%%-------------------------------------------------------------------
-%%% @copyright (C) 2012-2017, 2600Hz INC
+%%% @copyright (C) 2012-2018, 2600Hz INC
 %%% @doc
 %%%
 %%% @end
@@ -57,8 +57,9 @@ reconcile_cdr(_, _) -> 'ok'.
 -spec eligible_for_flat_rate(j5_request:request()) -> boolean().
 eligible_for_flat_rate(Request) ->
     Number = knm_converters:normalize(j5_request:number(Request)),
-    TrunkWhitelist = ?WHITELIST,
-    TrunkBlacklist = ?BLACKLIST,
+    {TrunkWhitelist, TrunkBlacklist} = maybe_get_resource_flat_rate(Request),
+    lager:debug("using whitelist: ~p for flat rate check", [TrunkWhitelist]),
+    lager:debug("using blacklist: ~p for flat rate check", [TrunkBlacklist]),
     (kz_term:is_empty(TrunkWhitelist)
      orelse re:run(Number, TrunkWhitelist) =/= 'nomatch'
     )
@@ -66,6 +67,30 @@ eligible_for_flat_rate(Request) ->
           (kz_term:is_empty(TrunkBlacklist)
            orelse re:run(Number, TrunkBlacklist) =:= 'nomatch'
           ).
+
+-define(SHOULD_LOOKUP_FLAT_RATE
+       ,kapps_config:get_is_true(?APP_NAME, <<"resource_flat_rate_lookup">>, 'false')
+       ).
+
+-spec maybe_get_resource_flat_rate(j5_request:request()) ->
+                                          {kz_term:ne_binary(), kz_term:ne_binary()}.
+maybe_get_resource_flat_rate(Request) ->
+    maybe_get_resource_flat_rate(Request, ?SHOULD_LOOKUP_FLAT_RATE).
+
+-spec maybe_get_resource_flat_rate(j5_request:request(), boolean()) ->
+                                          {kz_term:ne_binary(), kz_term:ne_binary()}.
+maybe_get_resource_flat_rate(_Request, 'false') ->
+    {?WHITELIST, ?BLACKLIST};
+maybe_get_resource_flat_rate(Request, 'true') ->
+    ResourceId = j5_request:resource_id(Request),
+    case kz_datamgr:open_cache_doc(?KZ_OFFNET_DB, ResourceId) of
+        {'ok', JObj} ->
+            {kzd_resource:flat_rate_whitelist(JObj, ?WHITELIST)
+            ,kzd_resource:flat_rate_blacklist(JObj, ?BLACKLIST)
+            };
+        {'error', _E} ->
+            {?WHITELIST, ?BLACKLIST}
+    end.
 
 %%--------------------------------------------------------------------
 %% @private
@@ -149,7 +174,7 @@ consume_twoway_limits(Used, Limits) ->
 %%
 %% @end
 %%--------------------------------------------------------------------
--spec consume_limit(integer(), integer(), ne_binary()) -> integer().
+-spec consume_limit(integer(), integer(), kz_term:ne_binary()) -> integer().
 consume_limit(-1, _, Type) ->
     lager:debug("account has unlimited ~s trunks", [Type]),
     0;

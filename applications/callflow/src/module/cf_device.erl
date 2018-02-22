@@ -1,5 +1,5 @@
 %%%-------------------------------------------------------------------
-%%% @copyright (C) 2011-2017, 2600Hz INC
+%%% @copyright (C) 2011-2018, 2600Hz INC
 %%% @doc
 %%%
 %%% @end
@@ -19,7 +19,7 @@
 %% @doc
 %% Entry point for this module, attempts to call an endpoint as defined
 %% in the Data payload.  Returns continue if fails to connect or
-%% stop when successfull.
+%% stop when successful.
 %% @end
 %%--------------------------------------------------------------------
 -spec handle(kz_json:object(), kapps_call:call()) -> 'ok'.
@@ -54,20 +54,15 @@ maybe_handle_bridge_failure(Reason, Call) ->
 bridge_to_endpoints(Data, Call) ->
     EndpointId = kz_json:get_ne_binary_value(<<"id">>, Data),
     Params = kz_json:set_value(<<"source">>, kz_term:to_binary(?MODULE), Data),
+    Strategy = kz_json:get_ne_binary_value(<<"dial_strategy">>, Data, <<"simultaneous">>),
     case kz_endpoint:build(EndpointId, Params, Call) of
         {'error', _}=E -> E;
         {'ok', Endpoints} ->
             FailOnSingleReject = kz_json:is_true(<<"fail_on_single_reject">>, Data, 'undefined'),
             Timeout = kz_json:get_integer_value(<<"timeout">>, Data, ?DEFAULT_TIMEOUT_S),
             IgnoreEarlyMedia = kz_endpoints:ignore_early_media(Endpoints),
-            Command = [{<<"Application-Name">>, <<"bridge">>}
-                      ,{<<"Endpoints">>, Endpoints}
-                      ,{<<"Timeout">>, Timeout}
-                      ,{<<"Ignore-Early-Media">>, IgnoreEarlyMedia}
-                      ,{<<"Fail-On-Single-Reject">>, FailOnSingleReject}
-                      ,{<<"Dial-Endpoint-Method">>, <<"simultaneous">>}
-                      ,{<<"Ignore-Forward">>, <<"false">>}
-                      ],
-            kapps_call_command:send_command(Command, Call),
-            kapps_call_command:b_bridge_wait(Timeout, Call)
+
+            kapps_call_command:b_bridge(Endpoints, Timeout, Strategy, IgnoreEarlyMedia
+                                       ,'undefined', 'undefined', <<"false">>, FailOnSingleReject, Call
+                                       )
     end.

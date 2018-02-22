@@ -1,5 +1,5 @@
 %%%%-------------------------------------------------------------------
-%%% @copyright (C) 2010-2017, 2600Hz
+%%% @copyright (C) 2010-2018, 2600Hz
 %%% @doc
 %%% Created when a call hits a fetch_handler in ecallmgr_route.
 %%% A Control Queue is created by the lookup_route function in the
@@ -78,23 +78,23 @@
 -type insert_at_options() :: 'now' | 'head' | 'tail' | 'flush'.
 
 -record(state, {node :: atom()
-               ,call_id :: ne_binary()
+               ,call_id :: kz_term:ne_binary()
                ,command_q = queue:new() :: queue:queue()
-               ,current_app :: api_binary()
-               ,current_cmd :: api_object()
-               ,start_time = os:timestamp() :: kz_now()
+               ,current_app :: kz_term:api_binary()
+               ,current_cmd :: kz_term:api_object()
+               ,start_time = os:timestamp() :: kz_time:now()
                ,is_call_up = 'true' :: boolean()
                ,is_node_up = 'true' :: boolean()
-               ,keep_alive_ref :: api_reference()
-               ,other_legs = [] :: ne_binaries()
-               ,last_removed_leg :: api_binary()
-               ,sanity_check_tref :: api_reference()
-               ,msg_id :: api_binary()
-               ,fetch_id :: api_binary()
-               ,controller_q :: api_binary()
-               ,control_q :: api_binary()
+               ,keep_alive_ref :: kz_term:api_reference()
+               ,other_legs = [] :: kz_term:ne_binaries()
+               ,last_removed_leg :: kz_term:api_binary()
+               ,sanity_check_tref :: kz_term:api_reference()
+               ,msg_id :: kz_term:api_binary()
+               ,fetch_id :: kz_term:api_binary()
+               ,controller_q :: kz_term:api_ne_binary()
+               ,control_q :: kz_term:api_ne_binary()
                ,initial_ccvs :: kz_json:object()
-               ,node_down_tref :: api_reference()
+               ,node_down_tref :: kz_term:api_reference()
                }).
 -type state() :: #state{}.
 
@@ -110,7 +110,8 @@
 %%--------------------------------------------------------------------
 %% @doc Starts the server
 %%--------------------------------------------------------------------
--spec start_link(atom(), ne_binary(), api_binary(), api_binary(), kz_json:object()) -> startlink_ret().
+-spec start_link(atom(), kz_term:ne_binary(), kz_term:api_ne_binary(), kz_term:api_ne_binary(), kz_json:object()) ->
+                        kz_types:startlink_ret().
 start_link(Node, CallId, FetchId, ControllerQ, CCVs) ->
     %% We need to become completely decoupled from ecallmgr_call_events
     %% because the call_events process might have been spun up with A->B
@@ -130,17 +131,18 @@ start_link(Node, CallId, FetchId, ControllerQ, CCVs) ->
                                      ,{'queue_options', ?QUEUE_OPTIONS}
                                      ,{'consume_options', ?CONSUME_OPTIONS}
                                      ]
-                           ,[Node, CallId, FetchId, ControllerQ, CCVs]).
+                           ,[Node, CallId, FetchId, ControllerQ, CCVs]
+                           ).
 
 -spec stop(pid()) -> 'ok'.
 stop(Srv) ->
     gen_listener:cast(Srv, 'stop').
 
--spec callid(pid()) -> ne_binary().
+-spec callid(pid()) -> kz_term:ne_binary().
 callid(Srv) ->
     gen_listener:call(Srv, 'callid', ?MILLISECONDS_IN_SECOND).
 
--spec node(pid()) -> ne_binary().
+-spec node(pid()) -> kz_term:ne_binary().
 node(Srv) ->
     gen_listener:call(Srv, 'node', ?MILLISECONDS_IN_SECOND).
 
@@ -150,27 +152,27 @@ hostname(Srv) ->
     [_, Hostname] = binary:split(kz_term:to_binary(Node), <<"@">>),
     Hostname.
 
--spec queue_name(pid() | 'undefined') -> api_binary().
-queue_name(Srv) when is_pid(Srv) -> gen_listener:queue_name(Srv);
-queue_name(_) -> 'undefined'.
+-spec queue_name(kz_term:api_pid()) -> kz_term:api_ne_binary().
+queue_name('undefined') -> 'undefined';
+queue_name(Srv) when is_pid(Srv) -> gen_listener:queue_name(Srv).
 
--spec other_legs(pid()) -> ne_binaries().
+-spec other_legs(pid()) -> kz_term:ne_binaries().
 other_legs(Srv) ->
     gen_listener:call(Srv, 'other_legs', ?MILLISECONDS_IN_SECOND).
 
--spec event_execute_complete(api_pid(), ne_binary(), ne_binary()) -> 'ok'.
+-spec event_execute_complete(kz_term:api_pid(), kz_term:ne_binary(), kz_term:ne_binary()) -> 'ok'.
 event_execute_complete('undefined', _CallId, _App) -> 'ok';
 event_execute_complete(Srv, CallId, App) ->
     gen_listener:cast(Srv, {'event_execute_complete', CallId, App, kz_json:new()}).
 
--spec update_node(atom(), ne_binary() | pids()) -> 'ok'.
+-spec update_node(atom(), kz_term:ne_binary() | kz_term:pids()) -> 'ok'.
 update_node(Node, CallId) when is_binary(CallId) ->
     update_node(Node, gproc:lookup_pids({'p', 'l', {'call_control', CallId}}));
 update_node(Node, Pids) when is_list(Pids) ->
     _ = [gen_listener:cast(Srv, {'update_node', Node}) || Srv <- Pids],
     'ok'.
 
--spec control_procs(ne_binary()) -> pids().
+-spec control_procs(kz_term:ne_binary()) -> kz_term:pids().
 control_procs(CallId) ->
     gproc:lookup_pids({'p', 'l', {'call_control', CallId}}).
 
@@ -192,11 +194,16 @@ fs_nodedown(Srv, Node) ->
 %% Initializes the server
 %% @end
 %%--------------------------------------------------------------------
--spec init([atom() | ne_binary() | kz_json:object()]) -> {'ok', state()}.
+-spec init([atom() | kz_term:ne_binary() | kz_json:object()]) -> {'ok', state()}.
 init([Node, CallId, FetchId, ControllerQ, CCVs]) ->
     kz_util:put_callid(CallId),
     lager:debug("starting call control listener"),
     gen_listener:cast(self(), 'init'),
+
+    _ = bind_to_events(Node, CallId),
+
+    _ = reg_for_call_related_events(CallId),
+
     {'ok', #state{node=Node
                  ,call_id=CallId
                  ,command_q=queue:new()
@@ -220,7 +227,7 @@ init([Node, CallId, FetchId, ControllerQ, CCVs]) ->
 %%                                   {stop, Reason, State}
 %% @end
 %%--------------------------------------------------------------------
--spec handle_call(any(), pid_ref(), state()) -> handle_call_ret_state(state()).
+-spec handle_call(any(), kz_term:pid_ref(), state()) -> kz_types:handle_call_ret_state(state()).
 handle_call('node', _From, #state{node=Node}=State) ->
     {'reply', Node, State};
 handle_call('callid', _From, #state{call_id=CallId}=State) ->
@@ -240,13 +247,8 @@ handle_call(_Request, _From, State) ->
 %%                                  {stop, Reason, State}
 %% @end
 %%--------------------------------------------------------------------
--spec handle_cast(any(), state()) -> handle_cast_ret_state(state()).
-handle_cast('init', #state{node=Node
-                          ,call_id=CallId
-                          }=State) ->
-    gproc:reg({'p', 'l', 'call_control'}),
-    reg_for_call_related_events(CallId),
-    bind_to_events(Node, CallId),
+-spec handle_cast(any(), state()) -> kz_types:handle_cast_ret_state(state()).
+handle_cast('init', State) ->
     TRef = erlang:send_after(?SANITY_CHECK_PERIOD, self(), 'sanity_check'),
     {'noreply', State#state{sanity_check_tref=TRef}};
 handle_cast('stop', State) ->
@@ -264,22 +266,12 @@ handle_cast({'event_execute_complete', CallId, AppName, JObj}
     {'noreply', handle_execute_complete(AppName, JObj, State)};
 handle_cast({'event_execute_complete', _, _, _}, State) ->
     {'noreply', State};
-handle_cast({'gen_listener', {'created_queue', _}}
-           ,#state{controller_q='undefined'}=State
-           ) ->
-    lager:debug("call control got created_queue but controller is undefined"),
-    {'noreply', State};
 handle_cast({'gen_listener', {'created_queue', Q}}, State) ->
     {'noreply', State#state{control_q=Q}};
 handle_cast({'gen_listener', {'is_consuming', _IsConsuming}}
            ,#state{controller_q='undefined'}=State
            ) ->
     lager:debug("call control got is_consuming but controller is undefined"),
-    {'noreply', State};
-handle_cast({'gen_listener', {'is_consuming', _IsConsuming}}
-           ,#state{control_q='undefined'}=State
-           ) ->
-    lager:debug("call control got is_consuming but control_q is undefined"),
     {'noreply', State};
 handle_cast({'gen_listener', {'is_consuming', _IsConsuming}}, State) ->
     call_control_ready(State),
@@ -319,7 +311,7 @@ handle_cast(_, State) ->
 %%                                   {stop, Reason, State}
 %% @end
 %%--------------------------------------------------------------------
--spec handle_info(any(), state()) -> handle_info_ret_state(state()).
+-spec handle_info(any(), state()) -> kz_types:handle_info_ret_state(state()).
 handle_info({'event', [CallId | Props]}, #state{call_id=CallId}=State) ->
     handle_event_info(CallId, Props, State);
 handle_info({'event', [CallId | Props]}, State) ->
@@ -393,7 +385,7 @@ handle_call_command(JObj) ->
 handle_conference_command(JObj) ->
     gen_listener:cast(self(), {'dialplan', JObj}).
 
--spec handle_call_events(kz_json:object(), ne_binary()) -> 'ok'.
+-spec handle_call_events(kz_json:object(), kz_term:ne_binary()) -> 'ok'.
 handle_call_events(JObj, FetchId) ->
     kz_util:put_callid(kz_json:get_value(<<"Call-ID">>, JObj)),
     case kz_json:get_value(<<"Event-Name">>, JObj) of
@@ -478,12 +470,35 @@ call_control_ready(#state{call_id=CallId
 %%
 %% @end
 %%--------------------------------------------------------------------
+
 -spec handle_channel_destroyed(kz_json:object(), state()) -> state().
-handle_channel_destroyed(_,  #state{sanity_check_tref=SCTRef
-                                   ,current_app=CurrentApp
-                                   ,current_cmd=CurrentCmd
-                                   ,call_id=CallId
-                                   }=State) ->
+handle_channel_destroyed(JObj, State) ->
+    case kz_json:is_true(<<"Channel-Is-Loopback">>, JObj, 'false') of
+        'false' -> handle_channel_destroyed(State);
+        'true' -> handle_loopback_destroyed(JObj, State)
+    end.
+
+-spec handle_loopback_destroyed(kz_json:object(), state()) -> state().
+handle_loopback_destroyed(JObj, State) ->
+    case {kz_call_event:hangup_cause(JObj)
+         ,kz_json:is_true(<<"Channel-Loopback-Bowout-Execute">>, JObj)
+         }
+    of
+        {<<"NORMAL_UNSPECIFIED">>, 'true'} ->
+            lager:debug("our loopback has ended but we may not have recv the bowout"),
+            State;
+        {_Cause, _Bowout} ->
+            lager:debug("our loopback has ended with ~s(bowout ~s); treating as done"),
+            handle_channel_destroyed(State)
+    end.
+
+-spec handle_channel_destroyed(state()) -> state().
+handle_channel_destroyed(#state{sanity_check_tref=SCTRef
+                               ,current_app=CurrentApp
+                               ,current_cmd=CurrentCmd
+                               ,call_id=CallId
+                               }=State
+                        ) ->
     lager:debug("our channel has been destroyed, executing any post-hangup commands"),
     %% if our sanity check timer is running stop it, it will always return false
     %% now that the channel is gone
@@ -549,7 +564,7 @@ force_queue_advance(#state{call_id=CallId
 %%
 %% @end
 %%--------------------------------------------------------------------
--spec handle_execute_complete(api_binary(), kz_json:object(), state()) -> state().
+-spec handle_execute_complete(kz_term:api_binary(), kz_json:object(), state()) -> state().
 handle_execute_complete('undefined', _, State) -> State;
 handle_execute_complete(<<"noop">>, JObj, #state{msg_id=CurrMsgId}=State) ->
     NoopId = kz_json:get_value(<<"Application-Response">>, JObj),
@@ -588,7 +603,7 @@ handle_execute_complete(AppName, JObj, #state{current_app=CurrApp}=State) ->
         'false' -> State
     end.
 
--spec flush_group_id(queue:queue(), api_binary(), ne_binary()) -> queue:queue().
+-spec flush_group_id(queue:queue(), kz_term:api_binary(), kz_term:ne_binary()) -> queue:queue().
 flush_group_id(CmdQ, 'undefined', _) -> CmdQ;
 flush_group_id(CmdQ, GroupId, AppName) ->
     Filter = kz_json:from_list([{<<"Application-Name">>, AppName}
@@ -637,8 +652,9 @@ forward_queue(#state{call_id = CallId
 %%
 %% @end
 %%--------------------------------------------------------------------
--spec handle_sofia_replaced(ne_binary(), state()) -> state().
+-spec handle_sofia_replaced(kz_term:ne_binary(), state()) -> state().
 handle_sofia_replaced(<<_/binary>> = CallId, #state{call_id=CallId}=State) ->
+    lager:debug("call id hasn't changed, no replacement necessary"),
     State;
 handle_sofia_replaced(<<_/binary>> = ReplacedBy, #state{call_id=CallId
                                                        ,node=Node
@@ -670,7 +686,7 @@ handle_sofia_replaced(<<_/binary>> = ReplacedBy, #state{call_id=CallId
 %%
 %% @end
 %%--------------------------------------------------------------------
--spec handle_channel_create(kz_proplist(), state()) -> state().
+-spec handle_channel_create(kz_term:proplist(), state()) -> state().
 handle_channel_create(Props, #state{call_id=CallId}=State) ->
     LegId = props:get_value(<<"Caller-Unique-ID">>, Props),
     case ecallmgr_fs_channel:get_other_leg(LegId, Props) of
@@ -679,7 +695,7 @@ handle_channel_create(Props, #state{call_id=CallId}=State) ->
         OtherLeg -> maybe_add_cleg(Props, OtherLeg, LegId, State)
     end.
 
--spec add_leg(kz_proplist(), ne_binary(), state()) -> state().
+-spec add_leg(kz_term:proplist(), kz_term:ne_binary(), state()) -> state().
 add_leg(Props, LegId, #state{other_legs=Legs
                             ,call_id=CallId
                             ,node=Node
@@ -704,7 +720,7 @@ add_leg(Props, LegId, #state{other_legs=Legs
             State#state{other_legs=[LegId|Legs]}
     end.
 
--spec publish_leg_addition(kz_proplist()) -> 'ok'.
+-spec publish_leg_addition(kz_term:proplist()) -> 'ok'.
 publish_leg_addition(Props) ->
     Event = ecallmgr_call_events:create_event(<<"LEG_CREATED">>
                                              ,'undefined'
@@ -712,14 +728,14 @@ publish_leg_addition(Props) ->
                                              ),
     ecallmgr_call_events:publish_event(Event).
 
--spec maybe_add_cleg(kz_proplist(), api_binary(), api_binary(), state()) -> state().
+-spec maybe_add_cleg(kz_term:proplist(), kz_term:api_binary(), kz_term:api_binary(), state()) -> state().
 maybe_add_cleg(Props, OtherLeg, LegId, #state{other_legs=Legs}=State) ->
     case lists:member(OtherLeg, Legs) of
         'true' -> add_cleg(Props, OtherLeg, LegId, State);
         'false' -> State
     end.
 
--spec add_cleg(kz_proplist(), api_binary(), api_binary(), state()) -> state().
+-spec add_cleg(kz_term:proplist(), kz_term:api_binary(), kz_term:api_binary(), state()) -> state().
 add_cleg(_Props, _OtherLeg, 'undefined', State) -> State;
 add_cleg(Props, OtherLeg, LegId, #state{other_legs=Legs
                                        ,call_id=CallId
@@ -738,7 +754,7 @@ add_cleg(Props, OtherLeg, LegId, #state{other_legs=Legs
             State#state{other_legs=[LegId|Legs]}
     end.
 
--spec publish_cleg_addition(kz_proplist(), api_binary(), ne_binary()) -> 'ok'.
+-spec publish_cleg_addition(kz_term:proplist(), kz_term:api_binary(), kz_term:ne_binary()) -> 'ok'.
 publish_cleg_addition(Props, OtherLeg, CallId) ->
     Event = ecallmgr_call_events:create_event(<<"LEG_CREATED">>
                                              ,'undefined'
@@ -747,7 +763,7 @@ publish_cleg_addition(Props, OtherLeg, CallId) ->
     Event1 = replace_call_id(Event, OtherLeg, CallId, []),
     ecallmgr_call_events:publish_event(Event1).
 
--spec replace_call_id(kz_proplist(), api_binary(), ne_binary(), kz_proplist()) -> kz_proplist().
+-spec replace_call_id(kz_term:proplist(), kz_term:api_binary(), kz_term:ne_binary(), kz_term:proplist()) -> kz_term:proplist().
 replace_call_id([], _Call1, _Call2, Swap) -> Swap;
 replace_call_id([{Key, Call1}|T], Call1, Call2, Swap) ->
     replace_call_id(T, Call1, Call2, [{Key, Call2}|Swap]);
@@ -760,7 +776,7 @@ replace_call_id([Prop|T], Call1, Call2, Swap) ->
 %%
 %% @end
 %%--------------------------------------------------------------------
--spec handle_channel_destroy(kz_proplist(), state()) -> state().
+-spec handle_channel_destroy(kz_term:proplist(), state()) -> state().
 handle_channel_destroy(Props, #state{call_id=CallId}=State) ->
     LegId = props:get_value(<<"Caller-Unique-ID">>, Props),
     case ecallmgr_fs_channel:get_other_leg(LegId, Props) =:= CallId of
@@ -768,7 +784,7 @@ handle_channel_destroy(Props, #state{call_id=CallId}=State) ->
         'false' -> State
     end.
 
--spec remove_leg(kz_proplist(), state()) -> state().
+-spec remove_leg(kz_term:proplist(), state()) -> state().
 remove_leg(Props, #state{other_legs=Legs
                         ,call_id=CallId
                         }=State) ->
@@ -789,7 +805,7 @@ remove_leg(Props, #state{other_legs=Legs
                        }
     end.
 
--spec publish_leg_removal(kz_proplist()) -> 'ok'.
+-spec publish_leg_removal(kz_term:proplist()) -> 'ok'.
 publish_leg_removal(Props) ->
     Event = ecallmgr_call_events:create_event(<<"LEG_DESTROYED">>
                                              ,'undefined'
@@ -886,7 +902,7 @@ insert_command(#state{node=Node
     end;
 insert_command(#state{node=Node, call_id=CallId}, 'flush', JObj) ->
     lager:debug("received control queue flush command, clearing all waiting commands"),
-    freeswitch:api(Node, 'uuid_break', <<CallId/binary, " all">>),
+    _ = freeswitch:api(Node, 'uuid_break', <<CallId/binary, " all">>),
     self() ! {'force_queue_advance', CallId},
     insert_command_into_queue(queue:new(), 'tail', JObj);
 insert_command(#state{command_q=CommandQ}, 'head', JObj) ->
@@ -1002,11 +1018,11 @@ maybe_filter_queue([AppJObj|T]=Apps, CommandQ) ->
             end
     end.
 
--spec is_post_hangup_command(ne_binary()) -> boolean().
+-spec is_post_hangup_command(kz_term:ne_binary()) -> boolean().
 is_post_hangup_command(AppName) ->
     lists:member(AppName, ?POST_HANGUP_COMMANDS).
 
--spec get_module(ne_binary(), ne_binary()) -> atom().
+-spec get_module(kz_term:ne_binary(), kz_term:ne_binary()) -> atom().
 get_module(Category, Name) ->
     ModuleName = <<"ecallmgr_", Category/binary, "_", Name/binary>>,
     try kz_term:to_atom(ModuleName)
@@ -1088,7 +1104,7 @@ execute_control_request(Cmd, #state{node=Node
             'ok'
     end.
 
--spec which_call_leg(ne_binary(), ne_binaries(), ne_binary()) -> ne_binary().
+-spec which_call_leg(kz_term:ne_binary(), kz_term:ne_binaries(), kz_term:ne_binary()) -> kz_term:ne_binary().
 which_call_leg(CmdLeg, OtherLegs, CallId) ->
     case lists:member(CmdLeg, OtherLegs) of
         'true' ->
@@ -1097,16 +1113,16 @@ which_call_leg(CmdLeg, OtherLegs, CallId) ->
         'false' -> CallId
     end.
 
--spec maybe_send_error_resp(ne_binary(), kz_json:object()) -> 'ok'.
--spec maybe_send_error_resp(ne_binary(), ne_binary(), kz_json:object()) -> 'ok'.
+-spec maybe_send_error_resp(kz_term:ne_binary(), kz_json:object()) -> 'ok'.
 maybe_send_error_resp(CallId, Cmd) ->
     AppName = kz_json:get_value(<<"Application-Name">>, Cmd),
     maybe_send_error_resp(AppName, CallId, Cmd).
 
+-spec maybe_send_error_resp(kz_term:ne_binary(), kz_term:ne_binary(), kz_json:object()) -> 'ok'.
 maybe_send_error_resp(<<"hangup">>, _CallId, _Cmd) -> 'ok';
 maybe_send_error_resp(_, CallId, Cmd) -> send_error_resp(CallId, Cmd).
 
--spec send_error_resp(ne_binary(), kz_json:object()) -> 'ok'.
+-spec send_error_resp(kz_term:ne_binary(), kz_json:object()) -> 'ok'.
 send_error_resp(CallId, Cmd) ->
     send_error_resp(CallId
                    ,Cmd
@@ -1115,14 +1131,14 @@ send_error_resp(CallId, Cmd) ->
                     >>
                    ).
 
--spec send_error_resp(ne_binary(), kz_json:object(), ne_binary()) -> 'ok'.
--spec send_error_resp(ne_binary(), kz_json:object(), ne_binary(), api_object()) -> 'ok'.
+-spec send_error_resp(kz_term:ne_binary(), kz_json:object(), kz_term:ne_binary()) -> 'ok'.
 send_error_resp(CallId, Cmd, Msg) ->
     case ecallmgr_fs_channel:fetch(CallId) of
         {'ok', Channel} -> send_error_resp(CallId, Cmd, Msg, Channel);
         {'error', 'not_found'} -> send_error_resp(CallId, Cmd, Msg, 'undefined')
     end.
 
+-spec send_error_resp(kz_term:ne_binary(), kz_json:object(), kz_term:ne_binary(), kz_term:api_object()) -> 'ok'.
 send_error_resp(CallId, Cmd, Msg, Channel) ->
     CCVs = error_ccvs(Channel),
 
@@ -1136,7 +1152,7 @@ send_error_resp(CallId, Cmd, Msg, Channel) ->
     lager:debug("sending execution error: ~p", [Resp]),
     kapi_dialplan:publish_error(CallId, Resp).
 
--spec error_ccvs(api_object()) -> api_object().
+-spec error_ccvs(kz_term:api_object()) -> kz_term:api_object().
 error_ccvs('undefined') -> 'undefined';
 error_ccvs(Channel) ->
     kz_json:from_list(ecallmgr_fs_channel:channel_ccvs(Channel)).
@@ -1147,7 +1163,7 @@ error_ccvs(Channel) ->
 %%
 %% @end
 %%--------------------------------------------------------------------
--spec get_keep_alive_ref(state()) -> api_reference().
+-spec get_keep_alive_ref(state()) -> kz_term:api_reference().
 get_keep_alive_ref(#state{is_call_up='true'}) -> 'undefined';
 get_keep_alive_ref(#state{keep_alive_ref='undefined'
                          ,is_call_up='false'
@@ -1172,12 +1188,12 @@ get_keep_alive_ref(#state{keep_alive_ref=TRef
 %%
 %% @end
 %%--------------------------------------------------------------------
--spec bind_to_events(atom(), ne_binary()) -> 'true'.
+-spec bind_to_events(atom(), kz_term:ne_binary()) -> 'true'.
 bind_to_events(Node, CallId) ->
     lager:debug("binding to call ~s events on node ~s", [CallId, Node]),
-    'true' = gproc:reg({'p', 'l', {'call_event', Node, CallId}}),
-    'true' = gproc:reg({'p', 'l', {'event', Node, <<"CHANNEL_CREATE">>}}),
-    'true' = gproc:reg({'p', 'l', {'event', Node, <<"CHANNEL_DESTROY">>}}).
+    'true' = gproc:reg({'p', 'l', ?FS_CALL_EVENT_REG_MSG(Node, CallId)}),
+    'true' = gproc:reg({'p', 'l', ?FS_EVENT_REG_MSG(Node, <<"CHANNEL_CREATE">>)}),
+    'true' = gproc:reg({'p', 'l', ?FS_EVENT_REG_MSG(Node, <<"CHANNEL_DESTROY">>)}).
 
 %%--------------------------------------------------------------------
 %% @private
@@ -1185,26 +1201,26 @@ bind_to_events(Node, CallId) ->
 %%
 %% @end
 %%--------------------------------------------------------------------
--spec unbind_from_events(atom(), ne_binary()) -> 'true'.
+-spec unbind_from_events(atom(), kz_term:ne_binary()) -> 'true'.
 unbind_from_events(Node, CallId) ->
     lager:debug("unbinding from call ~s events on node ~s", [CallId, Node]),
-    _ = (catch gproc:unreg({'p', 'l', {'call_event', Node, CallId}})),
-    _ = (catch gproc:unreg({'p', 'l', {'event', Node, <<"CHANNEL_CREATE">>}})),
-    _ = (catch gproc:unreg({'p', 'l', {'event', Node, <<"CHANNEL_DESTROY">>}})),
+    _ = (catch gproc:unreg({'p', 'l', ?FS_CALL_EVENT_REG_MSG(Node, CallId)})),
+    _ = (catch gproc:unreg({'p', 'l', ?FS_EVENT_REG_MSG(Node, <<"CHANNEL_CREATE">>)})),
+    _ = (catch gproc:unreg({'p', 'l', ?FS_EVENT_REG_MSG(Node, <<"CHANNEL_DESTROY">>)})),
     'true'.
 
--spec reg_for_call_related_events(ne_binary()) -> 'ok'.
+-spec reg_for_call_related_events(kz_term:ne_binary()) -> 'ok'.
 reg_for_call_related_events(CallId) ->
     gproc:reg({'p', 'l', {'call_control', CallId}}),
     gproc:reg({'p', 'l', ?LOOPBACK_BOWOUT_REG(CallId)}).
 
--spec unreg_for_call_related_events(ne_binary()) -> 'ok'.
+-spec unreg_for_call_related_events(kz_term:ne_binary()) -> 'ok'.
 unreg_for_call_related_events(CallId) ->
     (catch gproc:unreg({'p', 'l', {'call_control', CallId}})),
     (catch gproc:unreg({'p', 'l', ?LOOPBACK_BOWOUT_REG(CallId)})),
     'ok'.
 
--spec handle_replaced(kz_proplist(), state()) ->
+-spec handle_replaced(kz_term:proplist(), state()) ->
                              {'noreply', state()}.
 handle_replaced(Props, #state{fetch_id=FetchId
                              ,node=Node
@@ -1219,8 +1235,8 @@ handle_replaced(Props, #state{fetch_id=FetchId
                     OtherUUID = props:get_value(<<"Other-Leg-Unique-ID">>, Props),
                     CDR = kz_json:get_value(<<"interaction_id">>, Channel),
                     kz_cache:store_local(?ECALLMGR_INTERACTION_CACHE, CallId, CDR),
-                    ecallmgr_fs_command:set(Node, OtherUUID, [{<<?CALL_INTERACTION_ID>>, CDR}]),
-                    ecallmgr_fs_command:set(Node, OtherLeg, [{<<?CALL_INTERACTION_ID>>, CDR}]),
+                    _ = ecallmgr_fs_command:set(Node, OtherUUID, [{<<?CALL_INTERACTION_ID>>, CDR}]),
+                    _ = ecallmgr_fs_command:set(Node, OtherLeg, [{<<?CALL_INTERACTION_ID>>, CDR}]),
                     {'noreply', handle_sofia_replaced(ReplacedBy, State)};
                 _Else ->
                     lager:debug("channel replaced was not handled : ~p", [_Else]),
@@ -1231,7 +1247,7 @@ handle_replaced(Props, #state{fetch_id=FetchId
             {'noreply', State}
     end.
 
--spec handle_transferee(kz_proplist(), state()) ->
+-spec handle_transferee(kz_term:proplist(), state()) ->
                                {'noreply', state()}.
 handle_transferee(Props, #state{fetch_id=FetchId
                                ,node=_Node
@@ -1246,7 +1262,7 @@ handle_transferee(Props, #state{fetch_id=FetchId
             {'noreply', State}
     end.
 
--spec handle_transferor(kz_proplist(), state()) ->
+-spec handle_transferor(kz_term:proplist(), state()) ->
                                {'noreply', state()}.
 handle_transferor(_Props, #state{fetch_id=_FetchId
                                 ,node=_Node
@@ -1254,7 +1270,7 @@ handle_transferor(_Props, #state{fetch_id=_FetchId
                                 }=State) ->
     {'noreply', State}.
 
--spec handle_intercepted(atom(), ne_binary(), kz_proplist()) -> 'ok'.
+-spec handle_intercepted(atom(), kz_term:ne_binary(), kz_term:proplist()) -> 'ok'.
 handle_intercepted(Node, CallId, Props) ->
     _ = case {props:get_value(<<"Core-UUID">>, Props)
              ,props:get_value(?GET_CUSTOM_HEADER(<<"Core-UUID">>), Props)
@@ -1277,7 +1293,7 @@ handle_intercepted(Node, CallId, Props) ->
         end,
     'ok'.
 
--spec handle_event_info(ne_binary(), kzd_freeswitch:data(), state()) ->
+-spec handle_event_info(kz_term:ne_binary(), kzd_freeswitch:data(), state()) ->
                                {'noreply', state()} |
                                {'stop', any(), state()}.
 handle_event_info(CallId, Props, #state{call_id=CallId
@@ -1320,7 +1336,7 @@ handle_event_info(CallId, Props, #state{call_id=CallId
             {'noreply', State}
     end.
 
--spec handle_other_event_info(api_binary(), kzd_freeswitch:data(), state()) -> {'noreply', state()}.
+-spec handle_other_event_info(kz_term:api_binary(), kzd_freeswitch:data(), state()) -> {'noreply', state()}.
 handle_other_event_info(CallId, Props, State) ->
     case props:get_first_defined([<<"Event-Subclass">>
                                  ,<<"Event-Name">>

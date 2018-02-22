@@ -1,5 +1,5 @@
 %%%-------------------------------------------------------------------
-%%% @copyright (C) 2012-2017, 2600Hz
+%%% @copyright (C) 2012-2018, 2600Hz
 %%% @doc
 %%% Notify-type requests, like MWI updates, received and processed here
 %%% @end
@@ -11,7 +11,7 @@
 
 -export([start_link/1, start_link/2]).
 -export([presence_probe/2]).
--export([check_sync_api/2, check_sync/2]).
+-export([notify_api/2, notify/3]).
 -export([mwi_update/2]).
 -export([register_overwrite/2]).
 -export([init/1
@@ -24,7 +24,7 @@
         ]).
 
 -record(state, {node :: atom()
-               ,options :: kz_proplist()
+               ,options :: kz_term:proplist()
                }).
 -type state() :: #state{}.
 
@@ -36,7 +36,7 @@
                                                  ]}
                                 ,{'probe_type', <<"presence">>}
                                 ]}
-                  ,{'switch', [{'restrict_to', ['check_sync']}]}
+                  ,{'switch', [{'restrict_to', ['notify']}]}
                   ]).
 -define(RESPONDERS, [{{?MODULE, 'presence_probe'}
                      ,[{<<"presence">>, <<"probe">>}]
@@ -47,8 +47,8 @@
                     ,{{?MODULE, 'register_overwrite'}
                      ,[{<<"presence">>, <<"register_overwrite">>}]
                      }
-                    ,{{?MODULE, 'check_sync_api'}
-                     ,[{<<"switch_event">>, <<"check_sync">>}]
+                    ,{{?MODULE, 'notify_api'}
+                     ,[{<<"switch_event">>, <<"notify">>}]
                      }
                     ]).
 -define(QUEUE_NAME, <<"ecallmgr_fs_notify">>).
@@ -67,9 +67,11 @@
 %%--------------------------------------------------------------------
 %% @doc Starts the server
 %%--------------------------------------------------------------------
--spec start_link(atom()) -> startlink_ret().
--spec start_link(atom(), kz_proplist()) -> startlink_ret().
+
+-spec start_link(atom()) -> kz_types:startlink_ret().
 start_link(Node) -> start_link(Node, []).
+
+-spec start_link(atom(), kz_term:proplist()) -> kz_types:startlink_ret().
 start_link(Node, Options) ->
     gen_listener:start_link(?SERVER
                            ,[{'responders', ?RESPONDERS}
@@ -80,7 +82,7 @@ start_link(Node, Options) ->
                             ]
                            ,[Node, Options]).
 
--spec presence_probe(kz_json:object(), kz_proplist()) -> 'ok'.
+-spec presence_probe(kz_json:object(), kz_term:proplist()) -> 'ok'.
 presence_probe(JObj, _Props) ->
     'true' = kapi_presence:probe_v(JObj),
     _ = kz_util:put_callid(JObj),
@@ -92,7 +94,7 @@ presence_probe(JObj, _Props) ->
             end,
     resp_to_probe(State, Username, Realm).
 
--spec resp_to_probe(ne_binary(), ne_binary(), ne_binary()) -> 'ok'.
+-spec resp_to_probe(kz_term:ne_binary(), kz_term:ne_binary(), kz_term:ne_binary()) -> 'ok'.
 resp_to_probe(State, User, Realm) ->
     PresenceId = <<User/binary, "@", Realm/binary>>,
     PresenceUpdate = [{<<"Presence-ID">>, PresenceId}
@@ -102,44 +104,59 @@ resp_to_probe(State, User, Realm) ->
                      ],
     kz_amqp_worker:cast(PresenceUpdate, fun kapi_presence:publish_update/1).
 
--spec check_sync_api(kz_json:object(), kz_proplist()) -> 'ok'.
-check_sync_api(JObj, _Props) ->
-    'true' = kapi_switch:check_sync_v(JObj),
+-spec notify_api(kz_json:object(), kz_term:proplist()) -> 'ok'.
+notify_api(JObj, _Props) ->
+    'true' = kapi_switch:notify_v(JObj),
     kz_util:put_callid(JObj),
-    check_sync(kapi_switch:check_sync_username(JObj), kapi_switch:check_sync_realm(JObj)).
+    maybe_send_notify(kapi_switch:notify_username(JObj)
+                     ,kapi_switch:notify_realm(JObj)
+                     ,JObj
+                     ).
 
--spec check_sync(ne_binary(), ne_binary()) -> 'ok'.
-check_sync(Username, Realm) ->
+-spec notify(kz_term:ne_binary(), kz_term:ne_binary(), kz_term:ne_binary()) -> 'ok'.
+notify(Username, Realm, Event) ->
+    JObj = kz_json:from_list([{<<"Event">>, Event}]),
+    maybe_send_notify(Username, Realm, JObj).
+
+-spec maybe_send_notify(kz_term:ne_binary(), kz_term:ne_binary(), kz_json:object()) -> 'ok'.
+maybe_send_notify(Username, Realm, JObj) ->
     lager:info("looking up registration information for ~s@~s", [Username, Realm]),
     case ecallmgr_registrar:lookup_registration(Realm, Username) of
         {'error', 'not_found'} ->
-            lager:warning("failed to find contact ~s@~s, not sending check-sync", [Username, Realm]);
+            lager:warning("failed to find contact ~s@~s, not sending NOTIFY", [Username, Realm]);
         {'ok', Registration} ->
             Contact = kz_json:get_first_defined([<<"Bridge-RURI">>, <<"Contact">>], Registration),
             [Node|_] = kz_term:shuffle_list(ecallmgr_fs_nodes:connected()),
-            lager:info("calling check sync on ~s for ~s@~s and contact ~s", [Node, Username, Realm, Contact]),
+            lager:info("sending NOTIFY on ~s for ~s@~s and contact ~s", [Node, Username, Realm, Contact]),
             case ensure_contact_user(Contact, Username, Realm) of
                 'undefined' ->
                     lager:error("invalid contact ~p: ~p", [Contact, Registration]);
-                Valid -> send_check_sync(Node, Username, Realm, Valid)
+                Valid -> send_notify(Node, Username, Realm, JObj, Valid)
             end
     end.
 
--spec send_check_sync(atom(), ne_binary(), ne_binary(), ne_binary()) -> 'ok'.
-send_check_sync(Node, Username, Realm, Contact) ->
+-spec send_notify(atom(), kz_term:ne_binary(), kz_term:ne_binary(), kz_json:object(), kz_term:ne_binary()) -> 'ok'.
+send_notify(Node, Username, Realm, JObj, Contact) ->
     AOR = To = From = kzsip_uri:ruri(#uri{user=Username, domain=Realm}),
     SIPHeaders = <<"X-KAZOO-AOR : ", AOR/binary, "\r\n">>,
-    Headers = [{"profile", ?DEFAULT_FS_PROFILE}
-              ,{"contact-uri", Contact}
-              ,{"extra-headers", SIPHeaders}
-              ,{"to-uri", To}
-              ,{"from-uri", From}
-              ,{"event-string", "check-sync"}
-              ],
+    Event = kz_json:get_ne_binary_value(<<"Event">>, JObj),
+    Body = kz_json:get_ne_binary_value(<<"Body">>, JObj),
+    ContentType = kz_json:get_ne_binary_value(<<"Content-Type">>, JObj),
+    Headers = props:filter_undefined(
+                [{"body", Body}
+                ,{"contact-uri", Contact}
+                ,{"content-type", ContentType}
+                ,{"event-string", Event}
+                ,{"extra-headers", SIPHeaders}
+                ,{"from-uri", From}
+                ,{"profile", ?DEFAULT_FS_PROFILE}
+                ,{"to-uri", To}
+                ]),
     Resp = freeswitch:sendevent(Node, 'NOTIFY', Headers),
-    lager:info("send check-sync to '~s@~s' via ~s: ~p", [Username, Realm, Node, Resp]).
+    lager:info("send NOTIFY with Event '~s' (has body? ~w) to '~s@~s' via ~s: ~p"
+              ,[Event, (Body =/= 'undefined'), Username, Realm, Node, Resp]).
 
--spec mwi_update(kz_json:object(), kz_proplist()) -> no_return().
+-spec mwi_update(kz_json:object(), kz_term:proplist()) -> no_return().
 mwi_update(JObj, Props) ->
     _ = kz_util:put_callid(JObj),
     'true' = kapi_presence:mwi_unsolicited_update_v(JObj),
@@ -152,7 +169,7 @@ mwi_update(JObj, Props) ->
             send_mwi_update(JObj, Username, Realm, Node, Registration)
     end.
 
--spec send_mwi_update(kz_json:object(), ne_binary(), ne_binary(), atom(), kz_json:object()) -> 'ok'.
+-spec send_mwi_update(kz_json:object(), kz_term:ne_binary(), kz_term:ne_binary(), atom(), kz_json:object()) -> 'ok'.
 send_mwi_update(JObj, Username, Realm, Node, Registration) ->
     ToURI = #uri{user=kz_json:get_value(<<"To-User">>, Registration, Username)
                 ,domain=kz_json:get_value(<<"To-Host">>, Registration, Realm)
@@ -190,7 +207,7 @@ send_mwi_update(JObj, Username, Realm, Node, Registration) ->
             lager:debug("sent MWI update to '~s' via ~s: ~p", [Contact, Node, Resp])
     end.
 
--spec register_overwrite(kz_json:object(), kz_proplist()) -> no_return().
+-spec register_overwrite(kz_json:object(), kz_term:proplist()) -> no_return().
 register_overwrite(JObj, Props) ->
     Node = props:get_value('node', Props),
     Username = kz_json:get_binary_value(<<"Username">>, JObj, <<"unknown">>),
@@ -246,7 +263,7 @@ register_overwrite(JObj, Props) ->
                 ,Node
                 ]).
 
--spec ensure_contact_user(ne_binary(), ne_binary(), ne_binary()) -> api_binary().
+-spec ensure_contact_user(kz_term:ne_binary(), kz_term:ne_binary(), kz_term:ne_binary()) -> kz_term:api_binary().
 ensure_contact_user(OriginalContact, Username, Realm) ->
     ecallmgr_util:fix_contact(OriginalContact, Username, Realm).
 
@@ -260,7 +277,7 @@ ensure_contact_user(OriginalContact, Username, Realm) ->
 %% Initializes the server
 %% @end
 %%--------------------------------------------------------------------
--spec init([atom() | kz_proplist()]) -> {'ok', state()}.
+-spec init([atom() | kz_term:proplist()]) -> {'ok', state()}.
 init([Node, Options]) ->
     process_flag('trap_exit', 'true'),
     kz_util:put_callid(Node),
@@ -282,7 +299,7 @@ init([Node, Options]) ->
 %%                                   {stop, Reason, State}
 %% @end
 %%--------------------------------------------------------------------
--spec handle_call(any(), pid_ref(), state()) -> handle_call_ret_state(state()).
+-spec handle_call(any(), kz_term:pid_ref(), state()) -> kz_types:handle_call_ret_state(state()).
 handle_call(_Request, _From, State) ->
     {'reply', {'error', 'not_implemented'}, State}.
 
@@ -296,7 +313,7 @@ handle_call(_Request, _From, State) ->
 %%                                  {stop, Reason, State}
 %% @end
 %%--------------------------------------------------------------------
--spec handle_cast(any(), state()) -> handle_cast_ret_state(state()).
+-spec handle_cast(any(), state()) -> kz_types:handle_cast_ret_state(state()).
 handle_cast(_Msg, State) ->
     {'noreply', State}.
 
@@ -310,7 +327,7 @@ handle_cast(_Msg, State) ->
 %%                                   {stop, Reason, State}
 %% @end
 %%--------------------------------------------------------------------
--spec handle_info(any(), state()) -> handle_info_ret_state(state()).
+-spec handle_info(any(), state()) -> kz_types:handle_info_ret_state(state()).
 handle_info({'EXIT', _, 'noconnection'}, State) ->
     {stop, {'shutdown', 'noconnection'}, State};
 handle_info({'EXIT', _, Reason}, State) ->
