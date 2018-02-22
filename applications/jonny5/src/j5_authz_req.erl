@@ -197,7 +197,13 @@ maybe_authorize(Request, Limits) ->
 -spec maybe_authorize_exception(j5_request:request(), j5_limits:limits()) -> j5_request:request().
 maybe_authorize_exception(Request, Limits) ->
     CallDirection = j5_request:call_direction(Request),
-    case j5_request:classification(Request) of
+    AuthType = kz_json:get_value(<<"Authorizing-Type">>, j5_request:ccvs(Request)),
+    case not is_authorizing_mobile(AuthType)
+        andalso j5_request:classification(Request)
+    of
+        'false' ->
+            lager:debug("allowing mobile call"),
+            j5_per_minute:authorize(Request, Limits);
         <<"emergency">> ->
             lager:debug("allowing emergency call"),
             j5_request:authorize(<<"limits_disabled">>, Request, Limits);
@@ -206,6 +212,10 @@ maybe_authorize_exception(Request, Limits) ->
             j5_request:authorize(<<"limits_disabled">>, Request, Limits);
         _Else -> maybe_hard_limit(Request, Limits)
     end.
+
+-spec is_authorizing_mobile(api_ne_binary()) -> boolean().
+is_authorizing_mobile(<<"mobile">>) -> 'true';
+is_authorizing_mobile(_) -> 'false'.
 
 -spec maybe_hard_limit(j5_request:request(), j5_limits:limits()) -> j5_request:request().
 maybe_hard_limit(Request, Limits) ->
@@ -263,7 +273,11 @@ maybe_inbound_soft_limit(Request, Limits) ->
             j5_request:set_soft_limit(Request)
     end.
 
--define(AUTZH_TYPES_FOR_OUTBOUND, [<<"account">>, <<"user">>, <<"device">>]).
+-define(AUTZH_TYPES_FOR_OUTBOUND, [<<"account">>
+                                  ,<<"user">>
+                                  ,<<"device">>
+                                  ,<<"mobile">>
+                                  ]).
 
 -spec maybe_get_outbound_flags(api_binary(), api_binary(), ne_binary()) -> api_binary().
 maybe_get_outbound_flags('undefined', _AuthId, _AccountDb) -> 'undefined';
@@ -272,8 +286,17 @@ maybe_get_outbound_flags(AuthType, AuthId, AccountDb) ->
     case lists:member(AuthType, ?AUTZH_TYPES_FOR_OUTBOUND)
         andalso kz_endpoint:get(AuthId, AccountDb)
     of
-        {'ok', Endpoint} -> kz_json:get_value(<<"outbound_flags">>, Endpoint);
+        {'ok', Endpoint} -> get_outbound_flags(Endpoint);
         _ -> 'undefined'
+    end.
+
+-spec get_outbound_flags(kz_json:object()) -> api_binary().
+get_outbound_flags(Endpoint) ->
+%%% TODO: without a kapps_call we can not support dynamic
+%%%     flags yet
+    case kz_device:outbound_static_flags(Endpoint) of
+        [] -> 'undefined';
+        Flags -> Flags
     end.
 
 -spec send_response(j5_request:request()) -> 'ok'.
@@ -286,23 +309,20 @@ send_response(Request) ->
     OutboundFlags = maybe_get_outbound_flags(AuthType, AuthId, AccountDb),
 
     CCVs = kz_json:from_list(
-             props:filter_undefined(
-               [{<<"Account-Trunk-Usage">>, trunk_usage(j5_request:account_id(Request))}
-               ,{<<"Reseller-Trunk-Usage">>, trunk_usage(j5_request:reseller_id(Request))}
-               ,{<<"Outbound-Flags">>, OutboundFlags}
-               ]
-              )
-            ),
+             [{<<"Account-Trunk-Usage">>, trunk_usage(j5_request:account_id(Request))}
+             ,{<<"Reseller-Trunk-Usage">>, trunk_usage(j5_request:reseller_id(Request))}
+             ,{<<"Outbound-Flags">>, OutboundFlags}
+             ]),
 
     Resp = props:filter_undefined(
-             [{<<"Is-Authorized">>, kz_util:to_binary(j5_request:is_authorized(Request))}
+             [{<<"Is-Authorized">>, kz_term:to_binary(j5_request:is_authorized(Request))}
              ,{<<"Account-ID">>, j5_request:account_id(Request)}
              ,{<<"Account-Billing">>, j5_request:account_billing(Request)}
              ,{<<"Reseller-ID">>, j5_request:reseller_id(Request)}
              ,{<<"Reseller-Billing">>, j5_request:reseller_billing(Request)}
              ,{<<"Call-Direction">>, j5_request:call_direction(Request)}
              ,{<<"Other-Leg-Call-ID">>, j5_request:other_leg_call_id(Request)}
-             ,{<<"Soft-Limit">>, kz_util:to_binary(j5_request:soft_limit(Request))}
+             ,{<<"Soft-Limit">>, kz_term:to_binary(j5_request:soft_limit(Request))}
              ,{<<"Msg-ID">>, j5_request:message_id(Request)}
              ,{<<"Call-ID">>, j5_request:call_id(Request)}
              ,{<<"Custom-Channel-Vars">>, CCVs}
@@ -322,8 +342,8 @@ send_response(Request) ->
 trunk_usage(Id) ->
     Limits = j5_limits:get(Id),
     <<
-      (kz_util:to_binary(j5_limits:inbound_trunks(Limits)))/binary, "/",
-      (kz_util:to_binary(j5_limits:outbound_trunks(Limits)))/binary, "/",
-      (kz_util:to_binary(j5_limits:twoway_trunks(Limits)))/binary, "/",
-      (kz_util:to_binary(j5_limits:burst_trunks(Limits)))/binary
+      (kz_term:to_binary(j5_limits:inbound_trunks(Limits)))/binary, "/",
+      (kz_term:to_binary(j5_limits:outbound_trunks(Limits)))/binary, "/",
+      (kz_term:to_binary(j5_limits:twoway_trunks(Limits)))/binary, "/",
+      (kz_term:to_binary(j5_limits:burst_trunks(Limits)))/binary
     >>.

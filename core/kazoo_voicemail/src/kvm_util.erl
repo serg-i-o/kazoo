@@ -14,7 +14,7 @@
         ,check_doc_type/3
 
         ,check_msg_belonging/2
-        ,get_change_vmbox_funs/4
+        ,get_change_vmbox_funs/4, get_change_vmbox_funs/5
 
         ,retention_seconds/0, retention_seconds/1
         ,maybe_set_deleted_by_retention/1, maybe_set_deleted_by_retention/2
@@ -47,7 +47,7 @@ get_db(AccountId, Doc) ->
     get_db(AccountId, kz_doc:id(Doc)).
 
 get_db(AccountId, Year, Month) ->
-    kazoo_modb:get_modb(AccountId, kz_util:to_integer(Year), kz_util:to_integer(Month)).
+    kazoo_modb:get_modb(AccountId, kz_term:to_integer(Year), kz_term:to_integer(Month)).
 
 %%--------------------------------------------------------------------
 %% @public
@@ -60,7 +60,7 @@ get_range_db(AccountId) ->
     get_range_db(AccountId, ?RETENTION_DAYS).
 
 get_range_db(AccountId, Days) ->
-    To = kz_util:current_tstamp(),
+    To = kz_time:current_tstamp(),
     From = To - retention_seconds(Days),
     lists:reverse([Db || Db <- kazoo_modb:get_range(AccountId, From, To)]).
 
@@ -152,7 +152,7 @@ maybe_set_deleted_by_retention(JObj) ->
 
 maybe_set_deleted_by_retention(JObj, Timestamp) ->
     TsTampPath = [<<"utc_seconds">>, <<"timestamp">>],
-    MsgTstamp = kz_util:to_integer(kz_json:get_first_defined(TsTampPath, JObj, 0)),
+    MsgTstamp = kz_term:to_integer(kz_json:get_first_defined(TsTampPath, JObj, 0)),
     case MsgTstamp =/= 0
         andalso MsgTstamp < Timestamp
     of
@@ -166,15 +166,38 @@ maybe_set_deleted_by_retention(JObj, Timestamp) ->
 %% @end
 %%--------------------------------------------------------------------
 -spec get_change_vmbox_funs(ne_binary(), ne_binary(), kz_json:object(), ne_binary()) ->
-                                   update_funs().
+                                   {ne_binary(), update_funs()}.
 get_change_vmbox_funs(AccountId, NewBoxId, NBoxJ, OldBoxId) ->
-    [fun(DocJ) -> kzd_box_message:set_source_id(NewBoxId, DocJ) end
-    ,fun(DocJ) -> kzd_box_message:apply_folder(?VM_FOLDER_NEW, DocJ) end
-    ,fun(DocJ) -> kzd_box_message:change_message_name(NBoxJ, DocJ) end
-    ,fun(DocJ) -> kzd_box_message:change_to_sip_field(AccountId, NBoxJ, DocJ) end
-    ,fun(DocJ) -> kzd_box_message:add_message_history(OldBoxId, DocJ) end
-    ,fun(DocJ) -> kz_json:set_value(<<"timestamp">>, kz_util:current_tstamp(), DocJ) end
-    ].
+    get_change_vmbox_funs(AccountId, NewBoxId, NBoxJ, OldBoxId, 'undefined').
+
+-spec get_change_vmbox_funs(ne_binary(), ne_binary(), kz_json:object(), ne_binary(), api_binary()) ->
+                                   {ne_binary(), update_funs()}.
+get_change_vmbox_funs(AccountId, NewBoxId, NBoxJ, OldBoxId, ToId) ->
+    Timestamp = kz_time:current_tstamp(),
+    {{Y, M, _}, _} = calendar:gregorian_seconds_to_datetime(Timestamp),
+    Year = kz_term:to_binary(Y),
+    Month = kz_date:pad_month(M),
+
+    NewId = case ToId of
+                'undefined' -> kazoo_modb_util:modb_id(Year, Month, kz_binary:rand_hex(16));
+                ?MATCH_MODB_PREFIX(Year, Month,  _Rest) -> ToId;
+                _OldId -> kazoo_modb_util:modb_id(Year, Month, kz_binary:rand_hex(16))
+            end,
+    AccountDb = get_db(AccountId, NewId),
+
+    {NewId
+    ,[fun(DocJ) -> kzd_box_message:set_source_id(NewBoxId, DocJ) end
+     ,fun(DocJ) -> kzd_box_message:apply_folder(?VM_FOLDER_NEW, DocJ) end
+     ,fun(DocJ) -> kzd_box_message:change_message_name(NBoxJ, DocJ) end
+     ,fun(DocJ) -> kzd_box_message:change_to_sip_field(AccountId, NBoxJ, DocJ) end
+     ,fun(DocJ) -> kzd_box_message:add_message_history(OldBoxId, DocJ) end
+     ,fun(DocJ) -> kzd_box_message:update_media_id(NewId, DocJ) end
+     ,fun(DocJ) -> kz_json:set_value([<<"metadata">>, <<"timestamp">>], Timestamp, DocJ) end
+     ,fun(DocJ) -> kz_json:set_value(<<"utc_seconds">>, Timestamp, DocJ) end
+     ,fun(DocJ) -> kz_doc:set_account_db(DocJ, AccountDb) end
+     ,fun(DocJ) -> kz_doc:set_modified(DocJ, Timestamp) end
+     ]
+    }.
 
 %%--------------------------------------------------------------------
 %% @public
@@ -187,8 +210,8 @@ get_caller_id_name(Call) ->
     case kapps_call:kvs_fetch('prepend_cid_name', Call) of
         'undefined' -> CallerIdName;
         Prepend ->
-            Pre = <<(kz_util:to_binary(Prepend))/binary, CallerIdName/binary>>,
-            kz_util:truncate_right_binary(Pre, kzd_schema_caller_id:external_name_max_length())
+            Pre = <<(kz_term:to_binary(Prepend))/binary, CallerIdName/binary>>,
+            kz_binary:truncate_right(Pre, kzd_schema_caller_id:external_name_max_length())
     end.
 
 %%--------------------------------------------------------------------
@@ -202,8 +225,8 @@ get_caller_id_number(Call) ->
     case kapps_call:kvs_fetch('prepend_cid_number', Call) of
         'undefined' -> CallerIdNumber;
         Prepend ->
-            Pre = <<(kz_util:to_binary(Prepend))/binary, CallerIdNumber/binary>>,
-            kz_util:truncate_right_binary(Pre, kzd_schema_caller_id:external_name_max_length())
+            Pre = <<(kz_term:to_binary(Prepend))/binary, CallerIdNumber/binary>>,
+            kz_binary:truncate_right(Pre, kzd_schema_caller_id:external_name_max_length())
     end.
 
 %%%===================================================================
@@ -228,22 +251,18 @@ publish_saved_notify(MediaId, BoxId, Call, Length, Props) ->
                  ,{<<"Account-DB">>, kapps_call:account_db(Call)}
                  ,{<<"Account-ID">>, kapps_call:account_id(Call)}
                  ,{<<"Voicemail-Box">>, BoxId}
-                 ,{<<"Voicemail-Name">>, MediaId}
+                 ,{<<"Voicemail-ID">>, MediaId}
                  ,{<<"Caller-ID-Number">>, get_caller_id_number(Call)}
                  ,{<<"Caller-ID-Name">>, get_caller_id_name(Call)}
-                 ,{<<"Voicemail-Timestamp">>, kz_util:current_tstamp()}
+                 ,{<<"Voicemail-Timestamp">>, kz_time:current_tstamp()}
                  ,{<<"Voicemail-Length">>, Length}
                  ,{<<"Voicemail-Transcription">>, Transcription}
-                 ,{<<"Call-ID">>, kapps_call:call_id(Call)}
+                 ,{<<"Call-ID">>, kapps_call:call_id_direct(Call)}
                   | kz_api:default_headers(?APP_NAME, ?APP_VERSION)
                  ],
 
     lager:debug("notifying of voicemail saved"),
-    kz_amqp_worker:call_collect(NotifyProp
-                               ,fun kapi_notifications:publish_voicemail/1
-                               ,fun collecting/1
-                               ,30 * ?MILLISECONDS_IN_SECOND
-                               ).
+    kapps_notify_publisher:call_collect(NotifyProp, fun kapi_notifications:publish_voicemail_new/1).
 
 %%--------------------------------------------------------------------
 %% @public
@@ -259,15 +278,15 @@ publish_voicemail_saved(Length, BoxId, Call, MediaId, Timestamp) ->
            ,{<<"Account-DB">>, kapps_call:account_db(Call)}
            ,{<<"Account-ID">>, kapps_call:account_id(Call)}
            ,{<<"Voicemail-Box">>, BoxId}
-           ,{<<"Voicemail-Name">>, MediaId}
+           ,{<<"Voicemail-ID">>, MediaId}
            ,{<<"Caller-ID-Number">>, get_caller_id_number(Call)}
            ,{<<"Caller-ID-Name">>, get_caller_id_name(Call)}
            ,{<<"Voicemail-Timestamp">>, Timestamp}
            ,{<<"Voicemail-Length">>, Length}
-           ,{<<"Call-ID">>, kapps_call:call_id(Call)}
+           ,{<<"Call-ID">>, kapps_call:call_id_direct(Call)}
             | kz_api:default_headers(?APP_NAME, ?APP_VERSION)
            ],
-    kapi_notifications:publish_voicemail_saved(Prop),
+    kapps_notify_publisher:cast(Prop, fun kapi_notifications:publish_voicemail_saved/1),
     lager:debug("published voicemail_saved for ~s", [BoxId]).
 
 %%--------------------------------------------------------------------
@@ -290,21 +309,6 @@ get_notify_completed_message([JObj|JObjs], Acc) ->
 %%%===================================================================
 %%% Internal functions
 %%%===================================================================
-
-%%--------------------------------------------------------------------
-%% @private
-%% @doc
-%% @end
-%%--------------------------------------------------------------------
--spec collecting(kz_json:objects()) -> boolean().
-collecting([JObj|_]) ->
-    case kapi_notifications:notify_update_v(JObj)
-        andalso kz_json:get_value(<<"Status">>, JObj)
-    of
-        <<"completed">> -> 'true';
-        <<"failed">> -> 'true';
-        _ -> 'false'
-    end.
 
 %%--------------------------------------------------------------------
 %% @private
@@ -336,7 +340,7 @@ maybe_transcribe(_, _, 'false') -> 'undefined'.
 maybe_transcribe(_, _, _, 'undefined') -> 'undefined';
 maybe_transcribe(_, _, <<>>, _) -> 'undefined';
 maybe_transcribe(Db, MediaDoc, Bin, ContentType) ->
-    case kapps_speech:asr_freeform(Bin, ContentType) of
+    case kazoo_asr:freeform(Bin, ContentType) of
         {'ok', Resp} ->
             lager:info("transcription resp: ~p", [Resp]),
             MediaDoc1 = kz_json:set_value(<<"transcription">>, Resp, MediaDoc),

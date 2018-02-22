@@ -39,16 +39,16 @@ connection_options(Props) ->
 
 -spec connection(kz_proplist() | map()) -> data_connection().
 connection(List) when is_list(List) ->
-    connection(maps:from_list(props:filter_undefined(List)));
+    connection(maps:from_list(List));
 connection(#{driver := App}=Map)
   when not is_atom(App) ->
-    connection(Map#{driver => kz_util:to_atom(App, 'true')});
+    connection(Map#{driver => kz_term:to_atom(App, 'true')});
 connection(#{app := App}=Map)
   when not is_atom(App) ->
-    connection(Map#{app => kz_util:to_atom(App, 'true')});
+    connection(Map#{app => kz_term:to_atom(App, 'true')});
 connection(#{module := App}=Map)
   when not is_atom(App) ->
-    connection(Map#{module => kz_util:to_atom(App, 'true')});
+    connection(Map#{module => kz_term:to_atom(App, 'true')});
 connection(#{module := App, tag := Tag}=Map) ->
     _ = ensure_driver_app(Map),
     is_driver_app(App),

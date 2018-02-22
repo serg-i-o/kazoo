@@ -11,6 +11,7 @@
 
 -export([init/0
         ,allowed_methods/0, allowed_methods/1, allowed_methods/2
+        ,authorize/1, authorize/2
         ,resource_exists/0, resource_exists/1, resource_exists/2
         ,content_types_provided/2
         ,content_types_accepted/2
@@ -47,6 +48,9 @@
 -define(NOTIFICATION_TIMEOUT
        ,kapps_config:get_integer(?MOD_CONFIG_CAT, <<"notification_timeout_ms">>, 5 * ?MILLISECONDS_IN_SECOND)
        ).
+-define(INHERIT_DEFAULT_VALUES
+       ,kapps_config:get_is_true(?MOD_CONFIG_CAT, <<"inherit_default_values">>, 'false')
+       ).
 
 -define(PVT_TYPE_SMTPLOG, <<"notify_smtp_log">>).
 
@@ -63,6 +67,7 @@
 -spec init() -> 'ok'.
 init() ->
     _ = crossbar_bindings:bind(<<"*.allowed_methods.notifications">>, ?MODULE, 'allowed_methods'),
+    _ = crossbar_bindings:bind(<<"*.authorize">>, ?MODULE, 'authorize'),
     _ = crossbar_bindings:bind(<<"*.resource_exists.notifications">>, ?MODULE, 'resource_exists'),
     _ = crossbar_bindings:bind(<<"*.content_types_provided.notifications">>, ?MODULE, 'content_types_provided'),
     _ = crossbar_bindings:bind(<<"*.content_types_accepted.notifications">>, ?MODULE, 'content_types_accepted'),
@@ -83,7 +88,7 @@ init() ->
 -spec allowed_methods(path_token(), path_token()) -> http_methods().
 
 allowed_methods() ->
-    [?HTTP_GET, ?HTTP_PUT].
+    [?HTTP_GET, ?HTTP_PUT, ?HTTP_DELETE].
 
 allowed_methods(?SMTP_LOG) ->
     [?HTTP_GET];
@@ -96,6 +101,25 @@ allowed_methods(?SMTP_LOG, _SMTPLogId) ->
     [?HTTP_GET];
 allowed_methods(?CUSTOMER_UPDATE, ?MESSAGE) ->
     [?HTTP_POST].
+
+-spec authorize(cb_context:context()) -> boolean().
+authorize(Context) ->
+    authorize(Context, cb_context:req_verb(Context), cb_context:req_nouns(Context)).
+
+-spec authorize(cb_context:context(), path_token()) -> boolean().
+authorize(Context, _Id) ->
+    authorize(Context, cb_context:req_verb(Context), cb_context:req_nouns(Context)).
+
+-spec authorize(cb_context:context(), http_method(), req_nouns()) -> boolean().
+authorize(_Context, ?HTTP_GET, [{<<"notifications">>, _}]) ->
+    'true';
+authorize(Context, _, [{<<"notifications">>, _}]) ->
+    lager:debug("allowing system notifications mutation request"),
+    cb_context:is_superduper_admin(Context);
+authorize(_Context, _, [{<<"notifications">>, _}, {<<"accounts">>, [?NE_BINARY=_AccountId]}]) ->
+    'true';
+authorize(_Context, _, _Nouns) ->
+    'false'.
 
 %%--------------------------------------------------------------------
 %% @public
@@ -241,25 +265,37 @@ validate(Context, ?CUSTOMER_UPDATE, ?MESSAGE) ->
 validate_notifications(Context, ?HTTP_GET) ->
     summary(Context);
 validate_notifications(Context, ?HTTP_PUT) ->
-    create(Context).
+    validate_action(Context, ?HTTP_PUT, cb_context:req_value(Context, <<"action">>), cb_context:account_id(Context));
+validate_notifications(Context, ?HTTP_DELETE) ->
+    validate_action(Context, ?HTTP_DELETE, cb_context:req_value(Context, <<"action">>), cb_context:account_id(Context)).
+
+-spec validate_action(cb_context:context(), http_method(), api_binary(), api_binary()) -> cb_context:context().
+validate_action(Context, ?HTTP_PUT, 'undefined', _AccountId) ->
+    create(Context);
+validate_action(Context, _Method, Action, 'undefined') ->
+    Resp = [{<<"message">>, <<"Can not perform mutation action on top-level notification templates">>}],
+    cb_context:add_validation_error(Action, <<"forbidden">>, kz_json:from_list(Resp), Context);
+validate_action(Context, ?HTTP_PUT, <<"force_system">>, AccountId) ->
+    force_system_templates(Context, AccountId);
+validate_action(Context, ?HTTP_DELETE, <<"remove_customizations">>, AccountId) ->
+    remove_account_customizations(Context, AccountId);
+validate_action(Context, _Method, Action, _AccountId) ->
+    Resp = [{<<"cause">>, Action}
+           ,{<<"message">>, <<"Unknown mutation action">>}
+           ],
+    cb_context:add_validation_error(Action, <<"forbidden">>, kz_json:from_list(Resp), Context).
 
 validate_notification(Context, Id, ?HTTP_GET) ->
     maybe_read(Context, Id);
 validate_notification(Context, Id, ?HTTP_POST) ->
     maybe_update(Context, Id);
 validate_notification(Context, Id, ?HTTP_DELETE) ->
-    validate_delete_notification(Context, Id).
+    validate_delete(Context, Id, cb_context:account_id(Context)).
 
--spec validate_delete_notification(cb_context:context(), path_token()) ->
-                                          cb_context:context().
--spec validate_delete_notification(cb_context:context(), path_token(), ne_binary()) ->
-                                          cb_context:context().
-validate_delete_notification(Context, Id) ->
-    validate_delete_notification(Context, Id, cb_context:account_id(Context)).
-
-validate_delete_notification(Context, Id, 'undefined') ->
+-spec validate_delete(cb_context:context(), path_token(), api_binary()) -> cb_context:context().
+validate_delete(Context, Id, 'undefined') ->
     disallow_delete(Context, kz_notification:resp_id(Id));
-validate_delete_notification(Context, Id, _AccountId) ->
+validate_delete(Context, Id, _AccountId) ->
     lager:debug("trying to remove notification from account ~s", [_AccountId]),
     read(Context, Id, 'account').
 
@@ -270,7 +306,7 @@ disallow_delete(Context, Id) ->
         [{<<"target">>, Id}
         ,{<<"message">>, <<"Top-level notification template cannot be deleted">>}
         ],
-    cb_context:add_validation_error(Id, <<"disallow">>, kz_json:from_list(Resp), Context).
+    cb_context:add_validation_error(Id, <<"forbidden">>, kz_json:from_list(Resp), Context).
 
 -spec may_be_validate_recipient_id(cb_context:context()) -> cb_context:context().
 may_be_validate_recipient_id(Context) ->
@@ -305,7 +341,7 @@ validate_recipient_id(RecipientId, Context) ->
 sender_account_id(Context) ->
     sender_account_id(Context, cb_context:account_id(Context)).
 
--spec sender_account_id(cb_context:context(), ne_binary()|'undefined') -> ne_binary().
+-spec sender_account_id(cb_context:context(), api_ne_binary()) -> ne_binary().
 sender_account_id(Context, 'undefined') ->
     cb_context:auth_account_id(Context);
 sender_account_id(_Context, AccountId) ->
@@ -319,10 +355,14 @@ sender_account_id(_Context, AccountId) ->
 %%--------------------------------------------------------------------
 -spec put(cb_context:context()) -> cb_context:context().
 put(Context) ->
-    Context1 = crossbar_doc:save(Context),
-    case cb_context:resp_status(Context1) of
-        'success' -> leak_doc_id(Context1);
-        _Status -> Context1
+    case cb_context:req_value(Context, <<"action">>) of
+        'undefined' ->
+            Context1 = crossbar_doc:save(Context),
+            case cb_context:resp_status(Context1) of
+                'success' -> leak_doc_id(Context1);
+                _Status -> Context1
+            end;
+        _ -> Context
     end.
 
 %%--------------------------------------------------------------------
@@ -372,7 +412,7 @@ set_system_macros(Context) ->
 post(Context, ?CUSTOMER_UPDATE, ?MESSAGE) ->
     case kz_amqp_worker:call(build_customer_update_payload(Context)
                             ,fun kapi_notifications:publish_customer_update/1
-                            ,fun kapi_notifications:customer_update_v/1
+                            ,fun kapi_notifications:notify_update_v/1
                             )
     of
         {'ok', _Resp} ->
@@ -382,6 +422,9 @@ post(Context, ?CUSTOMER_UPDATE, ?MESSAGE) ->
             lager:debug("failed to publish_customer update notification: ~p", [_E]),
             crossbar_util:response('error', <<"Failed to send message">>, Context)
     end;
+
+post(Context, <<"customer_update_", _/binary>>, ?PREVIEW) ->
+    post(Context, ?CUSTOMER_UPDATE, ?PREVIEW);
 
 post(Context, Id, ?PREVIEW) ->
     Notification = cb_context:doc(Context),
@@ -425,7 +468,8 @@ build_customer_update_payload(Context) ->
 -spec build_preview_payload(cb_context:context(), kz_json:object()) -> kz_proplist().
 build_preview_payload(Context, Notification) ->
     props:filter_empty(
-      [{<<"To">>, kz_json:get_value(<<"to">>, Notification)}
+      [{<<"Template-ID">>, kz_json:get_value(<<"id">>, Notification)}
+      ,{<<"To">>, kz_json:get_value(<<"to">>, Notification)}
       ,{<<"From">>, kz_json:get_value(<<"from">>, Notification)}
       ,{<<"Cc">>, kz_json:get_value(<<"cc">>, Notification)}
       ,{<<"Bcc">>, kz_json:get_value(<<"bcc">>, Notification)}
@@ -455,11 +499,15 @@ handle_preview_response(Context, Resp) ->
 
 -spec headers(ne_binary()) -> ne_binaries().
 headers(<<"voicemail_to_email">>) ->
-    kapi_notifications:headers(<<"voicemail">>);
+    kapi_notifications:headers(<<"voicemail_new">>);
 headers(<<"port_request_admin">>) ->
     kapi_notifications:headers(<<"port_request">>);
 headers(<<"fax_inbound_error_to_email_filtered">>) ->
     kapi_notifications:headers(<<"fax_inbound_error_to_email">>);
+headers(<<"fax_outbound_smtp_error_to_email">>) ->
+    kapi_notifications:headers(<<"fax_outbound_smtp_error">>);
+headers(<<"transaction_failed">>) ->
+    kapi_notifications:headers(<<"transaction">>);
 headers(Id) ->
     kapi_notifications:headers(Id).
 
@@ -468,9 +516,17 @@ maybe_add_extra_data(<<"fax_inbound_error_to_email">>, API) ->
     props:set_value(<<"Fax-Result-Code">>, <<"500">>, API);
 maybe_add_extra_data(<<"fax_inbound_error_to_email_filtered">>, API) ->
     props:set_value(<<"Fax-Result-Code">>, <<"49">>, API);
+maybe_add_extra_data(<<"fax_outbound_smtp_error_to_email">>, API) ->
+    props:set_value(<<"Errors">>, [<<"Not Deliverable">>], API);
+maybe_add_extra_data(<<"transaction">>, API) ->
+    props:set_value(<<"Success">>, 'true', API);
+maybe_add_extra_data(<<"transaction_failed">>, API) ->
+    props:set_value(<<"Success">>, 'false', API);
 maybe_add_extra_data(_Id, API) -> API.
 
 -spec publish_fun(ne_binary()) -> fun((api_terms()) -> 'ok').
+publish_fun(<<"account_zone_change">>) ->
+    fun kapi_notifications:publish_account_zone_change/1;
 publish_fun(<<"cnam_request">>) ->
     fun kapi_notifications:publish_cnam_request/1;
 publish_fun(<<"customer_update">>) ->
@@ -487,12 +543,16 @@ publish_fun(<<"fax_inbound_to_email">>) ->
     fun kapi_notifications:publish_fax_inbound/1;
 publish_fun(<<"fax_outbound_error_to_email">>) ->
     fun kapi_notifications:publish_fax_outbound_error/1;
+publish_fun(<<"fax_outbound_smtp_error_to_email">>) ->
+    fun kapi_notifications:publish_fax_outbound_smtp_error/1;
 publish_fun(<<"fax_outbound_to_email">>) ->
     fun kapi_notifications:publish_fax_outbound/1;
 publish_fun(<<"first_occurrence">>) ->
     fun kapi_notifications:publish_first_occurrence/1;
 publish_fun(<<"low_balance">>) ->
     fun kapi_notifications:publish_low_balance/1;
+publish_fun(<<"missed_call">>) ->
+    fun kapi_notifications:publish_missed_call/1;
 publish_fun(<<"new_account">>) ->
     fun kapi_notifications:publish_new_account/1;
 publish_fun(<<"new_user">>) ->
@@ -525,10 +585,12 @@ publish_fun(<<"topup">>) ->
     fun kapi_notifications:publish_topup/1;
 publish_fun(<<"transaction">>) ->
     fun kapi_notifications:publish_transaction/1;
+publish_fun(<<"transaction_failed">>) ->
+    fun kapi_notifications:publish_transaction/1;
 publish_fun(<<"voicemail_full">>) ->
     fun kapi_notifications:publish_voicemail_full/1;
 publish_fun(<<"voicemail_to_email">>) ->
-    fun kapi_notifications:publish_voicemail/1;
+    fun kapi_notifications:publish_voicemail_new/1;
 publish_fun(<<"webhook_disabled">>) ->
     fun kapi_notifications:publish_webhook_disabled/1;
 publish_fun(_Id) ->
@@ -567,7 +629,7 @@ maybe_delete(Context, Id, [?MEDIA_VALUE(Type, SubType, _, _, _)]) ->
 
 -spec delete_doc(cb_context:context(), ne_binary()) -> cb_context:context().
 delete_doc(Context, Id) ->
-    Context1 = crossbar_doc:delete(Context, 'permanent'),
+    Context1 = crossbar_doc:delete(Context, ?HARD_DELETE),
     case cb_context:resp_status(Context1) of
         'success' ->
             kz_datamgr:flush_cache_doc(cb_context:account_db(Context), Id),
@@ -698,9 +760,19 @@ read(Context, Id, LoadFrom) ->
 
 -spec read_system(cb_context:context(), ne_binary()) -> cb_context:context().
 read_system(Context, Id) ->
-    crossbar_doc:load(Id
-                     ,cb_context:set_account_db(Context, ?KZ_CONFIG_DB)
-                     ,?TYPE_CHECK_OPTION(kz_notification:pvt_type())).
+    Context1 = crossbar_doc:load(Id
+                                ,cb_context:set_account_db(Context, ?KZ_CONFIG_DB)
+                                ,?TYPE_CHECK_OPTION(kz_notification:pvt_type())
+                                ),
+    case {cb_context:resp_error_code(Context1)
+         ,cb_context:resp_status(Context1)
+         }
+    of
+        {404, 'error'} -> Context1;
+        {_Code, 'success'} ->
+            cb_context:store(Context1, 'attachments_db', ?KZ_CONFIG_DB);
+        {_Code, _status} -> Context1
+    end.
 
 -spec read_account(cb_context:context(), ne_binary(), load_from()) -> cb_context:context().
 read_account(Context, Id, LoadFrom) ->
@@ -710,15 +782,35 @@ read_account(Context, Id, LoadFrom) ->
          }
     of
         {404, 'error'} when LoadFrom =:= 'system'; LoadFrom =:= 'system_migrate' ->
-            lager:debug("~s not found in account, reading from master", [Id]),
-            read_system_for_account(Context, Id, LoadFrom);
+            maybe_read_from_parent(Context, Id, LoadFrom, cb_context:reseller_id(Context));
         {_Code, 'success'} ->
-            lager:debug("loaded ~s from account database", [Id]),
-            NewRespData = note_account_override(cb_context:resp_data(Context1)),
-            cb_context:set_resp_data(Context1, NewRespData);
+            lager:debug("loaded ~s from account database ~s", [Id, cb_context:account_db(Context)]),
+            Context2 = maybe_merge_ancestor_attachments(Context1, Id),
+            NewRespData = note_account_override(cb_context:resp_data(Context2)),
+            cb_context:set_resp_data(Context2, NewRespData);
         {_Code, _Status} ->
             lager:debug("failed to load ~s: ~p", [Id, _Code]),
             Context1
+    end.
+
+-spec maybe_read_from_parent(cb_context:context(), ne_binary(), load_from(), api_binary()) -> cb_context:context().
+maybe_read_from_parent(Context, Id, LoadFrom, 'undefined') ->
+    lager:debug("~s not found in account and reseller is undefined, reading from master", [Id]),
+    read_system_for_account(Context, Id, LoadFrom);
+maybe_read_from_parent(Context, Id, LoadFrom, ResellerId) ->
+    AccountId = kz_util:format_account_id(cb_context:account_db(Context)),
+    case AccountId =/= ResellerId
+        andalso get_parent_account_id(AccountId) of
+        'false' ->
+            lager:debug("~s not found in account and reached to reseller, reading from master", [Id]),
+            read_system_for_account(Context, Id, LoadFrom);
+        'undefined' ->
+            lager:debug("~s not found in account and parent is undefined, reading from master", [Id]),
+            read_system_for_account(Context, Id, LoadFrom);
+        ParentId ->
+            ParentDb = kz_util:format_account_db(ParentId),
+            lager:debug("account doesn't have ~s, reading from parent account ~s", [Id, ParentDb]),
+            read_account(cb_context:set_account_db(Context, ParentDb), Id, LoadFrom)
     end.
 
 -spec read_system_for_account(cb_context:context(), path_token(), load_from()) ->
@@ -735,6 +827,15 @@ read_system_for_account(Context, Id, LoadFrom) ->
         _Status ->
             lager:debug("failed to read master db for ~s", [Id]),
             Context1
+    end.
+
+-spec get_parent_account_id(ne_binary()) -> api_binary().
+get_parent_account_id(AccountId) ->
+    case kz_account:fetch(AccountId) of
+        {'ok', JObj} -> kz_account:parent_account_id(JObj);
+        {'error', _E} ->
+            lager:error("failed to find parent account for ~s", [AccountId]),
+            'undefined'
     end.
 
 -spec revert_context_to_account(cb_context:context(), cb_context:context()) -> cb_context:context().
@@ -777,6 +878,75 @@ maybe_hard_delete(Context, Id) ->
         {'error', _E} ->
             lager:debug("error deleting ~s from ~s: ~p", [Id, cb_context:account_db(Context), _E])
     end.
+
+-spec maybe_merge_ancestor_attachments(cb_context:context(), ne_binary()) ->
+                                              cb_context:context().
+maybe_merge_ancestor_attachments(Context, Id) ->
+    Doc = cb_context:doc(Context),
+    AttachmentsDb = kz_doc:account_db(Doc),
+    case kz_doc:attachments(Doc) of
+        'undefined' -> merge_ancestor_attachments(Context, Id);
+        _ -> cb_context:store(Context, 'attachments_db', AttachmentsDb)
+    end.
+
+-spec merge_ancestor_attachments(cb_context:context(), ne_binary()) -> cb_context:context().
+-spec merge_ancestor_attachments(cb_context:context(), ne_binary(), ne_binary(), ne_binary()) ->
+                                        cb_context:context().
+merge_ancestor_attachments(Context, Id) ->
+    AccountId = cb_context:account_id(Context),
+    ResellerId = cb_context:reseller_id(Context),
+    merge_ancestor_attachments(Context, Id, AccountId, ResellerId).
+
+%% Last attempt was reseller, now try ?KZ_CONFIG_DB
+merge_ancestor_attachments(Context, Id, AccountId, AccountId) ->
+    lager:debug("trying attachments in ~s", [?KZ_CONFIG_DB]),
+    case kz_doc:attachments(cb_context:doc(read_system(Context, Id))) of
+        'undefined' ->
+            lager:error("the ~s ~s template is missing", [?KZ_CONFIG_DB, Id]),
+            Context;
+        Attachments ->
+            lager:debug("found attachments in ~s", [?KZ_CONFIG_DB]),
+            Doc = kz_json:set_value(<<"_attachments">>, Attachments, cb_context:doc(Context)),
+            cb_context:setters(Context
+                              ,[{fun cb_context:store/3, 'db_doc', Doc}
+                               ,{fun cb_context:set_doc/2, Doc}
+                               ,{fun cb_context:store/3, 'attachments_db', ?KZ_CONFIG_DB}])
+    end;
+%% Not yet at reseller, try parent account
+merge_ancestor_attachments(Context, Id, AccountId, ResellerId) ->
+    case get_parent_account_id(AccountId) of
+        'undefined' -> Context;
+        ParentAccountId ->
+            lager:debug("trying attachments in account ~s", [ParentAccountId]),
+            try_parent_attachments(Context, Id, AccountId, ParentAccountId, ResellerId)
+    end.
+
+-spec try_parent_attachments(cb_context:context(), ne_binary(), ne_binary(), ne_binary(), ne_binary()) ->
+                                    cb_context:context().
+try_parent_attachments(Context, Id, AccountId, ParentAccountId, ResellerId) ->
+    ParentNotificationContext = crossbar_doc:load(Id
+                                                 ,masquerade(Context, ParentAccountId)
+                                                 ,?TYPE_CHECK_OPTION(kz_notification:pvt_type())),
+    ParentDoc = cb_context:doc(ParentNotificationContext),
+    case kz_doc:attachments(ParentDoc) of
+        'undefined' -> merge_ancestor_attachments(Context, Id, ParentAccountId, ResellerId);
+        Attachments ->
+            lager:debug("found attachments in account ~s", [ParentAccountId]),
+            Doc = kz_json:set_value(<<"_attachments">>, Attachments, cb_context:doc(Context)),
+            AttachmentsDb = kz_util:format_account_id(ParentAccountId, 'encoded'),
+            cb_context:setters(Context
+                              ,[{fun cb_context:store/3, 'db_doc', Doc}
+                               ,{fun cb_context:set_doc/2, Doc}
+                               ,{fun cb_context:store/3, 'attachments_db', AttachmentsDb}])
+    end.
+
+-spec masquerade(cb_context:context(), ne_binary()) -> cb_context:context().
+masquerade(Context, AccountId) ->
+    AccountDb = kz_util:format_account_id(AccountId, 'encoded'),
+    cb_context:setters(Context
+                      ,[{fun cb_context:set_account_id/2, AccountId}
+                       ,{fun cb_context:set_account_db/2, AccountDb}
+                       ]).
 
 -spec maybe_note_notification_preference(cb_context:context()) -> 'ok'.
 -spec maybe_note_notification_preference(ne_binary(), kz_json:object()) -> 'ok'.
@@ -829,7 +999,7 @@ migrate_template_attachment(MasterAccountDb, Id, AName, AMeta, Context) ->
         {'ok', Bin} ->
             ContentType = kz_json:get_value(<<"content_type">>, AMeta),
             lager:debug("saving attachment for ~s(~s): ~s", [Id, AName, ContentType]),
-            Opts = [{'content_type', kz_util:to_list(ContentType)}],
+            Opts = [{'content_type', kz_term:to_list(ContentType)}],
             crossbar_doc:save_attachment(Id
                                         ,attachment_name_by_content_type(ContentType)
                                         ,Bin
@@ -864,14 +1034,20 @@ maybe_read_template(Context, Id, Accept) ->
 read_template(Context, Id, Accept) ->
     Doc = cb_context:fetch(Context, 'db_doc'),
     AttachmentName = attachment_name_by_media_type(Accept),
-    case kz_doc:attachment(Doc, AttachmentName) of
-        'undefined' ->
+    case {kz_doc:attachment(Doc, AttachmentName)
+         ,cb_context:fetch(Context, 'attachments_db')
+         }
+    of
+        {'undefined', _} ->
             lager:debug("failed to find attachment ~s in ~s", [AttachmentName, Id]),
             crossbar_util:response_faulty_request(Context);
-        _Meta ->
-            lager:debug("found attachment ~s in ~s", [AttachmentName, Id]),
+        {_Attachment, 'undefined'} ->
+            lager:debug("failed to load attachment, attachments_db for ~s in ~s is not set", [AttachmentName, Id]),
+            crossbar_util:response_faulty_request(Context);
+        {_Attachment, AttachmentsDb} ->
+            lager:debug("found attachment ~s in document ~s at ~s", [AttachmentName, Id, AttachmentsDb]),
             cb_context:add_resp_headers(
-              read_account_attachment(Context, Id, AttachmentName)
+              read_account_attachment(Context, AttachmentsDb, Id, AttachmentName)
                                        ,[{<<"Content-Disposition">>, attachment_filename(Id, Accept)}
                                         ,{<<"Content-Type">>, kz_doc:attachment_content_type(Doc, AttachmentName)}
                                         ,{<<"Content-Length">>, kz_doc:attachment_length(Doc, AttachmentName)}
@@ -885,24 +1061,20 @@ attachment_filename(Id, Accept) ->
     ,$., kz_mime:to_extension(Accept)
     ].
 
--spec read_system_attachment(cb_context:context(), ne_binary(), ne_binary()) -> cb_context:context().
-read_system_attachment(Context, DocId, Name) ->
-    crossbar_doc:load_attachment(DocId
-                                ,Name
-                                ,?TYPE_CHECK_OPTION(kz_notification:pvt_type())
-                                ,cb_context:set_account_db(Context, ?KZ_CONFIG_DB)
-                                ).
-
--spec read_account_attachment(cb_context:context(), ne_binary(), ne_binary()) -> cb_context:context().
-read_account_attachment(Context, DocId, Name) ->
-    Context1 = crossbar_doc:load_attachment(DocId, Name, ?TYPE_CHECK_OPTION(kz_notification:pvt_type()), Context),
+-spec read_account_attachment(cb_context:context(), ne_binary(), ne_binary(), ne_binary()) -> cb_context:context().
+read_account_attachment(Context, AttachmentsDb, DocId, Name) ->
+    Context1 = crossbar_doc:load_attachment(DocId
+                                           ,Name
+                                           ,?TYPE_CHECK_OPTION(kz_notification:pvt_type())
+                                           ,cb_context:set_account_db(Context, AttachmentsDb)
+                                           ),
     case {cb_context:resp_error_code(Context1)
          ,cb_context:resp_status(Context1)
          }
     of
         {404, 'error'} ->
-            lager:debug("~s not found in account, reading from master", [DocId]),
-            read_system_attachment(Context, DocId, Name);
+            lager:debug("template ~s attachment ~s not found in ~s", [DocId, Name, AttachmentsDb]),
+            Context1;
         {_Code, 'success'} ->
             lager:debug("loaded ~s from account database", [DocId]),
             Context1;
@@ -931,8 +1103,24 @@ maybe_update(Context, Id) ->
 
 -spec update_notification(cb_context:context(), ne_binary()) -> cb_context:context().
 update_notification(Context, Id) ->
+    Context1 = maybe_inherit_defaults(Context, cb_context:doc(read(Context, Id))),
     OnSuccess = fun(C) -> on_successful_validation(Id, C) end,
-    cb_context:validate_request_data(<<"notifications">>, Context, OnSuccess).
+    cb_context:validate_request_data(<<"notifications">>, Context1, OnSuccess).
+
+-spec maybe_inherit_defaults(cb_context:context(), api_object()) ->
+                                    cb_context:context().
+maybe_inherit_defaults(Context, Doc) ->
+    case ?INHERIT_DEFAULT_VALUES of
+        'true' -> inherit_defaults(Context, Doc);
+        'false' -> Context
+    end.
+
+-spec inherit_defaults(cb_context:context(), api_object()) -> cb_context:context().
+inherit_defaults(Context, 'undefined') -> Context;
+inherit_defaults(Context, InheritedDefaultsDoc) ->
+    PublicDefaults = kz_doc:public_fields(InheritedDefaultsDoc),
+    ReqData = kz_json:merge(PublicDefaults, cb_context:req_data(Context)),
+    cb_context:set_req_data(Context, ReqData).
 
 -spec update_template(cb_context:context(), path_token(), kz_json:object()) ->
                              cb_context:context().
@@ -942,7 +1130,7 @@ update_template(Context, Id, FileJObj) ->
     CT = kz_json:get_value([<<"headers">>, <<"content_type">>], FileJObj),
     lager:debug("file content type for ~s: ~s", [DbId, CT]),
 
-    Opts = [{'content_type', kz_util:to_list(CT)}],
+    Opts = [{'content_type', kz_term:to_list(CT)}],
 
     case kz_template:compile(Contents, template_module_name(Id, Context, CT)) of
         {'ok', _} ->
@@ -960,7 +1148,7 @@ update_template(Context, Id, FileJObj) ->
 
 -spec attachment_name_by_content_type(ne_binary()) -> ne_binary().
 attachment_name_by_content_type(CT) ->
-    <<"template.", (kz_http_util:urlencode(CT))/binary>>.
+    kz_binary:clean(<<"template.", CT/binary>>).
 
 -spec attachment_name_by_media_type(ne_binary()) -> ne_binary().
 attachment_name_by_media_type(CT) ->
@@ -970,7 +1158,7 @@ attachment_name_by_media_type(CT) ->
 template_module_name(Id, Context, CT) ->
     AccountId = cb_context:account_db(Context),
     [_C, Type] = binary:split(CT, <<"/">>),
-    kz_util:to_atom(
+    kz_term:to_atom(
       <<AccountId/binary
         ,"_"
         ,Id/binary
@@ -1080,8 +1268,7 @@ merge_fold(Overridden, Acc) ->
 
 -spec select_normalize_fun(cb_context:context()) -> normalize_fun().
 select_normalize_fun(Context) ->
-    Account = cb_context:auth_account_id(Context),
-    case kz_util:is_system_admin(Account) of
+    case cb_context:is_superduper_admin(Context) of
         'true' -> fun normalize_available_admin/2;
         'false' -> fun(JObj, Acc) -> normalize_available_non_admin(JObj, Acc, Context) end
     end.
@@ -1247,8 +1434,8 @@ leak_attachments_fold(_Attachment, Props, Acc) ->
 
 -spec load_smtp_log_doc(ne_binary(), cb_context:context()) -> cb_context:context().
 load_smtp_log_doc(?MATCH_MODB_PREFIX(YYYY,MM,_) = Id, Context) ->
-    Year  = kz_util:to_integer(YYYY),
-    Month = kz_util:to_integer(MM),
+    Year  = kz_term:to_integer(YYYY),
+    Month = kz_term:to_integer(MM),
     crossbar_doc:load(Id
                      ,cb_context:set_account_modb(Context, Year, Month)
                      ,?TYPE_CHECK_OPTION(?PVT_TYPE_SMTPLOG)).
@@ -1263,3 +1450,82 @@ maybe_update_db(Context) ->
 -spec normalize_view_result(kz_json:object()) -> kz_json:object().
 normalize_view_result(JObj) ->
     kz_json:get_value(<<"value">>, JObj).
+
+%%--------------------------------------------------------------------
+%% @private
+%% @doc
+%% Remove Template Customization from an account
+%% @end
+%%--------------------------------------------------------------------
+-spec remove_account_customizations(cb_context:context(), ne_binary()) -> cb_context:context().
+remove_account_customizations(Context, AccountId) ->
+    ToRemove = list_templates_from_db(kz_util:format_account_db(AccountId)),
+    Result = remove_customization(AccountId, ToRemove),
+    Setters = [{fun cb_context:set_resp_status/2, 'success'}
+              ,{fun cb_context:set_resp_data/2, Result}
+              ],
+    cb_context:setters(Context, Setters).
+
+-spec remove_customization(ne_binary(), ne_binaries()) -> kz_json:object().
+remove_customization(_, []) ->
+    kz_json:from_list([{<<"message">>, <<"no template customization(s) found">>}]);
+remove_customization(AccountId, Ids) ->
+    lager:debug("removing ~b template customization(s) from ~s~n", [length(Ids), AccountId]),
+    case kz_datamgr:del_docs(kz_util:format_account_db(AccountId), Ids) of
+        {'ok', JObjs} ->
+            Result = [{kz_notification:resp_id(kz_doc:id(J)), kz_term:to_binary(kz_json:get_value(<<"error">>, J, <<"deleted">>))}
+                      || J <- JObjs
+                     ],
+            kz_json:from_list(Result);
+        {'error', _Reason} ->
+            Msg = io_lib:format("failed to remove customization: ~p", [_Reason]),
+            lager:debug(Msg),
+            kz_json:from_list([{<<"message">>, Msg}])
+    end.
+
+%%--------------------------------------------------------------------
+%% @private
+%% @doc
+%% Forcing System's Templates to an account by first removing
+%% account's customization and then copy the templates from
+%% system_config to account's db.
+%% @end
+%%--------------------------------------------------------------------
+-spec force_system_templates(cb_context:context(), ne_binary()) -> cb_context:context().
+force_system_templates(Context, AccountId) ->
+    ToRemove = list_templates_from_db(kz_util:format_account_db(AccountId)),
+    _ = remove_customization(AccountId, ToRemove),
+    ToCopy = list_templates_from_db(?KZ_CONFIG_DB),
+    Result = force_system_default(AccountId, ToCopy),
+    Setters = [{fun cb_context:set_resp_status/2, 'success'}
+              ,{fun cb_context:set_resp_data/2, Result}
+              ],
+    cb_context:setters(Context, Setters).
+
+-spec force_system_default(ne_binary(), ne_binaries()) -> kz_json:object().
+force_system_default(_, []) ->
+    kz_json:from_list([{<<"message">>, <<"no system template found">>}]);
+force_system_default(AccountId, Ids) ->
+    lager:debug("forcing ~b system default template(s) for account ~s~n", [length(Ids), AccountId]),
+    AccountDb = kz_util:format_account_db(AccountId),
+    kz_json:from_list([copy_from_system_to_account(AccountDb, Id) || Id <- Ids]).
+
+-spec copy_from_system_to_account(ne_binary(), ne_binary()) -> {ne_binary(), ne_binary()}.
+copy_from_system_to_account(AccountDb, Id) ->
+    case kz_datamgr:copy_doc(?KZ_CONFIG_DB, Id, AccountDb, Id, []) of
+        {'ok', _} -> {kz_notification:resp_id(Id), <<"replaced">>};
+        {'error', Reason} -> {kz_notification:resp_id(Id), kz_term:to_binary(Reason)}
+    end.
+
+-spec list_templates_from_db(ne_binary()) -> ne_binaries().
+list_templates_from_db(Db) ->
+    ViewOpts = [{'startkey', <<"notification.">>}
+               ,{'endkey', <<"notification.zzz">>}
+               ],
+    case kz_datamgr:all_docs(Db, ViewOpts) of
+        {'ok', Results} ->
+            [kz_doc:id(Result) || Result <- Results];
+        {'error', _E} ->
+            lager:debug("failed to query existing notifications: ~p~n", [_E]),
+            []
+    end.

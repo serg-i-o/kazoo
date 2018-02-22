@@ -41,10 +41,20 @@ init() ->
 -spec handle_req(kz_json:object(), kz_proplist()) -> any().
 handle_req(JObj, _Props) ->
     'true' = kapi_notifications:low_balance_v(JObj),
+    kz_util:put_callid(JObj),
+
+    lager:debug("account low balance alert, sending email notification"),
+
+    RespQ = kz_api:server_id(JObj),
+    MsgId = kz_api:msg_id(JObj),
+    notify_util:send_update(RespQ, MsgId, <<"pending">>),
+
     {'ok', Account} = kz_account:fetch(kz_json:get_value(<<"Account-ID">>, JObj)),
-    send(kz_json:get_integer_value(<<"Current-Balance">>, JObj)
-        ,Account
-        ).
+
+    notify_util:maybe_send_update(send(kz_json:get_integer_value(<<"Current-Balance">>, JObj), Account)
+                                 ,RespQ
+                                 ,MsgId
+                                 ).
 
 %%--------------------------------------------------------------------
 %% @public
@@ -92,7 +102,7 @@ create_template_props(CurrentBalance, Account) ->
 %%--------------------------------------------------------------------
 -spec pretty_print_dollars(float()) -> ne_binary().
 pretty_print_dollars(Amount) ->
-    kz_util:to_binary(io_lib:format("$~.2f", [Amount])).
+    kz_term:to_binary(io_lib:format("$~.2f", [Amount])).
 
 %%--------------------------------------------------------------------
 %% @private
@@ -100,9 +110,9 @@ pretty_print_dollars(Amount) ->
 %% process the AMQP requests
 %% @end
 %%--------------------------------------------------------------------
--spec build_and_send_email(iolist(), iolist(), iolist(), ne_binary() | ne_binaries(), kz_proplist()) -> any().
+-spec build_and_send_email(iolist(), iolist(), iolist(), ne_binary() | ne_binaries(), kz_proplist()) -> send_email_return().
 build_and_send_email(TxtBody, HTMLBody, Subject, To, Props) when is_list(To) ->
-    _ = [build_and_send_email(TxtBody, HTMLBody, Subject, T, Props) || T <- To];
+    [build_and_send_email(TxtBody, HTMLBody, Subject, T, Props) || T <- To];
 build_and_send_email(TxtBody, HTMLBody, Subject, To, Props) ->
     Service = props:get_value(<<"service">>, Props),
     From = props:get_value(<<"send_from">>, Service),
@@ -187,7 +197,7 @@ is_notify_enabled(JObj) ->
                            ], JObj)
     of
         'undefined' -> is_notify_enabled_default();
-        Value -> kz_util:is_true(Value)
+        Value -> kz_term:is_true(Value)
     end.
 
 -spec is_notify_enabled_default() -> boolean().

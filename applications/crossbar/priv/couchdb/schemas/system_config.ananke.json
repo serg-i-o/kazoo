@@ -6,6 +6,9 @@
         "schedules": {
             "default": [],
             "description": "ananke schedules",
+            "items": {
+                "type": "object"
+            },
             "type": "array"
         },
         "voicemail": {
@@ -15,25 +18,19 @@
                         "callback": {
                             "properties": {
                                 "attempts": {
-                                    "properties": {
-                                        "default": 5,
-                                        "description": "ananke attempts",
-                                        "type": "string"
-                                    }
+                                    "default": 5,
+                                    "description": "ananke attempts",
+                                    "type": "integer"
                                 },
                                 "interval_s": {
-                                    "properties": {
-                                        "default": 300,
-                                        "description": "ananke interval in seconds",
-                                        "type": "string"
-                                    }
+                                    "default": 300,
+                                    "description": "ananke interval in seconds",
+                                    "type": "integer"
                                 },
                                 "timeout_s": {
-                                    "properties": {
-                                        "default": 20,
-                                        "description": "ananke timeout in seconds",
-                                        "type": "string"
-                                    }
+                                    "default": 20,
+                                    "description": "ananke timeout in seconds",
+                                    "type": "integer"
                                 }
                             }
                         }
@@ -42,8 +39,5 @@
             }
         }
     },
-    "required": [
-        "voicemail"
-    ],
     "type": "object"
 }

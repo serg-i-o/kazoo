@@ -32,12 +32,21 @@ init() ->
 handle_req(JObj, _Props) ->
     'true' = kapi_notifications:fax_inbound_error_v(JObj),
     _ = kz_util:put_callid(JObj),
+
     lager:debug("new fax error left, sending to email if enabled"),
+
+    RespQ = kz_api:server_id(JObj),
+    MsgId = kz_api:msg_id(JObj),
+    notify_util:send_update(RespQ, MsgId, <<"pending">>),
+
     {'ok', Account} = notify_util:get_account_doc(JObj),
-    case is_notice_enabled(Account) of
-        'true' -> send(JObj, Account);
-        'false' -> 'ok'
-    end.
+
+    SendResult =
+        case is_notice_enabled(Account) of
+            'true' -> send(JObj, Account);
+            'false' -> lager:debug("fax inbound error notice is disabled")
+        end,
+    notify_util:maybe_send_update(SendResult, RespQ, MsgId).
 
 -spec send(kz_json:object(), kz_json:object()) -> any().
 send(JObj, AcctObj) ->
@@ -62,13 +71,14 @@ send(JObj, AcctObj) ->
                                ,<<"email">>
                                ,<<"send_to">>
                                ], JObj, []),
-    try build_and_send_email(TxtBody, HTMLBody, Subject, Emails, props:filter_empty(Props)) of
-        _ -> lager:debug("built and sent")
+    try build_and_send_email(TxtBody, HTMLBody, Subject, Emails, props:filter_empty(Props))
     catch
         C:R ->
-            lager:debug("failed: ~s:~p", [C, R]),
+            Msg = io_lib:format("failed: ~s:~p", [C, R]),
+            lager:debug(Msg),
             ST = erlang:get_stacktrace(),
-            kz_util:log_stacktrace(ST)
+            kz_util:log_stacktrace(ST),
+            {'error', Msg}
     end.
 
 -spec is_notice_enabled(kz_json:object()) -> boolean().
@@ -78,7 +88,7 @@ is_notice_enabled(JObj) ->
                              <<"enabled">>], JObj)
     of
         'undefined' -> is_notice_enabled_default();
-        Value -> kz_util:is_true(Value)
+        Value -> kz_term:is_true(Value)
     end.
 
 -spec is_notice_enabled_default() -> boolean().
@@ -93,7 +103,7 @@ is_notice_enabled_default() ->
 %%--------------------------------------------------------------------
 -spec create_template_props(kz_json:object(), kz_json:objects(), kz_json:object()) -> kz_proplist().
 create_template_props(Event, Docs, Account) ->
-    Now = kz_util:current_tstamp(),
+    Now = kz_time:current_tstamp(),
 
     CIDName = kz_json:get_value(<<"Caller-ID-Name">>, Event),
     CIDNum = kz_json:get_value(<<"Caller-ID-Number">>, Event),
@@ -104,7 +114,7 @@ create_template_props(Event, Docs, Account) ->
     DateCalled = kz_json:get_integer_value(<<"Fax-Timestamp">>, Event, Now),
     DateTime = calendar:gregorian_seconds_to_datetime(DateCalled),
 
-    Timezone = kz_util:to_list(kz_json:find(<<"fax_timezone">>, Docs, <<"UTC">>)),
+    Timezone = kz_term:to_list(kz_json:find(<<"fax_timezone">>, Docs, <<"UTC">>)),
     ClockTimezone = kapps_config:get_string(<<"servers">>, <<"clock_timezone">>, <<"UTC">>),
 
     [{<<"account">>, notify_util:json_to_template_props(Account)}
@@ -141,11 +151,9 @@ fax_values(Event) ->
 %% process the AMQP requests
 %% @end
 %%--------------------------------------------------------------------
--spec build_and_send_email(iolist(), iolist(), iolist(), ne_binary() | ne_binaries(), kz_proplist()) -> any().
-build_and_send_email(_TxtBody, _HTMLBody, _Subject, 'undefined', _Props) ->
-    lager:debug("no TO email, not sending");
+-spec build_and_send_email(iolist(), iolist(), iolist(), ne_binary() | ne_binaries(), kz_proplist()) -> send_email_return().
 build_and_send_email(TxtBody, HTMLBody, Subject, To, Props) when is_list(To) ->
-    _ = [build_and_send_email(TxtBody, HTMLBody, Subject, T, Props) || T <- To];
+    [build_and_send_email(TxtBody, HTMLBody, Subject, T, Props) || T <- To];
 build_and_send_email(TxtBody, HTMLBody, Subject, To, Props) ->
     Service = props:get_value(<<"service">>, Props),
     From = props:get_value(<<"send_from">>, Service),

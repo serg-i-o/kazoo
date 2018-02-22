@@ -47,7 +47,7 @@ url() ->
     "/customers/".
 
 url(CustomerId) ->
-    lists:append(["/customers/", kz_util:to_list(CustomerId)]).
+    lists:append(["/customers/", kz_term:to_list(CustomerId)]).
 
 %%--------------------------------------------------------------------
 %% @public
@@ -306,16 +306,16 @@ xml_to_record(Xml, Base) ->
     CreditCardPath = lists:flatten([Base, "/credit-cards/credit-card"]),
     AddressPath = lists:flatten([Base, "/addresses/address"]),
     SubscriptionPath = lists:flatten([Base, "/credit-cards/credit-card/subscriptions/subscription"]),
-    #bt_customer{id = kz_util:get_xml_value([Base, "/id/text()"], Xml)
-                ,first_name = kz_util:get_xml_value([Base, "/first-name/text()"], Xml)
-                ,last_name = kz_util:get_xml_value([Base, "/last-name/text()"], Xml)
-                ,company = kz_util:get_xml_value([Base, "/company/text()"], Xml)
-                ,email = kz_util:get_xml_value([Base, "/email/text()"], Xml)
-                ,phone = kz_util:get_xml_value([Base, "/phone/text()"], Xml)
-                ,fax = kz_util:get_xml_value([Base, "/fax/text()"], Xml)
-                ,website = kz_util:get_xml_value([Base, "/website/text()"], Xml)
-                ,created_at = kz_util:get_xml_value([Base, "/created-at/text()"], Xml)
-                ,updated_at = kz_util:get_xml_value([Base, "/updated-at/text()"], Xml)
+    #bt_customer{id = kz_xml:get_value([Base, "/id/text()"], Xml)
+                ,first_name = kz_xml:get_value([Base, "/first-name/text()"], Xml)
+                ,last_name = kz_xml:get_value([Base, "/last-name/text()"], Xml)
+                ,company = kz_xml:get_value([Base, "/company/text()"], Xml)
+                ,email = kz_xml:get_value([Base, "/email/text()"], Xml)
+                ,phone = kz_xml:get_value([Base, "/phone/text()"], Xml)
+                ,fax = kz_xml:get_value([Base, "/fax/text()"], Xml)
+                ,website = kz_xml:get_value([Base, "/website/text()"], Xml)
+                ,created_at = kz_xml:get_value([Base, "/created-at/text()"], Xml)
+                ,updated_at = kz_xml:get_value([Base, "/updated-at/text()"], Xml)
                 ,credit_cards = [braintree_card:xml_to_record(Card)
                                  || Card <- xmerl_xpath:string(CreditCardPath, Xml)
                                 ]
@@ -395,21 +395,21 @@ maybe_add_credit_card(JObj) ->
 %%--------------------------------------------------------------------
 -spec record_to_json(customer()) -> kz_json:object().
 record_to_json(Customer) ->
-    Props = [{<<"id">>, Customer#bt_customer.id}
-            ,{<<"first_name">>, Customer#bt_customer.first_name}
-            ,{<<"last_name">>, Customer#bt_customer.last_name}
-            ,{<<"company">>, Customer#bt_customer.company}
-            ,{<<"email">>, Customer#bt_customer.email}
-            ,{<<"phone">>, Customer#bt_customer.phone}
-            ,{<<"fax">>, Customer#bt_customer.fax}
-            ,{<<"website">>, Customer#bt_customer.website}
-            ,{<<"created_at">>, Customer#bt_customer.created_at}
-            ,{<<"updated_at">>, Customer#bt_customer.updated_at}
-            ,{<<"credit_cards">>, [braintree_card:record_to_json(Card)
-                                   || Card <- Customer#bt_customer.credit_cards
-                                  ]}
-            ,{<<"addresses">>, [braintree_address:record_to_json(Address)
-                                || Address <- Customer#bt_customer.addresses
-                               ]}
-            ],
-    kz_json:from_list(props:filter_undefined(Props)).
+    kz_json:from_list(
+      [{<<"id">>, Customer#bt_customer.id}
+      ,{<<"first_name">>, Customer#bt_customer.first_name}
+      ,{<<"last_name">>, Customer#bt_customer.last_name}
+      ,{<<"company">>, Customer#bt_customer.company}
+      ,{<<"email">>, Customer#bt_customer.email}
+      ,{<<"phone">>, Customer#bt_customer.phone}
+      ,{<<"fax">>, Customer#bt_customer.fax}
+      ,{<<"website">>, Customer#bt_customer.website}
+      ,{<<"created_at">>, Customer#bt_customer.created_at}
+      ,{<<"updated_at">>, Customer#bt_customer.updated_at}
+      ,{<<"credit_cards">>, [braintree_card:record_to_json(Card)
+                             || Card <- Customer#bt_customer.credit_cards
+                            ]}
+      ,{<<"addresses">>, [braintree_address:record_to_json(Address)
+                          || Address <- Customer#bt_customer.addresses
+                         ]}
+      ]).

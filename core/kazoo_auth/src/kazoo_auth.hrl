@@ -1,10 +1,11 @@
 -ifndef(KAZOO_AUTH_HRL).
 
 %% Typical includes needed
--include_lib("kazoo/include/kz_types.hrl").
--include_lib("kazoo/include/kz_log.hrl").
--include_lib("kazoo/include/kz_databases.hrl").
+-include_lib("kazoo_stdlib/include/kz_types.hrl").
+-include_lib("kazoo_stdlib/include/kz_log.hrl").
+-include_lib("kazoo_stdlib/include/kz_databases.hrl").
 -include_lib("public_key/include/public_key.hrl").
+-include_lib("kazoo_stdlib/include/kazoo_json.hrl").
 
 -define(CONFIG_CAT, <<"auth">>).
 
@@ -28,13 +29,13 @@
                            ,<<"redirect_uri">>
                            ]).
 
--define(KAZOO_GEN_SIGNATURE_SECRET, kz_util:rand_hex_binary(16)).
+-define(KAZOO_GEN_SIGNATURE_SECRET, kz_binary:rand_hex(16)).
 -define(KAZOO_SIGNATURE_ID, <<"secret_for_user_signature">>).
 -define(KAZOO_SIGNATURE_SECRET, kapps_config:get_ne_binary(?CONFIG_CAT, ?KAZOO_SIGNATURE_ID, ?KAZOO_GEN_SIGNATURE_SECRET)).
 
 -define(RSA_KEY_SIZE, 2048).
 
--define(SYSTEM_KEY_ID, kapps_config:get_ne_binary(?CONFIG_CAT, <<"system_key">>, kz_util:rand_hex_binary(16))).
+-define(SYSTEM_KEY_ID, kapps_config:get_ne_binary(?CONFIG_CAT, <<"system_key">>, kz_binary:rand_hex(16))).
 -define(SYSTEM_KEY_ATTACHMENT_NAME, <<"private_key.pem">>).
 -define(SYSTEM_KEY_ATTACHMENT_CTYPE, <<"application/x-pem-file">>).
 
@@ -46,7 +47,24 @@
                     ,{<<"email">>, <<"email">>}
                     ,{<<"pvt_accounts">>, <<"as">>}
                     ,{<<"scope">>, <<"scope">>}
+                    ,{<<"display_name">>, <<"displayName">>}
+                    ,{<<"photo_url">>, <<"photoUrl">>}
                     ]).
+
+-define(JWT_MAP_CLAIMS, [{access_token, <<"auth_app_token">>}
+                        ,{token_type, <<"auth_app_token_type">>}
+                         %%                         ,{id_token, <<"auth_app_id_token">>}
+                        ]).
+
+-type mfa_errors() :: 'no_provider' |
+                      'unauthorized' |
+                      ne_binary().
+
+-type mfa_result() :: {'ok', 'authenticated'} |
+                      {'error', mfa_errors()} |
+                      {'error', non_neg_integer(), kz_json:object()}.
+
+-define(TEST_DUO_SIGN_EXPIRE, 1234).
 
 -define(KAZOO_AUTH_HRL, 'true').
 -endif.

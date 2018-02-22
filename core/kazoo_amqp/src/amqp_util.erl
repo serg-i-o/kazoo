@@ -283,33 +283,33 @@ document_routing_key(Action, Db, Type) ->
     document_routing_key(Action, Db, Type, <<"*">>).
 
 document_routing_key(<<"*">>, Db, Type, Id) ->
-    list_to_binary([<<"*.">>, kz_util:to_binary(Db)
-                   ,".", kz_util:to_binary(Type)
-                   ,".", encode(kz_util:to_binary(Id))
+    list_to_binary([<<"*.">>, kz_term:to_binary(Db)
+                   ,".", kz_term:to_binary(Type)
+                   ,".", encode(kz_term:to_binary(Id))
                    ]);
 document_routing_key(<<"db_", _/binary>> = Action, Db, Type, Id) ->
     list_to_binary([Action
-                   ,".", kz_util:to_binary(Db)
-                   ,".", kz_util:to_binary(Type)
-                   ,".", encode(kz_util:to_binary(Id))
+                   ,".", kz_term:to_binary(Db)
+                   ,".", kz_term:to_binary(Type)
+                   ,".", encode(kz_term:to_binary(Id))
                    ]);
 document_routing_key(<<"doc_", _/binary>> = Action, Db, Type, Id) ->
     list_to_binary([Action
-                   ,".", kz_util:to_binary(Db)
-                   ,".", kz_util:to_binary(Type)
-                   ,".", encode(kz_util:to_binary(Id))
+                   ,".", kz_term:to_binary(Db)
+                   ,".", kz_term:to_binary(Type)
+                   ,".", encode(kz_term:to_binary(Id))
                    ]);
 document_routing_key(Action, Db, <<"database">>=Type, Id) ->
-    list_to_binary(["db_", kz_util:to_list(Action)
-                   ,".", kz_util:to_binary(Db)
-                   ,".", kz_util:to_binary(Type)
-                   ,".", encode(kz_util:to_binary(Id))
+    list_to_binary(["db_", kz_term:to_list(Action)
+                   ,".", kz_term:to_binary(Db)
+                   ,".", kz_term:to_binary(Type)
+                   ,".", encode(kz_term:to_binary(Id))
                    ]);
 document_routing_key(Action, Db, Type, Id) ->
-    list_to_binary(["doc_", kz_util:to_list(Action)
-                   ,".", kz_util:to_binary(Db)
-                   ,".", kz_util:to_binary(Type)
-                   ,".", encode(kz_util:to_binary(Id))
+    list_to_binary(["doc_", kz_term:to_list(Action)
+                   ,".", kz_term:to_binary(Db)
+                   ,".", kz_term:to_binary(Type)
+                   ,".", encode(kz_term:to_binary(Id))
                    ]).
 
 -spec callctl_publish(ne_binary(), amqp_payload()) -> 'ok'.
@@ -448,18 +448,16 @@ basic_publish(Exchange, RoutingKey, ?NE_BINARY = Payload, ContentType, Props)
        is_binary(RoutingKey),
        is_binary(ContentType),
        is_list(Props) ->
-    BP = #'basic.publish'{
-            exchange = Exchange
+    BP = #'basic.publish'{exchange = Exchange
                          ,routing_key = RoutingKey
                          ,mandatory = ?P_GET('mandatory', Props, 'false')
                          ,immediate = ?P_GET('immediate', Props, 'false')
-           },
+                         },
 
     %% Add the message to the publish, converting to binary
     %% See http://www.rabbitmq.com/amqp-0-9-1-reference.html#class.basic
     MsgProps =
-        #'P_basic'{
-           content_type = ContentType % MIME content type
+        #'P_basic'{content_type = ContentType % MIME content type
                   ,content_encoding = ?P_GET('content_encoding', Props) % MIME encoding
                   ,headers = ?P_GET('headers', Props) % message headers
                   ,delivery_mode = ?P_GET('delivery_mode', Props) % persistent(2) or not(1)
@@ -467,21 +465,20 @@ basic_publish(Exchange, RoutingKey, ?NE_BINARY = Payload, ContentType, Props)
                   ,correlation_id = ?P_GET('correlation_id', Props) % correlation identifier
                   ,reply_to = ?P_GET('reply_to', Props) % address to reply to
 
-           %% TODO:: new rabbit wants an integer...
+                   %% TODO:: new rabbit wants an integer...
                   ,expiration = ?P_GET('expiration', Props) % expires time
 
                   ,message_id = ?P_GET('message_id', Props) % app message id
-                  ,timestamp = ?P_GET('timestamp', Props) % message timestamp
+                  ,timestamp = ?P_GET('timestamp', Props, kz_time:now_us()) % message timestamp
                   ,type = ?P_GET('type', Props) % message type
                   ,user_id = ?P_GET('user_id', Props) % creating user
                   ,app_id = ?P_GET('app_id', Props) % creating app
                   ,cluster_id = ?P_GET('cluster_id', Props) % cluster
-          },
+                  },
 
-    AM = #'amqp_msg'{
-            payload = Payload
+    AM = #'amqp_msg'{payload = Payload
                     ,props = MsgProps
-           },
+                    },
 
     case ?P_GET('maybe_publish', Props, 'false') of
         'true' -> kz_amqp_channel:maybe_publish(BP, AM);
@@ -565,8 +562,7 @@ tasks_exchange() ->
 new_exchange(Exchange, Type) ->
     new_exchange(Exchange, Type, []).
 new_exchange(Exchange, Type, Options) ->
-    ED = #'exchange.declare'{
-            exchange = Exchange
+    ED = #'exchange.declare'{exchange = Exchange
                             ,type = Type
                             ,passive = ?P_GET('passive', Options, 'false')
                             ,durable = ?P_GET('durable', Options, 'false')
@@ -574,7 +570,7 @@ new_exchange(Exchange, Type, Options) ->
                             ,internal = ?P_GET('internal', Options, 'false')
                             ,nowait = ?P_GET('nowait', Options, 'false')
                             ,arguments = ?P_GET('arguments', Options, [])
-           },
+                            },
     kz_amqp_channel:command(ED).
 
 -spec declare_exchange(ne_binary(), ne_binary()) -> kz_amqp_exchange().
@@ -582,8 +578,7 @@ new_exchange(Exchange, Type, Options) ->
 declare_exchange(Exchange, Type) ->
     declare_exchange(Exchange, Type, []).
 declare_exchange(Exchange, Type, Options) ->
-    #'exchange.declare'{
-       exchange = Exchange
+    #'exchange.declare'{exchange = Exchange
                        ,type = Type
                        ,passive = ?P_GET('passive', Options, 'false')
                        ,durable = ?P_GET('durable', Options, 'false')
@@ -591,7 +586,7 @@ declare_exchange(Exchange, Type, Options) ->
                        ,internal = ?P_GET('internal', Options, 'false')
                        ,nowait = ?P_GET('nowait', Options, 'false')
                        ,arguments = ?P_GET('arguments', Options, [])
-      }.
+                       }.
 
 %%------------------------------------------------------------------------------
 %% @public
@@ -717,15 +712,14 @@ new_queue(<<"amq.", _/binary>>, Options) ->
 new_queue(<<>>, Options) ->
     new_queue(new_queue_name(), Options);
 new_queue(Queue, Options) when is_binary(Queue) ->
-    QD = #'queue.declare'{
-            queue = Queue
+    QD = #'queue.declare'{queue = Queue
                          ,passive = ?P_GET('passive', Options, 'false')
                          ,durable = ?P_GET('durable', Options, 'false')
                          ,exclusive = ?P_GET('exclusive', Options, 'false')
                          ,auto_delete = ?P_GET('auto_delete', Options, 'true')
                          ,nowait = ?P_GET('nowait', Options, 'false')
                          ,arguments = queue_arguments(?P_GET('arguments', Options, []))
-           },
+                         },
 
     %% can be queue | message_count | consumer_count | all
     Return = ?P_GET('return_field', Options, 'queue'),
@@ -746,7 +740,7 @@ new_queue(Queue, Options) when is_binary(Queue) ->
 
 -spec new_queue_name() -> ne_binary().
 new_queue_name() ->
-    list_to_binary(io_lib:format("~s-~p-~s", [node(), self(), kz_util:rand_hex_binary(4)])).
+    list_to_binary(io_lib:format("~s-~p-~s", [node(), self(), kz_binary:rand_hex(4)])).
 
 -spec queue_arguments(kz_proplist()) -> amqp_properties().
 queue_arguments(Arguments) ->
@@ -841,12 +835,11 @@ queue_delete(Queue) -> queue_delete(Queue, []).
 queue_delete(Queue, _Prop) when not is_binary(Queue) ->
     {'error', 'invalid_queue_name'};
 queue_delete(Queue, Prop) ->
-    QD = #'queue.delete'{
-            queue=Queue
+    QD = #'queue.delete'{queue=Queue
                         ,if_unused = ?P_GET('if_unused', Prop, 'false')
                         ,if_empty = ?P_GET('if_empty', Prop, 'false')
                         ,nowait = ?P_GET('nowait', Prop, 'true')
-           },
+                        },
     kz_amqp_channel:command(QD).
 
 %%------------------------------------------------------------------------------
@@ -983,13 +976,12 @@ bind_q_to_exchange(Queue, _Routing, _Exchange) when not is_binary(Queue) ->
 bind_q_to_exchange(Queue, Routing, Exchange) ->
     bind_q_to_exchange(Queue, Routing, Exchange, []).
 bind_q_to_exchange(Queue, Routing, Exchange, Options) ->
-    QB = #'queue.bind'{
-            queue = Queue %% what queue does the binding attach to?
+    QB = #'queue.bind'{queue = Queue %% what queue does the binding attach to?
                       ,exchange = Exchange %% what exchange does the binding attach to?
                       ,routing_key = Routing %% how does an exchange know a message should go to a bound queue?
                       ,nowait = ?P_GET('nowait', Options, 'false')
                       ,arguments = []
-           },
+                      },
     kz_amqp_channel:command(QB).
 
 %%------------------------------------------------------------------------------
@@ -1094,12 +1086,12 @@ unbind_q_from_tasks(Queue, Routing) ->
 -spec unbind_q_from_exchange(ne_binary(), ne_binary(), ne_binary()) ->
                                     'ok' | {'error', any()}.
 unbind_q_from_exchange(Queue, Routing, Exchange) ->
-    kz_amqp_channel:command(
-      #'queue.unbind'{queue = Queue
-                     ,exchange = Exchange
-                     ,routing_key = Routing
-                     ,arguments = []
-                     }).
+    UB = #'queue.unbind'{queue = Queue
+                        ,exchange = Exchange
+                        ,routing_key = Routing
+                        ,arguments = []
+                        },
+    kz_amqp_channel:command(UB).
 
 %%------------------------------------------------------------------------------
 %% @public
@@ -1112,14 +1104,13 @@ unbind_q_from_exchange(Queue, Routing, Exchange) ->
 -spec basic_consume(ne_binary(), kz_proplist()) -> 'ok' | {'error', any()}.
 basic_consume(Queue) -> basic_consume(Queue, []).
 basic_consume(Queue, Options) ->
-    BC = #'basic.consume'{
-            queue = Queue
+    BC = #'basic.consume'{queue = Queue
                          ,consumer_tag = <<>>
                          ,no_local = ?P_GET('no_local', Options, 'false')
                          ,no_ack = ?P_GET('no_ack', Options, 'true')
                          ,exclusive = ?P_GET('exclusive', Options, 'true')
                          ,nowait = ?P_GET('nowait', Options, 'false')
-           },
+                         },
     kz_amqp_channel:command(BC).
 
 %%------------------------------------------------------------------------------
@@ -1169,14 +1160,13 @@ flow_control_reply(Active) ->
 -spec access_request(kz_proplist()) -> #'access.request'{}.
 access_request() -> access_request([]).
 access_request(Options) ->
-    #'access.request'{
-       realm = ?P_GET('realm', Options, <<"/data">>)
+    #'access.request'{realm = ?P_GET('realm', Options, <<"/data">>)
                      ,exclusive = ?P_GET('exclusive', Options, 'false')
                      ,passive = ?P_GET('passive', Options, 'true')
                      ,active = ?P_GET('active', Options, 'true')
                      ,write = ?P_GET('write', Options, 'true')
                      ,read = ?P_GET('read', Options, 'true')
-      }.
+                     }.
 
 %%------------------------------------------------------------------------------
 %% @public

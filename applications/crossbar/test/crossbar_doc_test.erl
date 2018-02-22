@@ -195,8 +195,8 @@ from_qs(TStamp, Filter) ->
     kz_json:from_list([{<<Filter/binary, "_from">>, TStamp}]).
 
 multi_filter(Doc) ->
-    CFrom = kz_util:to_binary(?CREATED-1),
-    CTo = kz_util:to_binary(?CREATED+1),
+    CFrom = kz_term:to_binary(?CREATED-1),
+    CTo = kz_term:to_binary(?CREATED+1),
 
     QSTrue = kz_json:decode(<<"{\"filter_foo\":\"bar\",\"created_from\":", CFrom/binary, ",\"created_to\":", CTo/binary, "}">>),
 
@@ -212,3 +212,41 @@ multi_filter(Doc) ->
 
 test_desc(Format, Args) ->
     lists:flatten(io_lib:format(Format, Args)).
+
+patch_test_() ->
+    RequestData = kz_json:from_list([{<<"enabled">>, 'true'}]),
+    ExistingDoc = kz_json:from_list([{<<"foo">>, <<"bar">>}
+                                    ,{<<"enabled">>, 'false'}
+                                    ,{<<"elbow">>, <<"grease">>}
+                                    ]),
+
+    PatchedJObj = crossbar_doc:patch_the_doc(RequestData, ExistingDoc),
+
+    [?_assert(kz_json:is_true(<<"enabled">>, PatchedJObj))].
+
+patch_recursive_test_() ->
+    RequestData = kz_json:from_list([{<<"enabled">>, 'true'}
+                                    ,{<<"sip">>, kz_json:from_list([{<<"username">>, <<"me123">>}])}
+                                    ,{<<"new">>, <<"field">>}
+                                    ,{<<"nested">>, kz_json:from_list([{<<"another">>, <<"one">>}])}
+                                    ]),
+
+    ExistingDoc = kz_json:from_list([{<<"foo">>, <<"bar">>}
+                                    ,{<<"enabled">>, 'false'}
+                                    ,{<<"elbow">>, <<"grease">>}
+                                    ,{<<"sip">>, kz_json:from_list([{<<"username">>, <<"foo">>}
+                                                                   ,{<<"password">>, <<"bar">>}
+                                                                   ]
+                                                                  )
+                                     }
+                                    ]),
+
+    PatchedJObj = crossbar_doc:patch_the_doc(RequestData, ExistingDoc),
+
+    [?_assert(kz_json:is_true(<<"enabled">>, PatchedJObj))
+    ,?_assertMatch(<<"grease">>, kz_json:get_value(<<"elbow">>, PatchedJObj))
+    ,?_assertMatch(<<"field">>, kz_json:get_value(<<"new">>, PatchedJObj))
+    ,?_assertMatch(<<"one">>, kz_json:get_value([<<"nested">>, <<"another">>], PatchedJObj))
+    ,?_assertMatch(<<"me123">>, kz_json:get_value([<<"sip">>, <<"username">>], PatchedJObj))
+    ,?_assertMatch(<<"bar">>, kz_json:get_value([<<"sip">>, <<"password">>], PatchedJObj))
+    ].

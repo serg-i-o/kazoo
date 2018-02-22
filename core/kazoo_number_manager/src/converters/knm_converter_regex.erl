@@ -14,17 +14,21 @@
         ,to_npan/1
         ,to_1npan/1
         ]).
+-export([get_e164_converters/0
+        ,get_e164_converters/1
+        ]).
 
--define(DEFAULT_E164_CONVERTERS, [{<<"^\\+?1?([2-9][0-9]{2}[2-9][0-9]{6})\$">>
-                                  ,kz_json:from_list([{<<"prefix">>, <<"+1">>}])
-                                  }
-                                 ,{<<"^011(\\d*)$|^00(\\d*)\$">>
-                                  ,kz_json:from_list([{<<"prefix">>, <<"+">>}])
-                                  }
-                                 ,{<<"^[2-9]\\d{7,}\$">>
-                                  ,kz_json:from_list([{<<"prefix">>, <<"+">>}])
-                                  }
-                                 ]).
+
+-define(DEFAULT_E164_CONVERTERS
+       ,kz_json:from_list_recursive(
+          [{<<"^\\+?1?([2-9][0-9]{2}[2-9][0-9]{6})\$">>, [{<<"prefix">>, <<"+1">>}]}
+          ,{<<"^011(\\d*)$|^00(\\d*)\$">>, [{<<"prefix">>, <<"+">>}]}
+          ,{<<"^[2-9]\\d{7,}\$">>, [{<<"prefix">>, <<"+">>}]}
+          ])).
+
+-define(SYSTEM_E164_CONVERTERS
+       ,kapps_config:get_json(?KNM_CONFIG_CAT, ?KEY_E164_CONVERTERS, ?DEFAULT_E164_CONVERTERS)
+       ).
 
 -define(KEY_E164_CONVERTERS, <<"e164_converters">>).
 
@@ -38,10 +42,8 @@
 normalize(?NE_BINARY = Num) ->
     to_e164(Num).
 
--spec normalize(ne_binary(), api_binary()) ->
+-spec normalize(ne_binary(), ne_binary()) ->
                        ne_binary().
-normalize(?NE_BINARY = Num, 'undefined') ->
-    to_e164(Num);
 normalize(?NE_BINARY = Num, AccountId) ->
     to_e164(Num, AccountId).
 
@@ -135,37 +137,26 @@ apply_dialplan(Number, DialPlan, [Regex|Rs]) ->
     end.
 
 %%--------------------------------------------------------------------
-%% @private
+%% @public
 %% @doc
 %% @end
 %%--------------------------------------------------------------------
-
 -spec get_e164_converters() -> kz_json:object().
--ifdef(TEST).
 get_e164_converters() ->
-    kz_json:from_list(?DEFAULT_E164_CONVERTERS).
--else.
-get_e164_converters() ->
-    Default = kz_json:from_list(?DEFAULT_E164_CONVERTERS),
-    try kapps_config:get(?KNM_CONFIG_CAT
-                        ,?KEY_E164_CONVERTERS
-                        ,Default
-                        )
+    try ?SYSTEM_E164_CONVERTERS
     catch
-        _:_ -> Default
+        _:_ -> ?DEFAULT_E164_CONVERTERS
     end.
--endif.
 
 -spec get_e164_converters(ne_binary()) -> kz_json:object().
 get_e164_converters(AccountId) ->
-    Default = kz_json:from_list(?DEFAULT_E164_CONVERTERS),
     try kapps_account_config:get_global(AccountId
                                        ,?KNM_CONFIG_CAT
                                        ,?KEY_E164_CONVERTERS
-                                       ,Default
+                                       ,?DEFAULT_E164_CONVERTERS
                                        )
     catch
-        _:_ -> Default
+        _:_ -> ?DEFAULT_E164_CONVERTERS
     end.
 
 %%--------------------------------------------------------------------

@@ -1,5 +1,5 @@
 %%%-------------------------------------------------------------------
-%%% @copyright (C) 2017, 2600Hz
+%%% @copyright (C) 2016-2017, 2600Hz
 %%% @doc
 %%%
 %%% @end
@@ -27,11 +27,15 @@
         ]).
 
 -include("tasks.hrl").
--include_lib("kazoo_services/include/kz_service.hrl").
+-include_lib("kazoo_services/include/kazoo_services.hrl").
 
 -define(CATEGORY, "services").
 -define(ACTIONS, [<<"descendant_quantities">>
                  ]).
+
+-ifdef(TEST).
+-export([rows_for_quantities/5]).
+-endif.
 
 %%%===================================================================
 %%% API
@@ -45,7 +49,7 @@ init() ->
     tasks_bindings:bind_actions(<<"tasks."?CATEGORY>>, ?MODULE, ?ACTIONS).
 
 
--spec output_header(ne_binary()) -> kz_csv:row().
+-spec output_header(ne_binary()) -> kz_tasks:output_header().
 output_header(<<"descendant_quantities">>) ->
     [<<"account_id">>
     ,<<"year">>
@@ -91,17 +95,14 @@ action(<<"descendant_quantities">>) ->
 
 %%% Appliers
 
--spec descendant_quantities(kz_proplist(), task_iterator()) -> task_iterator().
-descendant_quantities(Props, 'init') ->
-    Descendants = get_descendants(props:get_value('account_id', Props)),
+-spec descendant_quantities(kz_tasks:extra_args(), kz_tasks:iterator()) -> kz_tasks:iterator().
+descendant_quantities(#{account_id := AccountId}, init) ->
+    Descendants = kapps_util:account_descendants(AccountId),
     DescendantsMoDBs = lists:flatmap(fun kapps_util:get_account_mods/1, Descendants),
     lager:debug("found ~p descendants & ~p MoDBs in total"
                ,[length(Descendants), length(DescendantsMoDBs)]),
-    {'ok', DescendantsMoDBs};
-
-descendant_quantities(_, []) ->
-    'stop';
-
+    {ok, DescendantsMoDBs};
+descendant_quantities(_, []) -> stop;
 descendant_quantities(_, [SubAccountMoDB | DescendantsMoDBs]) ->
     ?MATCH_MODB_SUFFIX_ENCODED(A, B, Rest, YYYY, MM) = SubAccountMoDB,
     AccountId = ?MATCH_ACCOUNT_RAW(A, B, Rest),
@@ -110,26 +111,25 @@ descendant_quantities(_, [SubAccountMoDB | DescendantsMoDBs]) ->
     case rows_for_quantities(AccountId, YYYY, MM, BoM, EoM) of
         [] ->
             %% No rows generated: ask worker to skip writing for this step.
-            {'ok', DescendantsMoDBs};
+            {ok, DescendantsMoDBs};
         Rows -> {Rows, DescendantsMoDBs}
     end.
 
 
 %%% Triggerables
 
--spec cleanup(ne_binary()) -> 'ok'.
+-spec cleanup(ne_binary()) -> ok.
 cleanup(?KZ_SERVICES_DB) ->
     lager:debug("checking ~s for abandoned accounts", [?KZ_SERVICES_DB]),
     cleanup_orphaned_services_docs();
-cleanup(_SystemDb) -> 'ok'.
+cleanup(_SystemDb) -> ok.
 
 
 %%%===================================================================
 %%% Internal functions
 %%%===================================================================
 
--spec rows_for_quantities(ne_binary(), ne_binary(), ne_binary(), kz_json:object(), kz_json:object()) ->
-                                 [kz_csv:row()].
+-spec rows_for_quantities(ne_binary(), ne_binary(), ne_binary(), kz_json:object(), kz_json:object()) -> [kz_csv:mapped_row()].
 rows_for_quantities(AccountId, YYYY, MM, BoM, EoM) ->
     lists:append(
       [quantities_for_items(AccountId, YYYY, MM, Category, BoMItem, EoMItem)
@@ -138,34 +138,18 @@ rows_for_quantities(AccountId, YYYY, MM, BoM, EoM) ->
           EoMItem <- [kz_json:get_value(Category, EoM)]
       ]).
 
--spec quantities_for_items(ne_binary(), ne_binary(), ne_binary(), ne_binary(), api_object(), api_object()) ->
-                                  [kz_csv:row()].
+-spec quantities_for_items(ne_binary(), ne_binary(), ne_binary(), ne_binary(), api_object(), api_object()) -> [kz_csv:mapped_row()].
 quantities_for_items(AccountId, YYYY, MM, Category, BoMItem, EoMItem) ->
-    [ [AccountId
-      ,YYYY
-      ,MM
-      ,Category
-      ,Item
-      ,maybe_integer_to_binary(Item, BoMItem)
-      ,maybe_integer_to_binary(Item, EoMItem)
-      ]
-      || Item <- fields(BoMItem, EoMItem)
+    [#{<<"account_id">> => AccountId
+      ,<<"year">> => YYYY
+      ,<<"month">> => MM
+      ,<<"category">> => Category
+      ,<<"item">> => Item
+      ,<<"quantity_bom">> => maybe_integer_to_binary(Item, BoMItem)
+      ,<<"quantity_eom">> => maybe_integer_to_binary(Item, EoMItem)
+      }
+     || Item <- fields(BoMItem, EoMItem)
     ].
-
--spec get_descendants(ne_binary()) -> ne_binaries().
-get_descendants(AccountId) ->
-    ViewOptions = [{'startkey', [AccountId]}
-                  ,{'endkey', [AccountId, kz_json:new()]}
-                  ],
-    case kz_datamgr:get_results(?KZ_ACCOUNTS_DB, <<"accounts/listing_by_descendants">>, ViewOptions) of
-        {'ok', JObjs} ->
-            [Id || JObj <- JObjs,
-                   (Id = kz_doc:id(JObj)) =/= AccountId
-            ];
-        {'error', _R} ->
-            lager:debug("unable to get descendants of ~s: ~p", [AccountId, _R]),
-            []
-    end.
 
 -spec modb_service_quantities(ne_binary(), ne_binary()) -> kz_json:object().
 modb_service_quantities(MoDB, Id) ->
@@ -219,103 +203,5 @@ cleanup_orphaned_services_doc(AccountId=?NE_BINARY) ->
     end;
 cleanup_orphaned_services_doc(View) ->
     cleanup_orphaned_services_doc(kz_doc:id(View)).
-
-
--ifdef(TEST).
--include_lib("eunit/include/eunit.hrl").
-
-bom_1() ->
-    kz_json:from_list(
-      [{<<"branding">>, kz_json:from_list(
-                          [{<<"whitelabel">>, 0}
-                          ])
-       }
-      ,{<<"users">>, kz_json:new()}
-      ,{<<"ui_apps">>, kz_json:new()}
-      ,{<<"number_services">>, kz_json:new()}
-      ,{<<"phone_numbers">>, kz_json:from_list(
-                               [{<<"did_us">>, 1}
-                               ])
-       }
-      ,{<<"ledgers">>, kz_json:new()}
-      ,{<<"ips">>, kz_json:from_list(
-                     [{<<"dedicated">>, 0}
-                     ])
-       }
-      ,{<<"devices">>, kz_json:new()}
-      ]).
-
-bom_2() ->
-    kz_json:from_list(
-      [{<<"branding">>, kz_json:from_list(
-                          [{<<"whitelabel">>, 0}
-                          ])
-       }
-      ,{<<"users">>, kz_json:new()}
-      ,{<<"ui_apps">>, kz_json:new()}
-      ,{<<"number_services">>, kz_json:new()}
-      ,{<<"phone_numbers">>, kz_json:new()}
-      ,{<<"ledgers">>, kz_json:new()}
-      ,{<<"ips">>, kz_json:from_list(
-                     [{<<"dedicated">>, 0}
-                     ])
-       }
-      ,{<<"devices">>, kz_json:new()}
-      ]).
-
-eom_1() ->
-    kz_json:from_list(
-      [{<<"branding">>, kz_json:from_list(
-                          [{<<"whitelabel">>, 0}
-                          ])
-       }
-      ,{<<"users">>, kz_json:new()}
-      ,{<<"ui_apps">>, kz_json:new()}
-      ,{<<"number_services">>, kz_json:from_list(
-                                 [{<<"local">>, 130}
-                                 ])
-       }
-      ,{<<"phone_numbers">>, kz_json:from_list(
-                               [{<<"did_us">>, 1}
-                               ])
-       }
-      ,{<<"ledgers">>, kz_json:new()}
-      ,{<<"ips">>, kz_json:from_list(
-                     [{<<"dedicated">>, 0}
-                     ])
-       }
-      ,{<<"devices">>, kz_json:new()}
-      ]).
-
-rows_for_missing_eom_test() ->
-    AccountId = <<"6b71cb72c876b5b1396a335f8f8a2594">>,
-    <<YYYY:4/binary, MM:2/binary>> = <<"201504">>,
-    Expected =
-        [[AccountId, YYYY, MM, <<"branding">>, <<"whitelabel">>, <<"0">>, 'undefined']
-        ,[AccountId, YYYY, MM, <<"ips">>, <<"dedicated">>, <<"0">>, 'undefined']
-        ],
-    ?assertEqual(Expected, rows_for_quantities(AccountId, YYYY, MM, bom_2(), kz_json:new())).
-
-rows_for_missing_bom_test() ->
-    AccountId = <<"6b71cb72c876b5b1396a335f8f8a2594">>,
-    <<YYYY:4/binary, MM:2/binary>> = <<"201504">>,
-    Expected =
-        [[AccountId, YYYY, MM, <<"branding">>, <<"whitelabel">>, 'undefined', <<"0">>]
-        ,[AccountId, YYYY, MM, <<"ips">>, <<"dedicated">>, 'undefined', <<"0">>]
-        ],
-    ?assertEqual(Expected, rows_for_quantities(AccountId, YYYY, MM, kz_json:new(), bom_2())).
-
-rows_for_bom_and_eom_test() ->
-    AccountId = <<"6b71cb72c876b5b1396a335f8f8a2594">>,
-    <<YYYY:4/binary, MM:2/binary>> = <<"201606">>,
-    Expected =
-        [[AccountId, YYYY, MM, <<"branding">>, <<"whitelabel">>, <<"0">>, <<"0">>]
-        ,[AccountId, YYYY, MM, <<"ips">>, <<"dedicated">>, <<"0">>, <<"0">>]
-        ,[AccountId, YYYY, MM, <<"number_services">>, <<"local">>, 'undefined', <<"130">>]
-        ,[AccountId, YYYY, MM, <<"phone_numbers">>, <<"did_us">>, <<"1">>, <<"1">>]
-        ],
-    ?assertEqual(Expected, rows_for_quantities(AccountId, YYYY, MM, bom_1(), eom_1())).
-
--endif.
 
 %%% End of Module.

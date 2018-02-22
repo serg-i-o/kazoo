@@ -24,7 +24,7 @@
 %%--------------------------------------------------------------------
 -spec handle(kz_json:object(), kapps_call:call()) -> any().
 handle(Data, Call) ->
-    case get_endpoints(kz_json:get_value(<<"endpoints">>, Data, []), Call) of
+    case get_endpoints(kz_json:get_list_value(<<"endpoints">>, Data), Call) of
         [] ->
             lager:notice("page group has no endpoints, moving to next callflow element"),
             cf_exe:continue(Call);
@@ -34,9 +34,9 @@ handle(Data, Call) ->
 -spec attempt_page(kz_json:objects(), kz_json:object(), kapps_call:call()) -> 'ok'.
 attempt_page(Endpoints, Data, Call) ->
     Timeout = kz_json:get_integer_value(<<"timeout">>, Data, 5),
-    BargeOption = barge_option(Data),
-    lager:info("attempting page group of ~b members", [length(Endpoints)]),
-    case send_page(Endpoints, Timeout, BargeOption, Call) of
+    CCVs = barge_option(Data),
+    Options = audio_option(Data),
+    case send_page(Endpoints, Timeout, CCVs, Options, Call) of
         {'ok', _} ->
             lager:info("completed successful bridge to the page group - call finished normally"),
             cf_exe:stop(Call);
@@ -45,26 +45,38 @@ attempt_page(Endpoints, Data, Call) ->
             cf_exe:continue(Call)
     end.
 
--spec barge_option(kz_json:object()) -> kz_json:object().
+-spec barge_option(kz_json:object()) -> tuple().
 barge_option(Data) ->
     case kz_json:is_true(<<"barge_calls">>, Data) of
         'false' -> kz_json:from_list([{<<"Auto-Answer-Suppress-Notify">>, 'true'}]);
         'true' -> kz_json:from_list([{<<"Auto-Answer-Suppress-Notify">>, 'false'}])
     end.
 
--spec send_page(kz_json:objects(), integer(), kz_json:object(), kapps_call:call()) ->
+-spec audio_option(kz_json:object()) -> tuple().
+audio_option(Data) ->
+    case kz_json:get_ne_binary_value(<<"audio">>, Data, <<"one-way">>) of
+        <<"two-way">> -> kz_json:from_list([{<<"Two-Way-Audio">>, 'true'}]);
+        <<"one-way">> -> kz_json:from_list([{<<"Two-Way-Audio">>, 'false'}]);
+        _ -> kz_json:from_list([{<<"Two-Way-Audio">>, 'false'}])
+    end.
+
+-spec send_page(kz_json:objects(), integer(), kz_json:object(), kz_json:object(), kapps_call:call()) ->
                        {'error', 'timeout' | kz_json:object()} | {'ok', kz_json:object()}.
-send_page(Endpoints, Timeout, CCVs, Call) ->
+send_page(Endpoints, Timeout, CCVs, Options, Call) ->
+    {CIDNumber, CIDName} = kz_attributes:caller_id(Call),
+    lager:info("attempting page group of ~b members with caller-id (~s/~s)", [length(Endpoints), CIDNumber, CIDName]),
     kapps_call_command:b_page(Endpoints
                              ,Timeout
-                             ,'undefined'
-                             ,'undefined'
+                             ,CIDName
+                             ,CIDNumber
                              ,'undefined'
                              ,CCVs
+                             ,Options
                              ,Call
                              ).
 
--spec get_endpoints(kz_json:objects(), kapps_call:call()) -> kz_json:objects().
+-spec get_endpoints(api_objects(), kapps_call:call()) -> kz_json:objects().
+get_endpoints(undefined, Call) -> get_endpoints([], Call);
 get_endpoints(Members, Call) ->
     S = self(),
     Builders = [kz_util:spawn(
@@ -87,7 +99,7 @@ get_endpoints(Members, Call) ->
 -spec resolve_endpoint_ids(kz_json:objects(), kapps_call:call()) ->
                                   [{ne_binary(), kz_json:object()}].
 resolve_endpoint_ids(Members, Call) ->
-    [{Id, kz_json:set_value(<<"source">>, kz_util:to_binary(?MODULE), Member)}
+    [{Id, kz_json:set_value(<<"source">>, kz_term:to_binary(?MODULE), Member)}
      || {Type, Id, Member} <- resolve_endpoint_ids(Members, [], Call)
             ,Type =:= <<"device">>
             ,Id =/= kapps_call:authorizing_id(Call)
@@ -102,7 +114,7 @@ resolve_endpoint_ids([], EndpointIds, _) ->
 resolve_endpoint_ids([Member|Members], EndpointIds, Call) ->
     Id = kz_doc:id(Member),
     Type = kz_json:get_value(<<"endpoint_type">>, Member, <<"device">>),
-    case kz_util:is_empty(Id)
+    case kz_term:is_empty(Id)
         orelse lists:keymember(Id, 2, EndpointIds)
         orelse Type
     of

@@ -13,8 +13,8 @@
 -export([get_response/2]).
 -export([config_doc_id/0]).
 
--include_lib("kazoo/include/kz_types.hrl").
--include_lib("kazoo/include/kz_log.hrl").
+-include_lib("kazoo_stdlib/include/kz_types.hrl").
+-include_lib("kazoo_stdlib/include/kz_log.hrl").
 
 -define(CALL_RESPONSE_CONF, <<"call_response">>).
 
@@ -114,7 +114,7 @@ do_send(CallId, CtrlQ, Commands) ->
     Command = [{<<"Application-Name">>, <<"queue">>}
               ,{<<"Call-ID">>, CallId}
               ,{<<"Commands">>, Commands}
-              ,{<<"Msg-ID">>, kz_util:rand_hex_binary(6)}
+              ,{<<"Msg-ID">>, kz_binary:rand_hex(6)}
                | kz_api:default_headers(<<"call">>, <<"command">>, <<"call_response">>, <<"0.1.0">>)
               ],
     kz_amqp_worker:cast(Command
@@ -155,7 +155,7 @@ send_default_response(Call, Response) ->
         ,kapps_call:control_queue(Call)
         ,kz_json:get_value(<<"Code">>, Response)
         ,kz_json:get_value(<<"Message">>, Response)
-        ,kz_media_util:get_prompt(Media, Call)
+        ,kapps_call:get_prompt(Call, Media)
         ).
 
 %%--------------------------------------------------------------------

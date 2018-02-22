@@ -39,13 +39,17 @@ handle_job_notify(JObj, _Props) ->
     JobId = kz_json:get_value(<<"Fax-JobId">>, JObj),
     AccountDb = kz_json:get_value(<<"Account-DB">>, JObj),
     lager:debug("Checking if JobId ~s in db ~s is a cloud printer job",[JobId, AccountDb]),
-    {'ok', FaxJObj} = kz_datamgr:open_doc(AccountDb, {<<"fax">>, JobId}),
-    case kz_json:get_value(<<"cloud_job_id">>, FaxJObj) of
+    {FetchRes, MaybeFaxJObj} = kz_datamgr:open_doc(AccountDb, {<<"fax">>, JobId}),
+    case FetchRes =:= 'ok'
+        andalso kz_json:get_value(<<"cloud_job_id">>, MaybeFaxJObj)
+    of
+        'false' ->
+            lager:debug("could not fetch cloud printer JobId ~p : ~p",[JobId, MaybeFaxJObj]);
         'undefined' ->
             lager:debug("JobId ~s is not a cloud printer job",[JobId]);
         CloudJobId ->
             lager:debug("JobId ~s is a cloud printer job with Id ~s",[JobId,CloudJobId]),
-            PrinterId = kz_json:get_value(<<"cloud_printer_id">>, FaxJObj),
+            PrinterId = kz_json:get_value(<<"cloud_printer_id">>, MaybeFaxJObj),
             process_job_outcome(PrinterId, CloudJobId, kz_json:get_value(<<"Event-Name">>, JObj))
     end.
 
@@ -72,7 +76,7 @@ handle_push_event(_JID, <<"GCP">>, <<"Queued-Job">>, PrinterId) ->
     case get_printer_oauth_credentials(PrinterId) of
         {'ok', Authorization} ->
             Headers = [?GPC_PROXY_HEADER , {"Authorization",Authorization}],
-            case kz_http:get(kz_util:to_list(URL), Headers) of
+            case kz_http:get(kz_term:to_list(URL), Headers) of
                 {'ok', 200, _RespHeaders, RespBody} ->
                     JObj = kz_json:decode(RespBody),
                     JObjs = kz_json:get_value(<<"jobs">>, JObj, []),
@@ -114,7 +118,7 @@ maybe_fax_number(A, B) ->
     case kz_doc:id(A) of
         <<"fax_number">> ->
             Number = fax_util:filter_numbers(kz_json:get_value(<<"value">>, A)),
-            case kz_util:is_empty(Number) of
+            case kz_term:is_empty(Number) of
                 'true' -> lager:debug("fax number is empty");
                 'false' -> kz_json:set_value(<<"Fax-Number">>, Number, B)
             end;
@@ -127,7 +131,7 @@ fetch_ticket(JobId, Authorization) ->
     Headers = [?GPC_PROXY_HEADER
               ,{"Authorization",Authorization}
               ],
-    case kz_http:get(kz_util:to_list(URL), Headers) of
+    case kz_http:get(kz_term:to_list(URL), Headers) of
         {'ok', 200, _RespHeaders, RespBody} ->
             kz_json:decode(RespBody);
         Response ->
@@ -173,9 +177,9 @@ send_update_job_status(JobId, Status, Authorization) ->
              ,{"semantic_state_diff", kz_json:encode(Status)}
              ],
 
-    Body = props:to_querystring(Fields),
+    Body = kz_http_util:props_to_querystring(Fields),
 
-    case kz_http:post(kz_util:to_list(?JOBCTL_URL), Headers, Body) of
+    case kz_http:post(kz_term:to_list(?JOBCTL_URL), Headers, Body) of
         {'ok', 200, _RespHeaders, RespBody} ->
             JObj = kz_json:decode(RespBody),
             case kz_json:is_true(<<"success">>, JObj) of
@@ -193,12 +197,12 @@ send_update_job_status(JobId, Status, Authorization) ->
                            {'error', any()}.
 download_file(URL, Authorization) ->
     Headers = [?GPC_PROXY_HEADER , {"Authorization",Authorization}],
-    case kz_http:get(kz_util:to_list(URL), Headers) of
+    case kz_http:get(kz_term:to_list(URL), Headers) of
         {'ok', 200, RespHeaders, RespBody} ->
-            CT = kz_util:to_binary(props:get_value("content-type", RespHeaders)),
+            CT = kz_term:to_binary(props:get_value("content-type", RespHeaders)),
             Ext = kz_mime:to_extension(CT),
             FileName = <<"/tmp/fax_printer_"
-                         ,(kz_util:to_binary(kz_util:current_tstamp()))/binary
+                         ,(kz_term:to_binary(kz_time:current_tstamp()))/binary
                          ,"."
                          ,Ext/binary
                        >>,
@@ -295,7 +299,7 @@ save_fax_document(Job, JobId, PrinterId, FaxNumber ) ->
               ]),
     Doc = kz_json:set_values([{<<"pvt_type">>, <<"fax">>}
                              ,{<<"pvt_job_status">>, <<"queued">>}
-                             ,{<<"pvt_created">>, kz_util:current_tstamp()}
+                             ,{<<"pvt_created">>, kz_time:current_tstamp()}
                              ,{<<"attempts">>, 0}
                              ,{<<"pvt_account_id">>, AccountId}
                              ,{<<"pvt_account_db">>, AccountDb}
@@ -372,7 +376,7 @@ fetch_printer_oauth_credentials(PrinterId) ->
             {'ok',App} = kazoo_oauth_util:get_oauth_app(kz_json:get_value(<<"pvt_cloud_oauth_app">>, JObj)),
             RefreshToken = #oauth_refresh_token{token = kz_json:get_value(<<"pvt_cloud_refresh_token">>, JObj)},
             {'ok', #oauth_token{expires=Expires}=Token} = kazoo_oauth_util:token(App, RefreshToken),
-            Auth = kz_util:to_list(kazoo_oauth_util:authorization_header(Token)),
+            Auth = kz_term:to_list(kazoo_oauth_util:authorization_header(Token)),
             kz_cache:store_local(?CACHE_NAME, {'gcp', PrinterId}, Auth, [{'expires', Expires}]),
             {'ok', Auth}
     end.
@@ -397,7 +401,7 @@ check_registration(_, 'undefined', _JObj) -> 'ok';
 check_registration(_, <<"expired">>, _JObj) -> 'ok';
 check_registration(AppId, <<"registered">>, JObj) ->
     PoolingUrlPart = kz_json:get_value(<<"pvt_cloud_polling_url">>, JObj),
-    PoolingUrl = kz_util:to_list(<<PoolingUrlPart/binary, AppId/binary>>),
+    PoolingUrl = kz_term:to_list(<<PoolingUrlPart/binary, AppId/binary>>),
     PrinterId = kz_json:get_value(<<"pvt_cloud_printer_id">>, JObj),
     case kz_http:get(PoolingUrl, [?GPC_PROXY_HEADER]) of
         {'ok', 200, _RespHeaders, RespXML} ->
@@ -448,9 +452,9 @@ process_registration_result('false', AppId, JObj, _Result) ->
     PrinterId = kz_json:get_value(<<"pvt_cloud_printer_id">>, JObj),
     TokenDuration = kz_json:get_integer_value(<<"pvt_cloud_token_duration">>, JObj),
     UnixTS = kz_json:get_integer_value(<<"pvt_cloud_created_time">>, JObj),
-    CreatedTime = kz_util:unix_timestamp_to_gregorian_seconds(UnixTS),
+    CreatedTime = kz_time:unix_timestamp_to_gregorian_seconds(UnixTS),
     InviteUrl = kz_json:get_value(<<"pvt_cloud_connector_claim_url">>, JObj),
-    Elapsed = kz_util:elapsed_s(CreatedTime),
+    Elapsed = kz_time:elapsed_s(CreatedTime),
 
     case Elapsed > TokenDuration of
         'true' ->

@@ -34,13 +34,18 @@
 
 -export_type([query_options/0]).
 
+-define(API_URL
+       ,kapps_config:get_ne_binary(?KNM_VITELITY_CONFIG_CAT
+                                  ,<<"api_uri">>
+                                  ,<<"http://api.vitelity.net/api.php">>
+                                  )
+       ).
+
 -spec api_uri() -> ne_binary().
-api_uri() ->
-    ?VITELITY_URI.
+api_uri() -> ?API_URL.
 
 -spec config_cat() -> ne_binary().
-config_cat() ->
-    ?KNM_VITELITY_CONFIG_CAT.
+config_cat() -> ?KNM_VITELITY_CONFIG_CAT.
 
 -spec add_options_fold({atom(), api_binary()}, query_options()) ->
                               query_options().
@@ -49,16 +54,22 @@ add_options_fold({K, V}, Options) ->
     props:insert_value(K, V, Options).
 
 -ifdef(TEST).
-get_query_value(Key, Options) ->
-    props:get_value(Key, Options).
+-define(QUERY_VALUE(Key, Options), props:get_value(Key, Options)).
 -else.
--spec get_query_value(ne_binary(), knm_carriers:options()) -> any().
-get_query_value(Key, Options) ->
-    case props:get_value(Key, Options) of
-        'undefined' -> kapps_config:get(?KNM_VITELITY_CONFIG_CAT, Key);
-        Value -> Value
-    end.
+-define(QUERY_VALUE(Key, Options),
+        case props:get_value(Key, Options) of
+            undefined -> kapps_config:get(?KNM_VITELITY_CONFIG_CAT, Key);
+            Value -> Value
+        end).
 -endif.
+
+-spec get_query_value(ne_binary(), knm_carriers:options()) -> any().
+get_query_value(<<"cnam">>=Key, Options) -> ?QUERY_VALUE(Key, Options);
+get_query_value(<<"login">>=Key, Options) -> ?QUERY_VALUE(Key, Options);
+get_query_value(<<"pass">>=Key, Options) -> ?QUERY_VALUE(Key, Options);
+get_query_value(<<"provider">>=Key, Options) -> ?QUERY_VALUE(Key, Options);
+get_query_value(<<"type">>=Key, Options) -> ?QUERY_VALUE(Key, Options);
+get_query_value(<<"withrates">>=Key, Options) -> ?QUERY_VALUE(Key, Options).
 
 -spec default_options() -> qs_options().
 -spec default_options(kz_proplist()) -> qs_options().
@@ -72,8 +83,8 @@ default_options(Options) ->
 -spec build_uri(query_options()) -> ne_binary().
 build_uri(Options) ->
     URI = props:get_value('uri', Options),
-    QS = kz_util:to_binary(
-           props:to_querystring(
+    QS = kz_term:to_binary(
+           kz_http_util:props_to_querystring(
              props:filter_undefined(
                props:get_value('qs', Options)
               ))),
@@ -150,11 +161,11 @@ xml_el_to_kv_pair(#xmlElement{name=Name
                              }) ->
     case kz_xml:elements(Value) of
         [] ->
-            {kz_util:to_binary(Name)
+            {kz_term:to_binary(Name)
             ,kz_xml:texts_to_binary(Value)
             };
         Els ->
-            {kz_util:to_binary(Name)
+            {kz_term:to_binary(Name)
             ,kz_json:from_list(xml_els_to_proplist(Els))
             }
     end.
@@ -164,7 +175,7 @@ xml_el_to_kv_pair(#xmlElement{name=Name
                             {'error', any()}.
 query_vitelity(URI) ->
     lager:debug("querying ~s", [URI]),
-    case kz_http:post(kz_util:to_list(URI)) of
+    case kz_http:post(kz_term:to_list(URI)) of
         {'ok', _RespCode, _RespHeaders, RespXML} ->
             lager:debug("recv ~p: ~s", [_RespCode, RespXML]),
             {'ok', RespXML};
@@ -235,9 +246,16 @@ get_short_state(FullState) ->
              ,{<<"wisconsin">>, <<"WI">>}
              ,{<<"wyoming">>, <<"WY">>}
              ],
-    State = kz_util:to_lower_binary(FullState),
+    State = kz_term:to_lower_binary(FullState),
     props:get_value(State, States).
 
--spec get_routesip() -> ne_binary() | api_binaries().
+-spec get_routesip() -> ne_binary().
+-ifdef(TEST).
+get_routesip() -> <<"1.2.3.4">>.
+-else.
 get_routesip() ->
-    kapps_config:get(?KNM_VITELITY_CONFIG_CAT, <<"routesip">>).
+    case kapps_config:get(?KNM_VITELITY_CONFIG_CAT, <<"routesip">>) of
+        [Route=?NE_BINARY|_] -> Route;
+        Route=?NE_BINARY -> Route
+    end.
+-endif.

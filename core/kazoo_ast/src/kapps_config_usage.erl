@@ -1,273 +1,207 @@
 -module(kapps_config_usage).
 
--export([process_project/0, process_app/1, process_module/1
-        ,to_schema_docs/0, to_schema_docs/1
+-export([process_project/0, process_app/1
+        ,to_schema_docs/0
+
+        ,expression_to_schema/2
         ]).
 
--include_lib("kazoo/include/kz_types.hrl").
+-include_lib("kazoo_stdlib/include/kz_types.hrl").
 -include_lib("kazoo_ast/include/kz_ast.hrl").
+-include_lib("kazoo_stdlib/include/kazoo_json.hrl").
 
+-define(SOURCE, <<"config_usage_source">>).
 -define(FIELD_DEFAULT, <<"default">>).
 -define(FIELD_PROPERTIES, <<"properties">>).
+-define(FIELD_TYPE, <<"type">>).
 -define(SYSTEM_CONFIG_DESCRIPTIONS, kz_ast_util:api_path(<<"descriptions.system_config.json">>)).
+-define(UNKNOWN_DEFAULT, undefined).
 
 -spec to_schema_docs() -> 'ok'.
--spec to_schema_docs(kz_json:object()) -> 'ok'.
 to_schema_docs() ->
-    to_schema_docs(process_project()).
-
-to_schema_docs(Schemas) ->
-    kz_json:foreach(fun update_schema/1, Schemas).
+    kz_json:foreach(fun update_schema/1, process_project()).
 
 -spec update_schema({kz_json:key(), kz_json:json_term()}) -> 'ok'.
 update_schema({Name, AutoGenSchema}) ->
-    Path = kz_ast_util:schema_path(<<"system_config.", Name/binary, ".json">>),
-    JObj = static_fields(Name, AutoGenSchema),
-    'ok' = file:write_file(Path, kz_json:encode(filter_system(JObj))).
+    AccountSchema = account_properties(AutoGenSchema),
+    _ = kz_json:new() =/= AccountSchema
+        andalso update_schema(<<"account_config">>, Name, AccountSchema),
+    update_schema(<<"system_config">>, Name, AutoGenSchema).
 
-filter_system(JObj) ->
-    filter_system_fold(kz_json:get_values(JObj), kz_json:new()).
+-spec update_schema(ne_binary(), kz_json:key(), kz_json:object()) -> ok.
+update_schema(ConfigType, Name, AutoGenSchema) ->
+    Path = kz_ast_util:schema_path(<<ConfigType/binary, ".", Name/binary, ".json">>),
+    GeneratedJObj = static_fields(ConfigType, Name, remove_source(AutoGenSchema)),
+    MergedJObj = kz_json:merge(fun kz_json:merge_left/2, existing_schema(Path), GeneratedJObj),
+    UpdatedSchema = kz_json:delete_key(<<"id">>, MergedJObj),
+    'ok' = file:write_file(Path, kz_json:encode(UpdatedSchema)).
 
-filter_system_fold({[], []}, JObj) -> JObj;
-filter_system_fold({['_system' | Vc], [ _| Kc]}, JObj) ->
-    filter_system_fold({Vc, Kc}, JObj);
-filter_system_fold({[V | Vc], [K | Kc]}, JObj) ->
-    case kz_json:is_json_object(V) of
-        'true' -> filter_system_fold({Vc, Kc}, kz_json:set_value(K, filter_system(V), JObj));
-        'false' -> filter_system_fold({Vc, Kc}, kz_json:set_value(K, V, JObj))
+-spec existing_schema(file:filename_all()) -> kz_json:object().
+existing_schema(Name) ->
+    case kz_json_schema:fload(Name) of
+        {'ok', JObj} -> JObj;
+        {'error', _E} ->
+            io:format("failed to find ~s: ~p~n", [Name, _E]),
+            kz_json:new()
     end.
 
-static_fields(Name, JObj) ->
-    Id = <<"system_config.", Name/binary>>,
-    Description = <<"Schema for ", Name/binary, " system_config">>,
-    Required = fields_without_defaults(JObj),
-    Values = [{<<"description">>, Description}
+-spec account_properties(kz_json:object()) -> kz_json:object().
+account_properties(AutoGenSchema) ->
+    Flat = kz_json:to_proplist(kz_json:flatten(AutoGenSchema)),
+    KeepPaths = sets:from_list(
+                  [[P1, P2]
+                   || {[P1, P2 | _]=Path, V} <- Flat,
+                      ?SOURCE =:= lists:last(Path),
+                      V =:= kapps_account_config
+                  ]),
+    kz_json:expand(
+      kz_json:from_list(
+        [KV
+         || {[P1, P2 | _],_}=KV <- Flat,
+            sets:is_element([P1, P2], KeepPaths)
+        ])).
+
+-spec remove_source(kz_json:object()) -> kz_json:object().
+remove_source(JObj) ->
+    F = fun ({K, _}) -> not lists:member(?SOURCE, K) end,
+    Filtered = kz_json:filter(F, kz_json:flatten(JObj)),
+    kz_json:expand(Filtered).
+
+static_fields(ConfigType, Name, JObj) ->
+    Id = <<ConfigType/binary, ".", Name/binary>>,
+    Values = [{<<"description">>, <<"Schema for ", Name/binary, " ", ConfigType/binary>>}
              ,{<<"$schema">>, <<"http://json-schema.org/draft-04/schema#">>}
-             ,{<<"type">>, <<"object">>}
-              |[{<<"required">>, Required} || Required =/= []]
+             ,{?FIELD_TYPE, <<"object">>}
              ],
     kz_json:set_values(Values, kz_doc:set_id(JObj, Id)).
 
--define(NO_DEFAULTS_EXCEPTIONS, [<<"proxy_hostname">>]).
-
--spec fields_without_defaults(kz_json:object()) -> ne_binaries().
-fields_without_defaults(JObj0) ->
-    JObj = kz_json:get_value(?FIELD_PROPERTIES, JObj0),
-    lists:sort([Field
-                || {Field, Content} <- kz_json:to_proplist(JObj),
-                   'undefined' =:= kz_json:get_value(?FIELD_DEFAULT, Content),
-                   not lists:member(Field, ?NO_DEFAULTS_EXCEPTIONS)
-               ]).
-
 -spec process_project() -> kz_json:object().
 process_project() ->
-    io:format("processing kapps_config usage: "),
-    Apps = kz_ast_util:project_apps(),
-    Usage = lists:foldl(fun process_app/2, kz_json:new(), Apps),
+    io:format("processing kapps_config/kapps_account_config/ecallmgr_config usage: "),
+    Options = [{'expression', fun expression_to_schema/2}
+              ,{'module', fun print_dot/2}
+              ,{'accumulator', kz_json:new()}
+              ],
+    Usage = kazoo_ast:walk_project(Options),
     io:format(" done~n"),
     Usage.
 
 -spec process_app(atom()) -> kz_json:object().
--spec process_app(atom(), kz_json:object()) -> kz_json:object().
 process_app(App) ->
-    process_app(App, kz_json:new()).
+    Options = [{'expression', fun expression_to_schema/2}
+              ,{'module', fun print_dot/2}
+              ,{'accumulator', kz_json:new()}
+              ],
+    kazoo_ast:walk_app(App, Options).
 
-process_app(App, Schemas) ->
-    lists:foldl(fun module_to_schema/2, Schemas, kz_ast_util:app_modules(App)).
-
--spec process_module(module()) -> kz_json:object().
--spec module_to_schema(module(), kz_json:object()) -> kz_json:object().
-process_module(Module) ->
-    module_to_schema(Module, kz_json:new()).
-
-module_to_schema(Module, Schemas) ->
+print_dot(_Module, Acc) ->
     io:format("."),
-    case kz_ast_util:module_ast(Module) of
-        'undefined' -> 'undefined';
-        {M, AST} ->
-            Fs = kz_ast_util:add_module_ast([], M, AST),
-            functions_to_schema(Fs, Schemas)
-    end.
+    Acc.
 
-functions_to_schema(Fs, Schemas) ->
-    lists:foldl(fun function_to_schema/2, Schemas, Fs).
-
-function_to_schema({_Module, _Function, _Arity, Clauses}, Schemas) ->
-    clauses_to_schema(Clauses, Schemas).
-
-clauses_to_schema(Clauses, Schemas) ->
-    lists:foldl(fun clause_to_schema/2, Schemas, Clauses).
-
-clause_to_schema(?CLAUSE(_Args, _Guards, Expressions), Schemas) ->
-    expressions_to_schema(Expressions, Schemas).
-
-expressions_to_schema(Expressions, Schemas) ->
-    lists:foldl(fun expression_to_schema/2, Schemas, Expressions).
-
+-spec expression_to_schema(any(), kz_json:object()) -> kz_json:object().
 expression_to_schema(?MOD_FUN_ARGS('kapps_config', 'set', _), Schemas) ->
     Schemas;
 expression_to_schema(?MOD_FUN_ARGS('kapps_config', 'set_default', _), Schemas) ->
     Schemas;
 expression_to_schema(?MOD_FUN_ARGS('kapps_config', 'set_node', _), Schemas) ->
     Schemas;
-expression_to_schema(?MOD_FUN_ARGS('kapps_config', F, Args), Schemas) ->
-    config_to_schema(F, Args, Schemas);
+expression_to_schema(?MOD_FUN_ARGS(Source='kapps_config', F, Args), Schemas) ->
+    config_to_schema(Source, F, Args, Schemas);
 expression_to_schema(?MOD_FUN_ARGS('ecallmgr_config', 'set', _), Schemas) ->
     Schemas;
 expression_to_schema(?MOD_FUN_ARGS('ecallmgr_config', 'set_default', _), Schemas) ->
     Schemas;
 expression_to_schema(?MOD_FUN_ARGS('ecallmgr_config', 'set_node', _), Schemas) ->
     Schemas;
-expression_to_schema(?MOD_FUN_ARGS('ecallmgr_config', F, Args), Schemas) ->
-    config_to_schema(F, [?BINARY_STRING(<<"ecallmgr">>, 0) | Args], Schemas);
-expression_to_schema(?MOD_FUN_ARGS(_M, _F, Args), Schemas) ->
-    expressions_to_schema(Args, Schemas);
-expression_to_schema(?DYN_MOD_FUN(_M, _F), Schemas) ->
-    Schemas;
-expression_to_schema(?FUN_ARGS(_F, Args), Schemas) ->
-    expressions_to_schema(Args, Schemas);
-expression_to_schema(?GEN_MFA(_M, _F, _Arity), Schemas) ->
-    Schemas;
-expression_to_schema(?FA(_F, _Arity), Schemas) ->
-    Schemas;
-expression_to_schema(?BINARY_OP(_Name, First, Second), Schemas) ->
-    expressions_to_schema([First, Second], Schemas);
-expression_to_schema(?UNARY_OP(_Name, First), Schemas) ->
-    expression_to_schema(First, Schemas);
-expression_to_schema(?CATCH(Expression), Schemas) ->
-    expression_to_schema(Expression, Schemas);
-expression_to_schema(?TRY_BODY(Body, Clauses), Schemas) ->
-    clauses_to_schema(Clauses
-                     ,expression_to_schema(Body, Schemas)
-                     );
-expression_to_schema(?TRY_EXPR(Expr, Clauses, CatchClauses), Schemas) ->
-    clauses_to_schema(Clauses ++ CatchClauses
-                     ,expressions_to_schema(Expr, Schemas)
-                     );
-expression_to_schema(?TRY_BODY_AFTER(Body, Clauses, CatchClauses, AfterBody), Schemas) ->
-    clauses_to_schema(Clauses ++ CatchClauses
-                     ,expressions_to_schema(Body ++ AfterBody, Schemas)
-                     );
-expression_to_schema(?LC(Expr, Qualifiers), Schemas) ->
-    expressions_to_schema([Expr | Qualifiers], Schemas);
-expression_to_schema(?LC_GENERATOR(Pattern, Expr), Schemas) ->
-    expressions_to_schema([Pattern, Expr], Schemas);
-expression_to_schema(?BC(Expr, Qualifiers), Schemas) ->
-    expressions_to_schema([Expr | Qualifiers], Schemas);
-expression_to_schema(?LC_BIN_GENERATOR(Pattern, Expr), Schemas) ->
-    expressions_to_schema([Pattern, Expr], Schemas);
-expression_to_schema(?ANON(Clauses), Schemas) ->
-    clauses_to_schema(Clauses, Schemas);
-expression_to_schema(?GEN_FUN_ARGS(?ANON(Clauses), Args), Schemas) ->
-    clauses_to_schema(Clauses
-                     ,expressions_to_schema(Args, Schemas)
-                     );
-expression_to_schema(?VAR(_), Schemas) ->
-    Schemas;
-expression_to_schema(?BINARY_MATCH(_), Schemas) ->
-    Schemas;
-expression_to_schema(?STRING(_), Schemas) ->
-    Schemas;
-expression_to_schema(?GEN_RECORD(_NameExpr, _RecName, Fields), Schemas) ->
-    expressions_to_schema(Fields, Schemas);
-expression_to_schema(?RECORD(_Name, Fields), Schemas) ->
-    expressions_to_schema(Fields, Schemas);
-expression_to_schema(?RECORD_FIELD_BIND(_Key, Value), Schemas) ->
-    expression_to_schema(Value, Schemas);
-expression_to_schema(?GEN_RECORD_FIELD_ACCESS(_RecordName, _Name, Value), Schemas) ->
-    expression_to_schema(Value, Schemas);
-expression_to_schema(?RECORD_INDEX(_Name, _Field), Schemas) ->
-    Schemas;
-expression_to_schema(?RECORD_FIELD_REST, Schemas) ->
-    Schemas;
-expression_to_schema(?DYN_FUN_ARGS(_F, Args), Schemas) ->
-    expressions_to_schema(Args, Schemas);
-expression_to_schema(?DYN_MOD_FUN_ARGS(_M, _F, Args), Schemas) ->
-    expressions_to_schema(Args, Schemas);
-expression_to_schema(?MOD_DYN_FUN_ARGS(_M, _F, Args), Schemas) ->
-    expressions_to_schema(Args, Schemas);
-expression_to_schema(?GEN_MOD_FUN_ARGS(MExpr, FExpr, Args), Schemas) ->
-    expressions_to_schema([MExpr, FExpr | Args], Schemas);
-expression_to_schema(?ATOM(_), Schemas) ->
-    Schemas;
-expression_to_schema(?INTEGER(_), Schemas) ->
-    Schemas;
-expression_to_schema(?FLOAT(_), Schemas) ->
-    Schemas;
-expression_to_schema(?CHAR(_), Schemas) ->
-    Schemas;
-expression_to_schema(?TUPLE(Elements), Schemas) ->
-    expressions_to_schema(Elements, Schemas);
-expression_to_schema(?EMPTY_LIST, Schemas) ->
-    Schemas;
-expression_to_schema(?LIST(Head, Tail), Schemas) ->
-    expressions_to_schema([Head, Tail], Schemas);
-expression_to_schema(?RECEIVE(Clauses), Schemas) ->
-    clauses_to_schema(Clauses, Schemas);
-expression_to_schema(?RECEIVE(Clauses, AfterExpr, AfterBody), Schemas) ->
-    expressions_to_schema([AfterExpr | AfterBody]
-                         ,clauses_to_schema(Clauses, Schemas)
-                         );
-expression_to_schema(?LAGER, Schemas) ->
-    Schemas;
-expression_to_schema(?MATCH(LHS, RHS), Schemas) ->
-    expressions_to_schema([LHS, RHS], Schemas);
-expression_to_schema(?BEGIN_END(Exprs), Schemas) ->
-    expressions_to_schema(Exprs, Schemas);
-expression_to_schema(?CASE(Expression, Clauses), Schemas) ->
-    clauses_to_schema(Clauses
-                     ,expression_to_schema(Expression, Schemas)
-                     );
-expression_to_schema(?IF(Clauses), Schemas) ->
-    clauses_to_schema(Clauses, Schemas);
-expression_to_schema(?MAP_CREATION(Exprs), Schemas) ->
-    expressions_to_schema(Exprs, Schemas);
-expression_to_schema(?MAP_UPDATE(_Var, Exprs), Schemas) ->
-    expressions_to_schema(Exprs, Schemas);
-expression_to_schema(?MAP_FIELD_ASSOC(K, V), Schemas) ->
-    expressions_to_schema([K, V], Schemas);
-expression_to_schema(?MAP_FIELD_EXACT(K, V), Schemas) ->
-    expressions_to_schema([K, V], Schemas).
+expression_to_schema(?MOD_FUN_ARGS(Source='ecallmgr_config', F, Args), Schemas) ->
+    config_to_schema(Source, F, [?BINARY_STRING(<<"ecallmgr">>, 0) | Args], Schemas);
+expression_to_schema(?MOD_FUN_ARGS(Source='kapps_account_config', F='get_global', Args), Schemas) ->
+    config_to_schema(Source, F, Args, Schemas);
+expression_to_schema(?MOD_FUN_ARGS(Source='kapps_account_config', F='get_hierarchy', Args), Schemas) ->
+    config_to_schema(Source, F, Args, Schemas);
+expression_to_schema(?MOD_FUN_ARGS(Source='kapps_account_config', F='get_with_strategy', Args), Schemas) ->
+    config_to_schema(Source, F, Args, Schemas);
+expression_to_schema(_Expression, Schema) ->
+    Schema.
 
-config_to_schema('get_all_kvs', _Args, Schemas) ->
+config_to_schema(_, 'get_all_kvs', _Args, Schemas) ->
     Schemas;
-config_to_schema('flush', _Args, Schemas) ->
+config_to_schema(_, 'flush', _Args, Schemas) ->
     Schemas;
-config_to_schema('migrate', _Args, Schemas) ->
+config_to_schema(_, 'migrate', _Args, Schemas) ->
     Schemas;
-config_to_schema(F, [Cat, K], Schemas) ->
-    config_to_schema(F, [Cat, K, 'undefined'], Schemas);
-config_to_schema(F, [Cat, K, Default, _Node], Schemas) ->
-    config_to_schema(F, [Cat, K, Default], Schemas);
-config_to_schema(F, [Cat, K, Default], Schemas) ->
+config_to_schema(_, 'get_node_value', _Args, Schemas) ->
+    Schemas;
+config_to_schema(_, 'get_category', _Args, Schemas) ->
+    Schemas;
+config_to_schema(Source, F='get_global', [Account, Cat, K], Schemas) ->
+    config_to_schema(Source, F, [Account, Cat, K, 'undefined'], Schemas);
+config_to_schema(Source, F='get_global', [_Account, Cat, K, Default], Schemas) ->
     Document = category_to_document(Cat),
     case key_to_key_path(K) of
         'undefined' -> Schemas;
-        Key -> config_key_to_schema(F, Document, Key, Default, Schemas)
+        Key -> config_key_to_schema(Source, F, Document, Key, Default, Schemas)
+    end;
+config_to_schema(Source, F='get_hierarchy', [Account, Cat, K], Schemas) ->
+    config_to_schema(Source, F, [Account, Cat, K, 'undefined'], Schemas);
+config_to_schema(Source, F='get_hierarchy', [_Account, Cat, K, Default], Schemas) ->
+    Document = category_to_document(Cat),
+    case key_to_key_path(K) of
+        'undefined' -> Schemas;
+        Key -> config_key_to_schema(Source, F, Document, Key, Default, Schemas)
+    end;
+config_to_schema(Source, F='get_with_strategy', [Strategy, Account, Cat, K], Schemas) ->
+    config_to_schema(Source, F, [Strategy, Account, Cat, K, 'undefined'], Schemas);
+config_to_schema(Source, F='get_with_strategy', [?BINARY_MATCH([?BINARY_STRING(Strategy)]), _Account, Cat, K, Default], Schemas)
+  when Strategy =:= "hierarchy_merge";
+       Strategy =:= "global";
+       Strategy =:= "global_merge" ->
+    Document = category_to_document(Cat),
+    case key_to_key_path(K) of
+        'undefined' -> Schemas;
+        Key -> config_key_to_schema(Source, F, Document, Key, Default, Schemas)
+    end;
+config_to_schema(_, 'get_with_strategy', _Args, Schemas) ->
+    Schemas;
+config_to_schema(Source, F, [Cat, K], Schemas) ->
+    config_to_schema(Source, F, [Cat, K, 'undefined'], Schemas);
+config_to_schema(Source, F, [Cat, K, Default, _Node], Schemas) ->
+    config_to_schema(Source, F, [Cat, K, Default], Schemas);
+config_to_schema(Source, F, [Cat, K, Default], Schemas) ->
+    Document = category_to_document(Cat),
+
+    case key_to_key_path(K) of
+        'undefined' -> Schemas;
+        Key ->
+            config_key_to_schema(Source, F, Document, Key, Default, Schemas)
     end.
 
-config_key_to_schema(_F, 'undefined', _Key, _Default, Schemas) ->
+config_key_to_schema(_Source, _F, 'undefined', _Key, _Default, Schemas) ->
     Schemas;
-config_key_to_schema(F, Document, Key, Default, Schemas) ->
-    Properties = guess_properties(Document, Key, guess_type(F, Default), Default),
-    kz_json:set_value([Document, ?FIELD_PROPERTIES | Key], Properties, Schemas).
+config_key_to_schema(Source, F, Document, Key, Default, Schemas) ->
+    Properties = guess_properties(Document, Source, Key, guess_type(F, Default), Default),
+    Path = [Document, ?FIELD_PROPERTIES | Key],
+
+    kz_json:set_value(Path, Properties, Schemas).
 
 category_to_document(?VAR(_)) -> 'undefined';
 category_to_document(Cat) ->
     kz_ast_util:binary_match_to_binary(Cat).
 
-key_to_key_path(?ATOM(A)) -> [kz_util:to_binary(A)];
+key_to_key_path(?ATOM(A)) -> [kz_term:to_binary(A)];
 key_to_key_path(?VAR(_)) -> 'undefined';
 key_to_key_path(?EMPTY_LIST) -> [];
+key_to_key_path(?LIST(?MOD_FUN_ARGS('kapps_config', _F, [_Doc, Field | _]), ?EMPTY_LIST)) ->
+    [kz_ast_util:binary_match_to_binary(Field)];
 key_to_key_path(?LIST(?MOD_FUN_ARGS('kapps_config', _F, [_Doc, Field | _]), Tail)) ->
     [kz_ast_util:binary_match_to_binary(Field)
     ,?FIELD_PROPERTIES
      | key_to_key_path(Tail)
     ];
-key_to_key_path(?LIST(?MOD_FUN_ARGS('kz_util', 'to_binary', [?VAR(_Name)]), _Tail)) ->
+key_to_key_path(?LIST(?MOD_FUN_ARGS('kz_term', 'to_binary', [?VAR(_Name)]), _Tail)) ->
     'undefined';
 
-key_to_key_path(?MOD_FUN_ARGS('kz_util', 'to_binary', [?VAR(_Name)])) ->
+key_to_key_path(?MOD_FUN_ARGS('kz_term', 'to_binary', [?VAR(_Name)])) ->
     'undefined';
 
 key_to_key_path(?GEN_FUN_ARGS(_F, _Args)) ->
@@ -275,6 +209,8 @@ key_to_key_path(?GEN_FUN_ARGS(_F, _Args)) ->
 
 key_to_key_path(?LIST(?VAR(_Name), _Tail)) ->
     'undefined';
+key_to_key_path(?LIST(Head, ?EMPTY_LIST)) ->
+    [kz_ast_util:binary_match_to_binary(Head)];
 key_to_key_path(?LIST(Head, Tail)) ->
     case key_to_key_path(Tail) of
         'undefined' -> 'undefined';
@@ -282,26 +218,34 @@ key_to_key_path(?LIST(Head, Tail)) ->
     end;
 key_to_key_path(?BINARY_MATCH(K)) ->
     try [kz_ast_util:binary_match_to_binary(K)]
-    catch error:function_clause -> undefined
+    catch 'error':'function_clause' -> 'undefined'
     end.
 
-guess_type('is_true', _Default) -> <<"boolean">>;
-guess_type('get_is_true', _Default) -> <<"boolean">>;
-guess_type('get_boolean', _Default) -> <<"boolean">>;
+guess_type('get_list', Default) -> guess_type_by_default(Default);
+guess_type('is_true', _) -> <<"boolean">>;
+guess_type('get_is_true', _) -> <<"boolean">>;
+guess_type('get_boolean', _) -> <<"boolean">>;
 guess_type('get', Default) -> guess_type_by_default(Default);
 guess_type('get_current', Default) -> guess_type_by_default(Default);
 guess_type('fetch', Default) -> guess_type_by_default(Default);
-guess_type('get_non_empty', Default) -> guess_type_by_default(Default);
-guess_type('get_node_value', Default) -> guess_type_by_default(Default);
-guess_type('get_binary', _Default) -> <<"string">>;
-guess_type('get_ne_binary', _Default) -> <<"string">>;
-guess_type('get_json', _Default) -> <<"object">>;
-guess_type('get_string', _Default) -> <<"string">>;
-guess_type('get_integer', _Default) -> <<"integer">>;
-guess_type('get_float', _Default) -> <<"number">>;
-guess_type('get_atom', _Default) -> <<"string">>;
-guess_type('set_default', _Default) -> 'undefined';
+guess_type('get_binary', _) -> <<"string">>;
+guess_type('get_ne_binary', _) -> <<"string">>;
+guess_type('get_ne_binaries', _) -> [<<"string">>];
+guess_type('get_pos_integer', _) -> <<"pos_integer">>;
+guess_type('get_non_neg_integer', _) -> <<"non_neg_integer">>;
+guess_type('get_ne_binary_or_ne_binaries', _) -> {<<"string">>, [<<"string">>]};
+guess_type('get_json', _) -> <<"object">>;
+guess_type('get_jsons', _) -> [<<"object">>];
+guess_type('get_string', _) -> <<"string">>;
+guess_type('get_integer', _) -> <<"integer">>;
+guess_type('get_float', _) -> <<"float">>;
+guess_type('get_atom', _) -> <<"string">>;
+guess_type('get_global', Default) -> guess_type_by_default(Default);
+guess_type('get_hierarchy', Default) -> guess_type_by_default(Default);
+guess_type('get_with_strategy', Default) -> guess_type_by_default(Default);
+guess_type('set_default', _) -> 'undefined';
 guess_type('set', Default) -> guess_type_by_default(Default);
+guess_type('set_string', _) -> <<"string">>;
 guess_type('set_node', Default) -> guess_type_by_default(Default);
 guess_type('update_default', Default) -> guess_type_by_default(Default).
 
@@ -312,49 +256,81 @@ guess_type_by_default(?ATOM('false')) -> <<"boolean">>;
 guess_type_by_default(?ATOM(_)) -> <<"string">>;
 guess_type_by_default(?VAR(_V)) -> 'undefined';
 guess_type_by_default(?EMPTY_LIST) -> <<"array">>;
-guess_type_by_default(?LIST(_Head, _Tail)) -> <<"array">>;
+guess_type_by_default(?LIST(?BINARY_MATCH(_), _Tail)) -> [<<"string">>];
+guess_type_by_default(?LIST(Head, _Tail)) -> [guess_type_by_default(Head)];
 guess_type_by_default(?BINARY_MATCH(_V)) -> <<"string">>;
 guess_type_by_default(?INTEGER(_I)) -> <<"integer">>;
-guess_type_by_default(?FLOAT(_F)) -> <<"number">>;
+guess_type_by_default(?FLOAT(_F)) -> <<"float">>;
 guess_type_by_default(?BINARY_OP(_Op, Arg1, _Arg2)) ->
     guess_type_by_default(Arg1);
-guess_type_by_default(?MOD_FUN_ARGS('kapps_config', F, [_Cat, _Key])) ->
+guess_type_by_default(?MOD_FUN_ARGS(M, F, [_Cat, _Key]))
+  when M =:= kapps_config;
+       M =:= kapps_account_config ->
     guess_type(F, 'undefined');
-guess_type_by_default(?MOD_FUN_ARGS('kapps_config', F, [_Cat, _Key, Default |_])) ->
+guess_type_by_default(?MOD_FUN_ARGS(M, F, [_Cat, _Key, Default |_]))
+  when M =:= kapps_config;
+       M =:= kapps_account_config ->
+    guess_type(F, Default);
+guess_type_by_default(?MOD_FUN_ARGS('ecallmgr_config', 'get_ne_binaries', [_Key, _Default])) ->
+    [<<"string">>];
+guess_type_by_default(?MOD_FUN_ARGS('ecallmgr_config', F, [_Key, Default])) ->
+    guess_type(F, Default);
+guess_type_by_default(?MOD_FUN_ARGS('ecallmgr_config', F, [_Key, Default, _Node])) ->
     guess_type(F, Default);
 guess_type_by_default(?MOD_FUN_ARGS('kz_json', 'new', [])) -> <<"object">>;
 guess_type_by_default(?MOD_FUN_ARGS('kz_json', 'from_list', _Args)) -> <<"object">>;
+guess_type_by_default(?MOD_FUN_ARGS('kz_json', 'from_list_recursive', _Args)) -> <<"object">>;
 guess_type_by_default(?MOD_FUN_ARGS('kz_json', 'set_value', [_K, V, _J])) ->
     guess_type_by_default(V);
-guess_type_by_default(?MOD_FUN_ARGS('kz_util', 'anonymous_caller_id_number', [])) -> <<"string">>;
-guess_type_by_default(?MOD_FUN_ARGS('kz_util', 'anonymous_caller_id_name', [])) -> <<"string">>;
-guess_type_by_default(?MOD_FUN_ARGS('kz_util', 'to_integer', _Args)) -> <<"integer">>.
+guess_type_by_default(?MOD_FUN_ARGS('kz_privacy', 'anonymous_caller_id_number', _Args)) -> <<"string">>;
+guess_type_by_default(?MOD_FUN_ARGS('kz_privacy', 'anonymous_caller_id_name', _Args)) -> <<"string">>;
+guess_type_by_default(?MOD_FUN_ARGS('kz_account', 'type', [])) -> <<"string">>;
+guess_type_by_default(?MOD_FUN_ARGS('kz_term', 'to_integer', _Args)) -> <<"integer">>;
+guess_type_by_default(?MOD_FUN_ARGS('kz_binary', 'rand_hex', _Args)) -> <<"string">>.
 
-guess_properties(Document, Key, Type, Default)
-  when is_binary(Key) ->
+guess_properties(Document, SourceModule, Key=?NE_BINARY, Type, Default) ->
     DescriptionKey = description_key(Document, Key),
-    Description = fetch_description(DescriptionKey),
-    case Description of
-        'undefined' ->
-            io:format("\nYou need to add the key \"~s\" in ~s\n", [DescriptionKey, ?SYSTEM_CONFIG_DESCRIPTIONS]),
-            halt(1);
-        _ -> 'ok'
-    end,
+
+    Description =
+        case fetch_description(DescriptionKey) of
+            'undefined' ->
+                kz_binary:join(binary:split(DescriptionKey, <<".">>, ['global']), <<" ">>);
+            D -> D
+        end,
     kz_json:from_list(
-      props:filter_undefined(
-        [{<<"type">>, Type}
-        ,{<<"description">>, Description}
-        ,{?FIELD_DEFAULT, try default_value(Default) catch _:_ -> 'undefined' end}
-        ]
-       )
-     );
-guess_properties(Document, [Key], Type, Default)
+      [{?SOURCE, SourceModule}
+      ,{<<"description">>, Description}
+      ,{?FIELD_DEFAULT, try default_value(Default) catch _:_ -> 'undefined' end}
+       | type(Type)
+      ]);
+
+guess_properties(Document, Source, [Key], Type, Default)
   when is_binary(Key) ->
-    guess_properties(Document, Key, Type, Default);
-guess_properties(Document, [Key, ?FIELD_PROPERTIES], Type, Default) ->
-    guess_properties(Document, Key, Type, Default);
-guess_properties(Document, [_Key, ?FIELD_PROPERTIES | Rest], Type, Default) ->
-    guess_properties(Document, Rest, Type, Default).
+    guess_properties(Document, Source, Key, Type, Default);
+guess_properties(Document, Source, [_Key, ?FIELD_PROPERTIES|_]=Keys, Type, Default) ->
+    JustKeys = [K || K <- Keys, ?FIELD_PROPERTIES =/= K],
+    guess_properties(Document, Source, kz_binary:join(JustKeys, $.), Type, Default).
+
+type([undefined]) ->
+    [{?FIELD_TYPE, <<"array">>}];
+type({Type, [OrArrayType]}) ->
+    [{?FIELD_TYPE, [Type, <<"array">>]}
+    ,{<<"items">>, kz_json:from_list([{?FIELD_TYPE, OrArrayType}])}
+    ];
+type([Type]) ->
+    [{?FIELD_TYPE, <<"array">>}
+    ,{<<"items">>, kz_json:from_list([{?FIELD_TYPE, Type}])}
+    ];
+type(<<"pos_integer">>) ->
+    [{?FIELD_TYPE, <<"integer">>}
+    ,{<<"minimum">>, 1}
+    ];
+type(<<"non_neg_integer">>) ->
+    [{?FIELD_TYPE, <<"integer">>}
+    ,{<<"minimum">>, 0}
+    ];
+type(<<"float">>) -> [{?FIELD_TYPE, <<"number">>}];
+type(Type) -> [{?FIELD_TYPE, Type}].
 
 description_key(Document, Key) -> <<Document/binary, $., Key/binary>>.
 fetch_description(DescriptionKey) ->
@@ -365,9 +341,9 @@ default_value('undefined') -> 'undefined';
 default_value(?ATOM('true')) -> 'true';
 default_value(?ATOM('false')) -> 'false';
 default_value(?ATOM('undefined')) -> 'undefined';
-default_value(?ATOM(V)) -> kz_util:to_binary(V);
+default_value(?ATOM(V)) -> kz_term:to_binary(V);
 default_value(?VAR(_)) -> 'undefined';
-default_value(?STRING(S)) -> kz_util:to_binary(S);
+default_value(?STRING(S)) -> kz_term:to_binary(S);
 default_value(?INTEGER(I)) -> I;
 default_value(?FLOAT(F)) -> F;
 default_value(?BINARY_OP(Op, Arg1, Arg2)) ->
@@ -383,18 +359,30 @@ default_value(?MOD_FUN_ARGS('kz_json', 'from_list', L)) ->
 default_value(?MOD_FUN_ARGS('kz_json', 'new', [])) ->
     kz_json:new();
 default_value(?MOD_FUN_ARGS('kz_util', 'rand_hex_binary', [_Arg])) ->
-    '_system';
-default_value(?MOD_FUN_ARGS('kz_util', 'anonymous_caller_id_number', [])) ->
-    default_value(kz_util:anonymous_caller_id_number());
-default_value(?MOD_FUN_ARGS('kz_util', 'anonymous_caller_id_name', [])) ->
-    default_value(kz_util:anonymous_caller_id_name());
-default_value(?MOD_FUN_ARGS('kz_util', 'to_binary', [Arg])) ->
+    ?UNKNOWN_DEFAULT;
+default_value(?MOD_FUN_ARGS('kz_privacy', 'anonymous_caller_id_number', _Args)) ->
+    default_value(kz_privacy:anonymous_caller_id_number());
+default_value(?MOD_FUN_ARGS('kz_privacy', 'anonymous_caller_id_name', _Args)) ->
+    default_value(kz_privacy:anonymous_caller_id_name());
+default_value(?MOD_FUN_ARGS('kz_term', 'to_binary', [Arg])) ->
     default_value(Arg);
-default_value(?MOD_FUN_ARGS('kz_util', 'to_integer', [Arg])) ->
+default_value(?MOD_FUN_ARGS('kz_term', 'to_integer', [Arg])) ->
     default_value(Arg);
 default_value(?MOD_FUN_ARGS(M, 'type', [])) ->
     default_value(M:type());
-default_value(?MOD_FUN_ARGS('ecallmgr_config', 'get', [_Key, Default])) ->
+default_value(?MOD_FUN_ARGS('ecallmgr_config', 'get', [_Key, Default|_])) ->
+    default_value(Default);
+default_value(?MOD_FUN_ARGS('ecallmgr_config', 'get_jsons', [_Key, Default|_])) ->
+    default_value(Default);
+default_value(?MOD_FUN_ARGS('ecallmgr_config', 'get_integer', [_Key, Default|_])) ->
+    default_value(Default);
+default_value(?MOD_FUN_ARGS('ecallmgr_config', 'get_boolean', [_Key, Default|_])) ->
+    default_value(Default);
+default_value(?MOD_FUN_ARGS('ecallmgr_config', 'is_true', [_Key, Default|_])) ->
+    default_value(Default);
+default_value(?MOD_FUN_ARGS('ecallmgr_config', 'get_default', [_Key, Default|_])) ->
+    default_value(Default);
+default_value(?MOD_FUN_ARGS('ecallmgr_config', 'get_ne_binaries', [_Key, Default])) ->
     default_value(Default);
 %%TODO: support all kapps_config exports
 default_value(?MOD_FUN_ARGS('kapps_config', 'get', [_Category, _Key, Default])) ->
@@ -403,10 +391,24 @@ default_value(?MOD_FUN_ARGS('kapps_config', 'get_integer', [_Category, _Key, Def
     default_value(Default);
 default_value(?MOD_FUN_ARGS('kapps_config', 'get_binary', [_Category, _Key, Default])) ->
     default_value(Default);
+default_value(?MOD_FUN_ARGS('kapps_config', 'get_ne_binary', [_Category, _Key, Default])) ->
+    default_value(Default);
+default_value(?MOD_FUN_ARGS('kapps_config', 'get_ne_binaries', [_Category, _Key, Default])) ->
+    default_value(Default);
+default_value(?MOD_FUN_ARGS('kapps_config', 'get_jsons', [_Category, _Key, Default])) ->
+    default_value(Default);
+default_value(?MOD_FUN_ARGS('kapps_account_config', 'get_global', [_Account, _Category, _Key, Default])) ->
+    default_value(Default);
+default_value(?MOD_FUN_ARGS('kapps_account_config', 'get', [_Account, _Category, _Key, Default])) ->
+    default_value(Default);
+default_value(?MOD_FUN_ARGS('kapps_account_config', 'get_ne_binary', [_Account, _Category, _Key, Default])) ->
+    default_value(Default);
+default_value(?MOD_FUN_ARGS('kapps_account_config', 'get_ne_binaries', [_Account, _Category, _Key, Default])) ->
+    default_value(Default);
 default_value(?MOD_FUN_ARGS(_M, _F, _Args)) ->
-    '_system';
+    ?UNKNOWN_DEFAULT;
 default_value(?FUN_ARGS(_F, _Args)) ->
-    '_system'.
+    ?UNKNOWN_DEFAULT.
 
 default_values_from_list(KVs) ->
     lists:foldl(fun default_value_from_kv/2, kz_json:new(), KVs).

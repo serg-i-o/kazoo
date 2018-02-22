@@ -1,7 +1,7 @@
 -ifndef(KAZOO_ENDPOINT_HRL).
 
--include_lib("kazoo/include/kz_types.hrl").
--include_lib("kazoo/include/kz_log.hrl").
+-include_lib("kazoo_stdlib/include/kz_types.hrl").
+-include_lib("kazoo_stdlib/include/kz_log.hrl").
 -include_lib("kazoo_number_manager/include/knm_phone_number.hrl").
 
 -define(APP_NAME, <<"kazoo_endpoint">>).
@@ -12,6 +12,8 @@
 
 -define(ATTR_LOWER_KEY, <<109,108,112,112>>).
 -define(ATTR_UPPER_KEY, <<109,097,120,095,112,114,101,099,101,100,101,110,099,101>>).
+
+-define(ENDPOINT_INBOUND_RECORDING(A), [<<"call_recording">>, <<"endpoint">>, <<"inbound">>, A]).
 
 -define(KAZOO_ENDPOINT_HRL, 'true').
 -endif.

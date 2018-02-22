@@ -59,17 +59,17 @@
                               %% PIDs of the gang
                ,worker_sup :: pid()
                ,mgr_pid :: pid()
-               ,fsm_pid :: pid()
-               ,shared_pid :: pid()
+               ,fsm_pid :: api_pid()
+               ,shared_pid :: api_pid()
 
                               %% AMQP-related
                ,my_id :: ne_binary()
-               ,my_q :: ne_binary()
-               ,member_call_queue :: ne_binary()
+               ,my_q :: api_ne_binary()
+               ,member_call_queue :: api_ne_binary()
 
                                      %% While processing a call
                ,call :: kapps_call:call()
-               ,agent_id :: ne_binary()
+               ,agent_id :: api_ne_binary()
                ,delivery :: gen_listener:basic_deliver()
                }).
 -type state() :: #state{}.
@@ -629,7 +629,7 @@ publish_sync_resp(Strategy, StrategyState, ReqJObj, Id) ->
              [{<<"Account-ID">>, kz_json:get_value(<<"Account-ID">>, ReqJObj)}
              ,{<<"Queue-ID">>, kz_json:get_value(<<"Queue-ID">>, ReqJObj)}
              ,{<<"Msg-ID">>, kz_json:get_value(<<"Msg-ID">>, ReqJObj)}
-             ,{<<"Current-Strategy">>, kz_util:to_binary(Strategy)}
+             ,{<<"Current-Strategy">>, kz_term:to_binary(Strategy)}
              ,{<<"Strategy-State">>, StrategyState}
              ,{<<"Process-ID">>, Id}
               | kz_api:default_headers(?APP_NAME, ?APP_VERSION)
@@ -680,20 +680,18 @@ clear_call_state(#state{account_id=AccountId
 -spec publish(api_terms(), kz_amqp_worker:publish_fun()) -> 'ok'.
 -spec publish(ne_binary(), api_terms(), fun((ne_binary(), api_terms()) -> 'ok')) -> 'ok'.
 publish(Req, F) ->
-    case catch F(Req) of
-        'ok' -> 'ok';
-        {'EXIT', _R} ->
+    try F(Req)
+    catch _E:_R ->
             ST = erlang:get_stacktrace(),
-            lager:debug("failed to publish message: ~p", [_R]),
+            lager:debug("failed to publish message: ~p:~p", [_E, _R]),
             kz_util:log_stacktrace(ST),
             'ok'
     end.
 publish(Q, Req, F) ->
-    case catch F(Q, Req) of
-        'ok' -> 'ok';
-        {'EXIT', _R} ->
+    try F(Q, Req)
+    catch _E:_R ->
             ST = erlang:get_stacktrace(),
-            lager:debug("failed to publish message to ~s: ~p", [Q, _R]),
+            lager:debug("failed to publish message to ~s: ~p:~p", [Q, _E, _R]),
             kz_util:log_stacktrace(ST),
             'ok'
     end.

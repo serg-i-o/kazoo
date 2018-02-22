@@ -1,10 +1,29 @@
 -ifndef(KZ_AST_HRL).
 
+-type clauses() :: [erl_parse:abstract_clause()].
+-type ast_functions() :: [{module(), function(), non_neg_integer(), clauses()}].
+-type ast_records() :: [{atom(), [atom()]}].
+
+-record(module_ast, {functions = [] :: ast_functions()
+                    ,records = [] :: ast_records()
+                    }).
+
+-type module_ast() :: #module_ast{}.
+
 %% Helper macros for processing Erlang AST forms
+
+-define(AST_FUNCTION(Name, Arity, Clauses)
+       ,{'function', _, Name, Arity, Clauses}
+       ).
+
+-define(AST_RECORD(Name, Fields)
+       ,{'attribute', _, 'record', {Name, Fields}}
+       ).
 
 -define(CLAUSE(Args, Guards, Body)
        ,{'clause', _, Args, Guards, Body}
        ).
+
 -define(BEGIN_END(Exprs), {'block', _, Exprs}).
 
 -define(VAR(Line, Name), {'var', Line, Name}).
@@ -42,8 +61,11 @@
 -define(RECORD_FIELD_REST
        ,{'record_field', _, ?VAR('_'), ?ATOM('_')}
        ).
+-define(RECORD_FIELD(Key)
+       ,{'record_field', _, ?ATOM(Key)}
+       ).
 -define(RECORD_FIELD_BIND(Key, Value)
-       ,{'record_field', _,?ATOM(Key),Value}
+       ,{'record_field', _, ?ATOM(Key), Value}
        ).
 -define(RECORD_FIELD_ACCESS(RecordName, Name, Value)
        ,?GEN_RECORD_FIELD_ACCESS(?VAR(Name), RecordName, Value)
@@ -51,6 +73,9 @@
 -define(RECORD(Name, Fields), {'record', _, Name, Fields}).
 -define(GEN_RECORD(NameExpr, RecName, Fields)
        ,{'record', _, NameExpr, RecName, Fields}
+       ).
+-define(TYPED_RECORD_FIELD(RecordField, Type)
+       ,{'typed_record_field', RecordField, Type}
        ).
 
 -define(RECORD_VAR(VarName, RecName, Fields)
@@ -102,6 +127,9 @@
 -define(FA(F, A), {'fun', _, {'function', F, A}}).
 
 -define(ANON(Clauses), {'fun', _, {'clauses', Clauses}}).
+-define(NAMED_ANON(Name, Clauses)
+       ,{'named_fun', _, Name, Clauses}
+       ).
 
 -define(MOD_FUN_ARGS(Module, Function, Args)
        ,{'call',_
@@ -131,6 +159,10 @@
 -define(SUB_BINARY(Value)
        ,{'bin_element',_,?BINARY_MATCH([?BINARY_STRING(Value)]),'default',['binary']}
        ).
+-define(BINARY_FROM_ATOM(Atom)
+       ,{'bin_element',_,?FUN_ARGS(atom_to_binary, [?ATOM(Atom), ?ATOM(utf8)]),'default',['binary']}
+       ).
+
 -define(BINARY(Value), {'bin',_, [?BINARY_STRING(Value)]}).
 -define(BINARY_MATCH(Matches)
        ,{'bin',_,Matches}

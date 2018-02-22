@@ -1,30 +1,41 @@
-- [Announcements for Kazoo](#orgheadline29)
-  - [Notices](#orgheadline2)
-    - [Further Module Name Changes in Core](#orgheadline1)
-  - [Versions](#orgheadline22)
-    - [4.0](#orgheadline16)
-    - [3.22](#orgheadline21)
-  - [Upcoming](#orgheadline28)
-    - [May 2016](#orgheadline27)
-
-
-# Announcements for Kazoo<a id="orgheadline29"></a>
+# Announcements for Kazoo
 
 This file will serve as a reference point for upcoming announcements, both of the temporal nature (this library will be deprecated in 6 months) and version-specific (upgrading from X to Y will require A, B, and C).
 
-## Notices<a id="orgheadline2"></a>
 
-### Further Module Name Changes in Core<a id="orgheadline1"></a>
+## Notices
 
-Over the years as the code base grew and new authors joined the team the core module naming has become increasingly inconsistent. In order to make module names predictable, remove obscure references (such as wht\\\_\*) and adhear to stronger coding standars we will be making these consistent. This will be the last refactor to core and as before the `scripts/wh-to-kz.sh` script will be extended to provide developers with a tool to refactor any modules they have created.
 
-This final refactor has been contentious as we discussed the value a consistent naming scheme in core would bring. This has delayed the final phase of the renaming initiative but we are now preparing to preform this action. We feel that the benefits outweigh disadvantages and understand that once 4.0 has been released as stable will not have an oppertunaty to correct this until the next major version.
+### Further Module Name Changes in Core
 
-We hope that you agree and and are not inconvienced by this change. As always we are here to help or answer any questions! Thank you for your understaning.
+As the code base has grown and new authors have joined the team over the years, the core module naming has become increasingly inconsistent. In order to make module names predictable, remove obscure references (such as wht\\\_\*) and adhere to stronger coding standards, we will be making these consistent. This will be the last refactor to core and as before the `scripts/wh-to-kz.sh` script will be extended to provide developers with a tool to refactor any modules they have created.
 
-## Versions<a id="orgheadline22"></a>
+This final refactor has been contentious as we discussed the value a consistent naming scheme in core would bring. This has delayed the final phase of the renaming initiative but we are now preparing to preform this action. We feel that the benefits outweigh disadvantages and understand that once 4.0 has been released as stable we will not have an opportunity to correct this until the next major version.
 
-### 4.0<a id="orgheadline16"></a>
+We hope that you agree and are not inconvenienced by this change. As always we are here to help or answer any questions! Thank you for your understanding.
+
+
+## Versions
+
+### 4.2
+
+1.  Erlang Version Support
+
+    Starting with Kazoo 4.2 Erlang support will target 19+ and will not be backward compatible with prior Erlang versions.
+
+
+### 4.1
+
+1.  kz\_util refactoring
+
+    We are starting to break kz\_util up into more appropriately-named modules. There is a script that will take care of migrating existing code, \`scripts/kz\_util\_diaspora.bash\`. This is run as part of CircleCI (under the \`make code\_checks\` target) as well.
+
+2.  ACDc Crossbar endpoints moved
+
+    cb\_queues and cb\_agents have been moved to be part of ACDc's modules. Please know that you will need acdc present if you wish to use ACDc's Crossbar endpoints in a particular Erlang VM.
+
+
+### 4.0
 
 1.  Erlang Version Support
 
@@ -44,7 +55,7 @@ We hope that you agree and and are not inconvienced by this change. As always we
 
 5.  Authorizing-ID
 
-    Currently, inbound calls from carriers don't have a Authorizing-ID but if the device has a redirection the CDR will have the Authorizing-ID header. this will change in version 4 as we believe the inbound leg should not have the Authorizing-ID set, so the CDR for inbound call (leg a) will not have the Authorizing-ID. The b-leg will have the Authorizing-ID set to the device that redirect the call. Restrictions will still be applied based on the device that redirected the call.
+    Currently, inbound calls from carriers don't have a Authorizing-ID but if the device has a redirection the CDR will have the Authorizing-ID header. This will change in version 4 as we believe the inbound leg should not have the Authorizing-ID set, so the CDR for inbound call (leg a) will not have the Authorizing-ID. The b-leg will have the Authorizing-ID set to the device that redirect the call. Restrictions will still be applied based on the device that redirected the call.
 
 6.  Auth Token
 
@@ -56,7 +67,7 @@ We hope that you agree and and are not inconvienced by this change. As always we
 
 7.  WebHooks
 
-    Webhook trigger for federated messages is dropped. we now require that at least one instance of the webhooks app is running in each zone for the webhook to be triggered.
+    Webhook trigger for federated messages is dropped. We now require that at least one instance of the webhooks app is running in each zone for the webhook to be triggered.
 
     Added new option `include_subaccounts` which will process the hook for subaccount events.
 
@@ -89,7 +100,8 @@ We hope that you agree and and are not inconvienced by this change. As always we
 
     The `knm_sip` module shares a lot of functionality with the `kazoo_sip` core application. Its innards have thus been moved.
 
-### 3.22<a id="orgheadline21"></a>
+
+### 3.22
 
 1.  FreeSWITCH 1.4.26+ / 1.6+
 
@@ -107,9 +119,11 @@ We hope that you agree and and are not inconvienced by this change. As always we
 
     The default ports that Kamailio listens to for the WebRTC websocket have changed, this was due to a port conflict on all-in-one installs with TLS enabled Kazoo APIs. The standard HTTP websocket port was 8080 and is now 5064. The TLS HTTP websocket port was 8443 and is now 5065. If you would like to continue using the old ports please update "/etc/kazoo/kamailio/local.cfg" after an update to kazoo-configs 3.22.12+
 
-## Upcoming<a id="orgheadline28"></a>
 
-### May 2016<a id="orgheadline27"></a>
+## Upcoming
+
+
+### May 2016
 
 1.  Deprecating `deps/mochiweb`
 

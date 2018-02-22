@@ -32,7 +32,9 @@ handle_req(JObj, Props) ->
         andalso callflow_should_respond(Call)
     of
         'true' ->
-            lager:info("received request ~s asking if callflows can route this call", [kapi_route:fetch_id(JObj)]),
+            lager:info("received request ~s asking if callflows can route the call to ~s"
+                      ,[kapi_route:fetch_id(JObj), kapps_call:request_user(Call)]
+                      ),
             AllowNoMatch = allow_no_match(Call),
             case cf_flow:lookup(Call) of
                 %% if NoMatch is false then allow the callflow or if it is true and we are able allowed
@@ -50,50 +52,34 @@ handle_req(JObj, Props) ->
     end.
 
 -spec maybe_prepend_preflow(kz_json:object(), kz_proplist()
-                           ,kapps_call:call(), kz_json:object()
+                           ,kapps_call:call(), kzd_callflow:doc()
                            ,boolean()
                            ) -> 'ok'.
-maybe_prepend_preflow(JObj, Props, Call, Flow, NoMatch) ->
+maybe_prepend_preflow(JObj, Props, Call, Callflow, NoMatch) ->
     AccountId = kapps_call:account_id(Call),
     case kz_account:fetch(AccountId) of
         {'error', _E} ->
             lager:warning("could not open account doc ~s : ~p", [AccountId, _E]),
-            maybe_reply_to_req(JObj, Props, Call, Flow, NoMatch);
-        {'ok', Doc} ->
-            case kz_json:get_ne_value([<<"preflow">>, <<"always">>], Doc) of
+            maybe_reply_to_req(JObj, Props, Call, Callflow, NoMatch);
+        {'ok', AccountDoc} ->
+            case kz_account:preflow_id(AccountDoc) of
                 'undefined' ->
                     lager:debug("ignore preflow, not set"),
-                    maybe_reply_to_req(JObj, Props, Call, Flow, NoMatch);
+                    maybe_reply_to_req(JObj, Props, Call, Callflow, NoMatch);
                 PreflowId ->
-                    NewFlow = prepend_preflow(AccountId, PreflowId, Flow),
-                    maybe_reply_to_req(JObj, Props, Call, NewFlow, NoMatch)
+                    NewCallflow = kzd_callflow:prepend_preflow(Callflow, PreflowId),
+                    maybe_reply_to_req(JObj, Props, Call, NewCallflow, NoMatch)
             end
-    end.
-
--spec prepend_preflow(ne_binary(), ne_binary(), kz_json:object()) ->
-                             kz_json:object().
-prepend_preflow(AccountId, PreflowId, Flow) ->
-    AccountDb = kz_util:format_account_id(AccountId, 'encoded'),
-    case kz_datamgr:open_cache_doc(AccountDb, PreflowId) of
-        {'error', _E} ->
-            lager:warning("could not open ~s in ~s : ~p", [PreflowId, AccountDb, _E]),
-            Flow;
-        {'ok', Doc} ->
-            Children = kz_json:from_list([{<<"_">>, kz_json:get_value(<<"flow">>, Flow)}]),
-            Preflow = kz_json:set_value(<<"children">>
-                                       ,Children
-                                       ,kz_json:get_value(<<"flow">>, Doc)
-                                       ),
-            kz_json:set_value(<<"flow">>, Preflow, Flow)
     end.
 
 -spec maybe_reply_to_req(kz_json:object(), kz_proplist()
                         ,kapps_call:call(), kz_json:object(), boolean()) -> 'ok'.
 maybe_reply_to_req(JObj, Props, Call, Flow, NoMatch) ->
-    lager:info("callflow ~s in ~s satisfies request", [kz_doc:id(Flow)
-                                                      ,kapps_call:account_id(Call)
-                                                      ]),
-    case maybe_consume_token(Call, Flow) of
+    lager:info("callflow ~s in ~s satisfies request for ~s", [kz_doc:id(Flow)
+                                                             ,kapps_call:account_id(Call)
+                                                             ,kapps_call:request_user(Call)
+                                                             ]),
+    case has_tokens(Call, Flow) of
         'false' -> 'ok';
         'true' ->
             ControllerQ = props:get_value('queue', Props),
@@ -101,8 +87,8 @@ maybe_reply_to_req(JObj, Props, Call, Flow, NoMatch) ->
             send_route_response(Flow, JObj, NewCall)
     end.
 
--spec maybe_consume_token(kapps_call:call(), kz_json:object()) -> boolean().
-maybe_consume_token(Call, Flow) ->
+-spec has_tokens(kapps_call:call(), kz_json:object()) -> boolean().
+has_tokens(Call, Flow) ->
     case kapps_config:get_is_true(?CF_CONFIG_CAT, <<"calls_consume_tokens">>, 'true') of
         'false' ->
             %% If configured to not consume tokens then don't block the call
@@ -112,7 +98,7 @@ maybe_consume_token(Call, Flow) ->
             case kz_buckets:consume_tokens(?APP_NAME, Name, Cost) of
                 'true' -> 'true';
                 'false' ->
-                    lager:debug("bucket ~s doesn't have enough tokens(~b needed) for this call", [Name, Cost]),
+                    lager:warning("bucket ~s doesn't have enough tokens(~b needed) for this call", [Name, Cost]),
                     'false'
             end
     end.
@@ -173,8 +159,10 @@ callflow_should_respond(Call) ->
         <<"account">> -> 'true';
         <<"user">> -> 'true';
         <<"device">> -> 'true';
+        <<"mobile">> -> 'true';
         <<"callforward">> -> 'true';
         <<"clicktocall">> -> 'true';
+        <<"click2call">> -> 'true';
         <<"resource">> -> 'true';
         <<"sys_info">> ->
             timer:sleep(500),
@@ -203,7 +191,7 @@ send_route_response(Flow, JObj, Call) ->
              ,{<<"Transfer-Media">>, get_transfer_media(Flow, JObj)}
              ,{<<"Ringback-Media">>, get_ringback_media(Flow, JObj)}
              ,{<<"Pre-Park">>, pre_park_action(Call)}
-             ,{<<"From-Realm">>, kz_util:get_account_realm(AccountId)}
+             ,{<<"From-Realm">>, kz_account:fetch_realm(AccountId)}
              ,{<<"Custom-Channel-Vars">>, kapps_call:custom_channel_vars(Call)}
               | kz_api:default_headers(?APP_NAME, ?APP_VERSION)
              ]),
@@ -265,6 +253,7 @@ pre_park_action(Call) ->
                          kapps_call:call().
 update_call(Flow, NoMatch, ControllerQ, Call) ->
     Props = [{'cf_flow_id', kz_doc:id(Flow)}
+            ,{'cf_flow_name', kz_json:get_ne_binary_value(<<"name">>, Flow, kapps_call:request_user(Call))}
             ,{'cf_flow', kz_json:get_value(<<"flow">>, Flow)}
             ,{'cf_capture_group', kz_json:get_ne_value(<<"capture_group">>, Flow)}
             ,{'cf_capture_groups', kz_json:get_value(<<"capture_groups">>, Flow, kz_json:new())}

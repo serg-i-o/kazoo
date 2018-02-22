@@ -14,6 +14,7 @@
 
 -include("stepswitch.hrl").
 -include_lib("kazoo_amqp/include/kapi_offnet_resource.hrl").
+-include_lib("kazoo/include/kz_api_literals.hrl").
 
 %%--------------------------------------------------------------------
 %% @public
@@ -48,8 +49,7 @@ handle_audio_req(OffnetReq) ->
 
 handle_audio_req(Number, OffnetReq) ->
     case knm_number:lookup_account(Number) of
-        {'ok', _AccountId, Props} ->
-            maybe_force_outbound(Props, OffnetReq);
+        {'ok', _AccountId, Props} -> maybe_force_outbound(Props, OffnetReq);
         _ -> maybe_bridge(Number, OffnetReq)
     end.
 
@@ -77,13 +77,14 @@ handle_originate_req(Number, JObj) ->
 
 -spec maybe_add_call_id(api_binary(), kz_json:object()) -> kz_json:object().
 maybe_add_call_id('undefined', JObj) ->
-    kz_json:set_value(<<"Outbound-Call-ID">>, kz_util:rand_hex_binary(8), JObj);
+    kz_json:set_value(<<"Outbound-Call-ID">>, kz_binary:rand_hex(8), JObj);
 maybe_add_call_id(_, JObj) -> JObj.
 
 -spec maybe_force_originate_outbound(knm_number_options:extra_options(), kz_json:object()) -> any().
 maybe_force_originate_outbound(Props, JObj) ->
     case knm_number_options:should_force_outbound(Props)
         orelse kz_json:is_true(<<"Force-Outbound">>, JObj, 'false')
+        orelse kapi_offnet_resource:hunt_account_id(JObj) /= 'undefined'
     of
         'false' -> local_originate(Props, JObj);
         'true' -> maybe_originate(knm_number_options:number(Props), JObj)
@@ -115,6 +116,7 @@ handle_sms_req(OffnetReq) ->
 maybe_force_outbound(Props, OffnetReq) ->
     case knm_number_options:should_force_outbound(Props)
         orelse kapi_offnet_resource:force_outbound(OffnetReq, 'false')
+        orelse kapi_offnet_resource:hunt_account_id(OffnetReq) /= 'undefined'
     of
         'false' -> local_extension(Props, OffnetReq);
         'true' -> maybe_bridge(knm_number_options:number(Props), OffnetReq)
@@ -130,6 +132,7 @@ maybe_force_outbound(Props, OffnetReq) ->
 maybe_force_outbound_sms(Props, OffnetReq) ->
     case knm_number_options:should_force_outbound(Props)
         orelse kapi_offnet_resource:force_outbound(OffnetReq, 'false')
+        orelse kapi_offnet_resource:hunt_account_id(OffnetReq) /= 'undefined'
     of
         'false' -> local_sms(Props, OffnetReq);
         'true' -> maybe_sms(knm_number_options:number(Props), OffnetReq)
@@ -233,42 +236,42 @@ local_originate_caller_id(JObj) ->
 
 -spec get_account_realm(ne_binary()) -> ne_binary().
 get_account_realm(AccountId) ->
-    case kz_account:fetch(AccountId) of
-        {'ok', JObj} -> kz_account:realm(JObj, AccountId);
-        _ -> AccountId
+    case kz_account:fetch_realm(AccountId) of
+        undefined -> AccountId;
+        Realm -> Realm
     end.
 
--spec create_loopback_endpoint(knm_number_options:extra_options(), kz_json:object()) -> any().
+-spec create_loopback_endpoint(knm_number_options:extra_options(), kz_json:object()) -> kz_json:object().
 create_loopback_endpoint(Props, JObj) ->
     {CIDNum, CIDName} = local_originate_caller_id(JObj),
     lager:debug("set outbound caller id to ~s '~s'", [CIDNum, CIDName]),
     Number = knm_number_options:number(Props),
     AccountId = knm_number_options:account_id(Props),
     Realm = get_account_realm(AccountId),
-    CCVs = props:filter_undefined(
+    CCVs = kz_json:from_list(
              [{<<?CHANNEL_LOOPBACK_HEADER_PREFIX, "Inception">>, <<Number/binary, "@", Realm/binary>>}
              ,{<<?CHANNEL_LOOPBACK_HEADER_PREFIX, "Account-ID">>, AccountId}
              ,{<<?CHANNEL_LOOPBACK_HEADER_PREFIX, "Retain-CID">>, "true"}
+             ,{<<?CHANNEL_LOOPBACK_HEADER_PREFIX, "Resource-Type">>, <<"onnet-origination">>}
              ,{<<"Resource-ID">>, AccountId}
              ,{<<"Loopback-Request-URI">>, <<Number/binary, "@", Realm/binary>>}
+             ,{<<"Resource-Type">>, <<"onnet-termination">>}
              ]),
-    Endpoint = kz_json:from_list(
-                 props:filter_undefined(
-                   [{<<"Invite-Format">>, <<"loopback">>}
-                   ,{<<"Route">>, Number}
-                   ,{<<"To-DID">>, Number}
-                   ,{<<"To-Realm">>, Realm}
-                   ,{<<"Custom-Channel-Vars">>, kz_json:from_list(CCVs)}
-                   ,{<<"Outbound-Caller-ID-Name">>, CIDName}
-                   ,{<<"Outbound-Caller-ID-Number">>, CIDNum}
-                   ,{<<"Caller-ID-Name">>, CIDName}
-                   ,{<<"Caller-ID-Number">>, CIDNum}
-                   ,{<<"Ignore-Early-Media">>, 'true'}
-                   ,{<<"Ignore-Early-Media">>, 'true'}
-                   ,{<<"Enable-T38-Fax">>, 'false'}
-                   ,{<<"Enable-T38-Fax-Request">>, 'false'}
-                   ])),
-    Endpoint.
+    kz_json:from_list(
+      [{<<"Invite-Format">>, <<"loopback">>}
+      ,{<<"Route">>, Number}
+      ,{<<"To-DID">>, Number}
+      ,{<<"To-Realm">>, Realm}
+      ,{<<"Custom-Channel-Vars">>, CCVs}
+      ,{<<"Outbound-Caller-ID-Name">>, CIDName}
+      ,{<<"Outbound-Caller-ID-Number">>, CIDNum}
+      ,{<<"Caller-ID-Name">>, CIDName}
+      ,{<<"Caller-ID-Number">>, CIDNum}
+      ,{<<"Ignore-Early-Media">>, 'true'}
+      ,{<<"Ignore-Early-Media">>, 'true'}
+      ,{<<"Enable-T38-Fax">>, 'false'}
+      ,{<<"Enable-T38-Fax-Request">>, 'false'}
+      ]).
 %%--------------------------------------------------------------------
 %% @private
 %% @doc

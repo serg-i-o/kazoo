@@ -28,7 +28,7 @@
                ,control_queue :: api_binary()
                ,response_queue :: api_binary()
                ,queue :: api_binary()
-               ,timeout :: reference()
+               ,timeout :: api_reference()
                ,call_id :: api_binary()
                }).
 -type state() :: #state{}.
@@ -197,7 +197,7 @@ handle_event(JObj, #state{request_handler=RequestHandler
         {<<"error">>, _, _} ->
             <<"bridge">> = kz_json:get_value([<<"Request">>, <<"Application-Name">>], JObj),
             lager:debug("channel execution error while waiting for execute extension: ~s"
-                       ,[kz_util:to_binary(kz_json:encode(JObj))]),
+                       ,[kz_term:to_binary(kz_json:encode(JObj))]),
             gen_listener:cast(RequestHandler, {'local_extension_result', local_extension_error(JObj, Request)});
         {<<"call_event">>, <<"CHANNEL_TRANSFEROR">>, _CallId} ->
             Transferor = kz_call_event:other_leg_call_id(JObj),
@@ -263,56 +263,65 @@ code_change(_OldVsn, State, _Extra) ->
 %%%===================================================================
 %%% Internal functions
 %%%===================================================================
+-spec outbound_flags(kz_json:object()) -> api_binary().
+outbound_flags(JObj) ->
+    case kapi_offnet_resource:flags(JObj) of
+        [] -> 'undefined';
+        Flags -> kz_binary:join(Flags, <<"|">>)
+    end.
 
 -spec build_local_extension(state()) -> kz_proplist().
 build_local_extension(#state{number_props=Props
                             ,resource_req=JObj
                             ,queue=Q
                             }) ->
-    {CIDNum, CIDName} = local_extension_caller_id(JObj),
+    {CIDName, CIDNum} = local_extension_caller_id(JObj),
     lager:debug("set outbound caller id to ~s '~s'", [CIDNum, CIDName]),
     Number = knm_number_options:number(Props),
     AccountId = knm_number_options:account_id(Props),
     OriginalAccountId = kz_json:get_value(<<"Account-ID">>, JObj),
+    ResellerId = kz_services:find_reseller_id(OriginalAccountId),
     {CEDNum, CEDName} = local_extension_callee_id(JObj, Number),
     Realm = get_account_realm(AccountId),
     FromRealm = get_account_realm(OriginalAccountId),
-    FromURI = <<"sip:", CIDNum/binary, "@", FromRealm/binary>>,
+    FromURI = <<"sip:", CIDNum/binary, "@", Realm/binary>>,
     CCVsOrig = kz_json:get_value(<<"Custom-Channel-Vars">>, JObj, kz_json:new()),
-    CCVs = kz_json:set_values(
-             [{<<"Ignore-Display-Updates">>, <<"true">>}
-             ,{<<"From-URI">>, FromURI}
-             ,{<<"Account-ID">>, OriginalAccountId}
-             ,{<<"Reseller-ID">>, kz_services:find_reseller_id(OriginalAccountId)}
-             ],
-             CCVsOrig),
+    CCVs = kz_json:set_values(props:filter_undefined([{<<"Ignore-Display-Updates">>, <<"true">>}
+                                                     ,{<<"Account-ID">>, OriginalAccountId}
+                                                     ,{<<"Reseller-ID">>, ResellerId}
+                                                     ,{<<"Outbound-Flags">>, outbound_flags(JObj)}
+                                                     ])
+                             ,CCVsOrig
+                             ),
 
-    CCVUpdates = props:filter_undefined(
+    CCVUpdates = kz_json:from_list(
                    [{<<?CHANNEL_LOOPBACK_HEADER_PREFIX, "Inception">>, <<Number/binary, "@", Realm/binary>>}
                    ,{<<?CHANNEL_LOOPBACK_HEADER_PREFIX, "Account-ID">>, AccountId}
                    ,{<<?CHANNEL_LOOPBACK_HEADER_PREFIX, "Retain-CID">>, kz_json:get_value(<<"Retain-CID">>, CCVsOrig)}
+                   ,{<<?CHANNEL_LOOPBACK_HEADER_PREFIX, "From-URI">>, FromURI}
+                   ,{<<?CHANNEL_LOOPBACK_HEADER_PREFIX, "Inception-Account-ID">>, OriginalAccountId}
+                   ,{<<?CHANNEL_LOOPBACK_HEADER_PREFIX, "Resource-Type">>, <<"onnet-origination">>}
                    ,{<<"Resource-ID">>, AccountId}
                    ,{<<"Loopback-Request-URI">>, <<Number/binary, "@", Realm/binary>>}
-                   ,{<<?CHANNEL_LOOPBACK_HEADER_PREFIX, "Inception-Account-ID">>, OriginalAccountId}
+                   ,{<<"Resource-Type">>, <<"onnet-termination">>}
                    ]),
 
     Endpoint = kz_json:from_list(
-                 props:filter_undefined(
-                   [{<<"Invite-Format">>, <<"loopback">>}
-                   ,{<<"Route">>, Number}
-                   ,{<<"To-DID">>, Number}
-                   ,{<<"To-Realm">>, Realm}
-                   ,{<<"Custom-Channel-Vars">>, kz_json:from_list(CCVUpdates)}
-                   ,{<<"Outbound-Caller-ID-Name">>, CIDName}
-                   ,{<<"Outbound-Caller-ID-Number">>, CIDNum}
-                   ,{<<"Outbound-Callee-ID-Name">>, CEDName}
-                   ,{<<"Outbound-Callee-ID-Number">>, CEDNum}
-                   ,{<<"Caller-ID-Name">>, CIDName}
-                   ,{<<"Caller-ID-Number">>, CIDNum}
-                   ,{<<"Ignore-Early-Media">>, 'true'}
-                   ,{<<"Enable-T38-Fax">>, 'false'}
-                   ,{<<"Enable-T38-Fax-Request">>, 'false'}
-                   ])),
+                 [{<<"Invite-Format">>, <<"loopback">>}
+                 ,{<<"Route">>, Number}
+                 ,{<<"To-DID">>, Number}
+                 ,{<<"To-Realm">>, FromRealm}
+                 ,{<<"Custom-Channel-Vars">>, CCVUpdates}
+                 ,{<<"Outbound-Caller-ID-Name">>, CIDName}
+                 ,{<<"Outbound-Caller-ID-Number">>, CIDNum}
+                 ,{<<"Outbound-Callee-ID-Name">>, CEDName}
+                 ,{<<"Outbound-Callee-ID-Number">>, CEDNum}
+                 ,{<<"Caller-ID-Name">>, CIDName}
+                 ,{<<"Caller-ID-Number">>, CIDNum}
+                 ,{<<"Ignore-Early-Media">>, 'true'}
+                 ,{<<"Enable-T38-Fax">>, 'false'}
+                 ,{<<"Enable-T38-Fax-Request">>, 'false'}
+                 ]),
 
     props:filter_undefined(
       [{<<"Application-Name">>, <<"bridge">>}
@@ -334,18 +343,18 @@ build_local_extension(#state{number_props=Props
 
 -spec get_account_realm(ne_binary()) -> ne_binary().
 get_account_realm(AccountId) ->
-    case kz_account:fetch(AccountId) of
-        {'ok', JObj} -> kz_account:realm(JObj, AccountId);
-        _ -> AccountId
+    case kz_account:fetch_realm(AccountId) of
+        undefined -> AccountId;
+        Realm -> Realm
     end.
 
 -spec local_extension_caller_id(kz_json:object()) -> {api_binary(), api_binary()}.
 local_extension_caller_id(JObj) ->
-    {kz_json:get_first_defined([<<"Outbound-Caller-ID-Number">>
-                               ,<<"Emergency-Caller-ID-Number">>
-                               ], JObj)
-    ,kz_json:get_first_defined([<<"Outbound-Caller-ID-Name">>
+    {kz_json:get_first_defined([<<"Outbound-Caller-ID-Name">>
                                ,<<"Emergency-Caller-ID-Name">>
+                               ], JObj)
+    ,kz_json:get_first_defined([<<"Outbound-Caller-ID-Number">>
+                               ,<<"Emergency-Caller-ID-Number">>
                                ], JObj)
     }.
 
@@ -369,7 +378,7 @@ local_extension_timeout(Request) ->
 
 -spec local_extension_error(kz_json:object(), kz_json:object()) -> kz_proplist().
 local_extension_error(JObj, Request) ->
-    lager:debug("error during outbound request: ~s", [kz_util:to_binary(kz_json:encode(JObj))]),
+    lager:debug("error during outbound request: ~s", [kz_term:to_binary(kz_json:encode(JObj))]),
     [{<<"Call-ID">>, kz_json:get_value(<<"Call-ID">>, Request)}
     ,{<<"Msg-ID">>, kz_json:get_value(<<"Msg-ID">>, Request, <<>>)}
     ,{<<"Response-Message">>, <<"NORMAL_TEMPORARY_FAILURE">>}
@@ -407,5 +416,5 @@ local_extension_failure(JObj, OffnetReq) ->
 
 -spec get_event_type(kz_json:object()) -> {ne_binary(), ne_binary(), ne_binary()}.
 get_event_type(JObj) ->
-    {C, E} = kapps_util:get_event_type(JObj),
+    {C, E} = kz_util:get_event_type(JObj),
     {C, E, kz_call_event:call_id(JObj)}.

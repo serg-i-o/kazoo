@@ -61,7 +61,7 @@
 -define(CONSUME_OPTIONS, []).
 
 -record(participant, {participant_id = 0 :: non_neg_integer()
-                     ,call :: kapps_call:call()
+                     ,call :: kapps_call:call() | 'undefined'
                      ,moderator = 'false' :: boolean()
                      ,muted = 'false' :: boolean()
                      ,deaf = 'false' :: boolean()
@@ -69,7 +69,7 @@
                      ,call_event_consumers = [] :: pids()
                      ,in_conference = 'false' :: boolean()
                      ,join_attempts = 0 :: non_neg_integer()
-                     ,conference :: kapps_conference:conference()
+                     ,conference :: kapps_conference:conference() | 'undefined'
                      ,discovery_event = kz_json:new() :: kz_json:object()
                      ,last_dtmf = <<>> :: binary()
                      ,server = self() :: pid()
@@ -287,12 +287,13 @@ handle_cast('join_local', #participant{call=Call
     {'noreply', Participant};
 handle_cast({'join_remote', JObj}, #participant{call=Call
                                                ,conference=Conference
+                                               ,name_pronounced=Name
                                                }=Participant) ->
     Route = binary:replace(kz_json:get_value(<<"Switch-URL">>, JObj)
                           ,<<"mod_sofia">>
                           ,<<"conference">>
                           ),
-    bridge_to_conference(Route, Conference, Call),
+    bridge_to_conference(Route, Conference, Call, Name),
     {'noreply', Participant#participant{remote='true'}};
 handle_cast({'sync_participant', JObj}, #participant{call=Call}=Participant) ->
     Event = kz_json:get_ne_binary_value(<<"Event">>, JObj),
@@ -330,7 +331,7 @@ handle_event(JObj, #participant{call_event_consumers=Consumers
                                ,server=Srv
                                }) ->
     CallId = kapps_call:call_id(Call),
-    case {kapps_util:get_event_type(JObj)
+    case {kz_util:get_event_type(JObj)
          ,kz_json:get_value(<<"Call-ID">>, JObj)
          }
     of
@@ -439,8 +440,8 @@ notify_requestor(MyQ, MyId, DiscoveryEvent, ConferenceId) ->
     end.
 
 
--spec bridge_to_conference(ne_binary(), kapps_conference:conference(), kapps_call:call()) -> 'ok'.
-bridge_to_conference(Route, Conference, Call) ->
+-spec bridge_to_conference(ne_binary(), kapps_conference:conference(), kapps_call:call(), conf_pronounced_name:name_pronounced()) -> ok.
+bridge_to_conference(Route, Conference, Call, Name) ->
     lager:debug("bridging to conference running at '~s'", [Route]),
     Endpoint = kz_json:from_list([{<<"Invite-Format">>, <<"route">>}
                                  ,{<<"Route">>, Route}
@@ -454,8 +455,9 @@ bridge_to_conference(Route, Conference, Call) ->
                                                  >>
                                   }
                                  ]),
-    SIPHeaders = [{<<"X-Conf-Flags-Moderator">>, kapps_conference:moderator(Conference)}
-                 ],
+    SIPHeaders = props:filter_undefined([{<<"X-Conf-Flags-Moderator">>, kapps_conference:moderator(Conference)}
+                                         | name_pronounced_headers(Name)
+                                        ]),
     Command = [{<<"Application-Name">>, <<"bridge">>}
               ,{<<"Endpoints">>, [Endpoint]}
               ,{<<"Timeout">>, 20}
@@ -468,16 +470,16 @@ bridge_to_conference(Route, Conference, Call) ->
 
 -spec get_account_realm(kapps_call:call()) -> ne_binary().
 get_account_realm(Call) ->
-    case kapps_call:account_id(Call) of
-        'undefined' -> <<"unknown">>;
-        AccountId ->
-            case kz_account:fetch(AccountId) of
-                {'ok', JObj} -> kz_account:realm(JObj, <<"unknown">>);
-                {'error', R} ->
-                    lager:debug("error while looking up account realm: ~p", [R]),
-                    <<"unknown">>
-            end
+    case kz_account:fetch_realm(kapps_call:account_id(Call)) of
+        undefined -> <<"unknown">>;
+        Realm -> Realm
     end.
+
+-spec name_pronounced_headers(conf_pronounced_name:name_pronounced()) -> kz_proplist().
+name_pronounced_headers('undefined') -> [];
+name_pronounced_headers({_, AccountId, MediaId}) ->
+    [{<<"X-Conf-Values-Pronounced-Name-Account-ID">>, AccountId}
+    ,{<<"X-Conf-Values-Pronounced-Name-Media-ID">>, MediaId}].
 
 -spec send_conference_command(kapps_conference:conference(), kapps_call:call()) -> 'ok'.
 send_conference_command(Conference, Call) ->
@@ -518,12 +520,12 @@ set_enter_exit_sounds({_, AccountId, MediaId}, #participant{conference=Conferenc
                                                            }) ->
     EntrySounds = [play_entry_tone(IsModerator, Conference)
                   ,kz_media_util:media_path(MediaId, AccountId)
-                  ,kz_media_util:get_prompt(<<"conf-has_joined">>, kapps_conference:call(Conference))
+                  ,kapps_call:get_prompt(Call, <<"conf-has_joined">>)
                   ],
 
     ExitSounds = [play_exit_tone(IsModerator, Conference)
                  ,kz_media_util:media_path(MediaId, AccountId)
-                 ,kz_media_util:get_prompt(<<"conf-has_left">>, kapps_conference:call(Conference))
+                 ,kapps_call:get_prompt(Call, <<"conf-has_left">>)
                  ],
 
     Fun = fun('undefined') -> 'false';

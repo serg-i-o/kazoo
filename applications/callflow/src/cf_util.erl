@@ -36,7 +36,7 @@
         ,find_user_endpoints/3
         ,find_group_endpoints/2
         ,check_value_of_fields/4
-        ,get_timezone/2, account_timezone/1
+        ,get_timezone/2
         ]).
 
 -export([wait_for_noop/2]).
@@ -46,14 +46,14 @@
         ]).
 
 -include("callflow.hrl").
--include_lib("kazoo_json/include/kazoo_json.hrl").
+-include_lib("kazoo_stdlib/include/kazoo_json.hrl").
 
 -define(OWNER_KEY(Db, User), {?MODULE, 'owner_id', Db, User}).
 -define(SIP_USER_OWNERS_KEY(Db, User), {?MODULE, 'sip_user_owners', Db, User}).
 -define(SIP_ENDPOINT_ID_KEY(Db, User), {?MODULE, 'sip_endpoint_id', Db, User}).
 -define(PARKING_PRESENCE_KEY(Db, Request), {?MODULE, 'parking_callflow', Db, Request}).
 -define(MANUAL_PRESENCE_KEY(Db), {?MODULE, 'manual_presence', Db}).
--define(OPERATOR_KEY, kapps_config:get(?CF_CONFIG_CAT, <<"operator_key">>, <<"0">>)).
+-define(OPERATOR_KEY, kapps_config:get_ne_binary(?CF_CONFIG_CAT, <<"operator_key">>, <<"0">>)).
 -define(MWI_SEND_UNSOLICITATED_UPDATES, <<"mwi_send_unsoliciated_updates">>).
 -define(VM_CACHE_KEY(Db, Id), {?MODULE, 'vmbox', Db, Id}).
 
@@ -150,7 +150,7 @@ manual_presence_resp(Username, Realm, JObj) ->
         State ->
             PresenceUpdate = [{<<"Presence-ID">>, PresenceId}
                              ,{<<"State">>, State}
-                             ,{<<"Call-ID">>, kz_util:to_hex_binary(crypto:hash(md5, PresenceId))}
+                             ,{<<"Call-ID">>, kz_term:to_hex_binary(crypto:hash(md5, PresenceId))}
                               | kz_api:default_headers(?APP_NAME, ?APP_VERSION)
                              ],
             kapps_util:amqp_pool_send(PresenceUpdate, fun kapi_presence:publish_update/1)
@@ -214,7 +214,7 @@ mwi_resp(Username, Realm, OwnerId, AccountDb, JObj) ->
 -spec is_unsolicited_mwi_enabled(ne_binary()) -> boolean().
 is_unsolicited_mwi_enabled(AccountId) ->
     kapps_config:get_is_true(?CF_CONFIG_CAT, ?MWI_SEND_UNSOLICITATED_UPDATES, 'true')
-        andalso kz_util:is_true(kapps_account_config:get(AccountId, ?CF_CONFIG_CAT, ?MWI_SEND_UNSOLICITATED_UPDATES, 'true')).
+        andalso kz_term:is_true(kapps_account_config:get(AccountId, ?CF_CONFIG_CAT, ?MWI_SEND_UNSOLICITATED_UPDATES, 'true')).
 
 %%--------------------------------------------------------------------
 %% @public
@@ -227,11 +227,11 @@ is_unsolicited_mwi_enabled(AccountId) ->
 -spec unsolicited_owner_mwi_update(api_binary(), api_binary()) ->
                                           'ok' |
                                           {'error', mwi_update_return()} |
-                                          kz_data:data_error().
+                                          kz_datamgr:data_error().
 -spec unsolicited_owner_mwi_update(ne_binary(), ne_binary(), boolean()) ->
                                           'ok' |
                                           {'error', mwi_update_return()} |
-                                          kz_data:data_error().
+                                          kz_datamgr:data_error().
 unsolicited_owner_mwi_update('undefined', _) -> {'error', 'missing_account_db'};
 unsolicited_owner_mwi_update(_, 'undefined') -> {'error', 'missing_owner_id'};
 unsolicited_owner_mwi_update(AccountDb, OwnerId) ->
@@ -350,7 +350,7 @@ send_mwi_update(New, Saved, Username, Realm, JObj) ->
 %%--------------------------------------------------------------------
 -spec alpha_to_dialpad(ne_binary()) -> ne_binary().
 alpha_to_dialpad(Value) ->
-    << <<(dialpad_digit(C))>> || <<C>> <= kz_util:to_lower_binary(Value), is_alpha(C) >>.
+    << <<(dialpad_digit(C))>> || <<C>> <= kz_term:to_lower_binary(Value), is_alpha(C) >>.
 
 %%--------------------------------------------------------------------
 %% @public
@@ -469,7 +469,7 @@ get_endpoint_id_by_sip_username(AccountDb, Username) ->
 %% @end
 %%-----------------------------------------------------------------------------
 -spec get_operator_callflow(ne_binary()) -> {'ok', kz_json:object()} |
-                                            kz_data:data_error().
+                                            kz_datamgr:data_error().
 get_operator_callflow(Account) ->
     AccountDb = kz_util:format_account_db(Account),
     Options = [{'key', ?OPERATOR_KEY}
@@ -604,7 +604,7 @@ apply_dialplan(Regex, [Key|Keys], DialPlan, Number) ->
 
 -spec load_system_dialplans(ne_binaries()) -> kz_json:object().
 load_system_dialplans(Names) ->
-    LowerNames = [kz_util:to_lower_binary(Name) || Name <- Names],
+    LowerNames = [kz_term:to_lower_binary(Name) || Name <- Names],
     Plans = kapps_config:get_all_kvs(<<"dialplans">>),
     lists:foldl(fold_system_dialplans(LowerNames), kz_json:new(), Plans).
 
@@ -619,7 +619,7 @@ fold_system_dialplans(Names) ->
 
 -spec maybe_dialplan_suits({ne_binary(), kz_json:object()} ,kz_json:object(), ne_binaries()) -> kz_json:object().
 maybe_dialplan_suits({Key, Val}=KV, Acc, Names) ->
-    Name = kz_util:to_lower_binary(kz_json:get_value(<<"name">>, Val)),
+    Name = kz_term:to_lower_binary(kz_json:get_value(<<"name">>, Val)),
     case lists:member(Name, Names) of
         'true' -> kz_json:set_value(Key, Val, Acc);
         'false' -> maybe_system_dialplan_name(KV, Acc, Names)
@@ -627,10 +627,10 @@ maybe_dialplan_suits({Key, Val}=KV, Acc, Names) ->
 
 -spec maybe_system_dialplan_name({ne_binary(), kz_json:object()} ,kz_json:object(), ne_binaries()) -> kz_json:object().
 maybe_system_dialplan_name({Key, Val}, Acc, Names) ->
-    Name = kz_util:to_lower_binary(Key),
+    Name = kz_term:to_lower_binary(Key),
     case lists:member(Name, Names) of
         'true' ->
-            N = kz_util:to_binary(index_of(Name, Names)),
+            N = kz_term:to_binary(index_of(Name, Names)),
             kz_json:set_value(<<N/binary, "-", Key/binary>>, Val, Acc);
         'false' -> Acc
     end.
@@ -660,7 +660,7 @@ start_event_listener(Call, Mod, Args) ->
 
 -spec event_listener_name(kapps_call:call(), atom() | ne_binary()) -> ne_binary().
 event_listener_name(Call, Module) ->
-    <<(kapps_call:call_id_direct(Call))/binary, "-", (kz_util:to_binary(Module))/binary>>.
+    <<(kapps_call:call_id_direct(Call))/binary, "-", (kz_term:to_binary(Module))/binary>>.
 
 -spec caller_belongs_to_group(ne_binary(), kapps_call:call()) -> boolean().
 caller_belongs_to_group(GroupId, Call) ->
@@ -706,7 +706,7 @@ find_user_endpoints(UserIds, DeviceIds, Call) ->
 
 -spec find_channels(ne_binaries(), kapps_call:call()) -> kz_json:objects().
 find_channels(Usernames, Call) ->
-    Realm = kz_util:get_account_realm(kapps_call:account_id(Call)),
+    Realm = kz_account:fetch_realm(kapps_call:account_id(Call)),
     lager:debug("finding channels for realm ~p, usernames ~p", [Realm, Usernames]),
     Req = [{<<"Realm">>, Realm}
           ,{<<"Usernames">>, Usernames}
@@ -795,17 +795,10 @@ process_event(Call, NoopId, JObj) ->
 
 -spec get_timezone(kz_json:object(), kapps_call:call()) -> ne_binary().
 get_timezone(JObj, Call) ->
-    case kz_json:get_value(<<"timezone">>, JObj) of
-        'undefined'   -> account_timezone(Call);
-        <<"inherit">> -> account_timezone(Call);  %% UI-1808
+    case kz_json:get_ne_binary_value(<<"timezone">>, JObj) of
+        'undefined'   -> kz_account:timezone(kapps_call:account_id(Call));
+        <<"inherit">> -> kz_account:timezone(kapps_call:account_id(Call)); %% UI-1808
         TZ -> TZ
-    end.
-
--spec account_timezone(kapps_call:call()) -> ne_binary().
-account_timezone(Call) ->
-    case kz_account:fetch(kapps_call:account_id(Call)) of
-        {'ok', AccountJObj} -> kz_account:timezone(AccountJObj);
-        {'error', _E} -> ?DEFAULT_TIMEZONE
     end.
 
 -spec start_task(fun(), list(), kapps_call:call()) -> 'ok'.
@@ -821,7 +814,7 @@ start_task(Fun, Args, Call) ->
 -spec mailbox(ne_binary(), ne_binary()) -> {'ok', kz_json:object()} |
                                            {'error', any()}.
 mailbox(AccountDb, VMNumber) ->
-    try kz_util:to_integer(VMNumber) of
+    try kz_term:to_integer(VMNumber) of
         Number -> maybe_cached_mailbox(AccountDb, Number)
     catch
         _E:_R ->  {'error', 'not_found'}

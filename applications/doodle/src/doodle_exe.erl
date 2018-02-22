@@ -410,7 +410,7 @@ handle_cast(_Msg, State) ->
     {'noreply', State}.
 
 event_listener_name(Call, Module) ->
-    <<(kapps_call:call_id_direct(Call))/binary, "-", (kz_util:to_binary(Module))/binary>>.
+    <<(kapps_call:call_id_direct(Call))/binary, "-", (kz_term:to_binary(Module))/binary>>.
 
 %%--------------------------------------------------------------------
 %% @private
@@ -483,7 +483,7 @@ handle_event(JObj, #state{cf_module_pid=PidRef
     CallId = kapps_call:call_id_direct(Call),
     SmsId = kapps_call:kvs_fetch(<<"sms_docid">>, Call),
     Others = kapps_call:kvs_fetch('cf_event_pids', [], Call),
-    case {kapps_util:get_event_type(JObj), kz_json:get_value(<<"Call-ID">>, JObj)} of
+    case {kz_util:get_event_type(JObj), kz_json:get_value(<<"Call-ID">>, JObj)} of
         {{<<"call_event">>, <<"CHANNEL_TRANSFEREE">>}, _} ->
             ExeFetchId = kapps_call:custom_channel_var(<<"Fetch-ID">>, Call),
             TransferFetchId = kz_json:get_value([<<"Custom-Channel-Vars">>, <<"Fetch-ID">>], JObj),
@@ -632,7 +632,7 @@ cf_module_prefix(_Call, _) -> <<"cf_">>.
 -spec maybe_start_cf_module(ne_binary(), kz_proplist(), kapps_call:call()) ->
                                    {pid_ref() | 'undefined', atom()}.
 maybe_start_cf_module(ModuleBin, Data, Call) ->
-    CFModule = kz_util:to_atom(ModuleBin, 'true'),
+    CFModule = kz_term:to_atom(ModuleBin, 'true'),
     try CFModule:module_info('exports') of
         _ ->
             lager:info("moving to action '~s'", [CFModule]),

@@ -1,7 +1,7 @@
 -ifndef(WEBHOOKS_HRL).
--include_lib("kazoo/include/kz_types.hrl").
--include_lib("kazoo/include/kz_log.hrl").
--include_lib("kazoo/include/kz_databases.hrl").
+-include_lib("kazoo_stdlib/include/kz_types.hrl").
+-include_lib("kazoo_stdlib/include/kz_log.hrl").
+-include_lib("kazoo_stdlib/include/kz_databases.hrl").
 -include_lib("kazoo_apps/include/kz_hooks.hrl").
 
 -define(APP_NAME, <<"webhooks">>).
@@ -10,16 +10,16 @@
 -type http_verb() :: 'get' | 'post'.
 -type hook_retries() :: 1..5.
 
--record(webhook, {id :: ne_binary() | '_'
-                 ,uri :: ne_binary() | '_'
-                 ,http_verb :: http_verb() | '_'
-                 ,hook_event :: ne_binary() | '_' | '$1' | '$2'
-                 ,hook_id :: ne_binary() | '_'
+-record(webhook, {id :: api_ne_binary() | '_'
+                 ,uri :: api_ne_binary() | '_'
+                 ,http_verb = 'get' :: http_verb() | '_'
+                 ,hook_event :: api_ne_binary() | '_' | '$1' | '$2'
+                 ,hook_id :: api_ne_binary() | '_'
                  ,retries = 3 :: hook_retries() | '_'
-                 ,account_id :: ne_binary() | '_' | '$1'
+                 ,account_id :: api_ne_binary() | '_' | '$1'
                  ,include_subaccounts = 'false' :: boolean() | '_' | '$3'
-                 ,custom_data :: kz_json:object() | '_'
-                 ,modifiers :: kz_json:object() | '_'
+                 ,custom_data :: api_object() | '_'
+                 ,modifiers :: api_object() | '_'
                  }).
 -type webhook() :: #webhook{}.
 -type webhooks() :: [webhook()].

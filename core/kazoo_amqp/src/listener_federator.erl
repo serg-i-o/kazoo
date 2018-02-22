@@ -17,20 +17,20 @@
         ,handle_call/3
         ,handle_cast/2
         ,handle_info/2
-        ,handle_event/2, handle_event/3
+        ,handle_event/4
         ,terminate/2
         ,code_change/3
         ]).
 
 -include_lib("kazoo_amqp/include/kz_amqp.hrl").
--include_lib("kazoo/include/kz_types.hrl").
--include_lib("kazoo/include/kz_log.hrl").
+-include_lib("kazoo_stdlib/include/kz_types.hrl").
+-include_lib("kazoo_stdlib/include/kz_log.hrl").
 
 -define(SERVER, ?MODULE).
 
 -record(state, {parent :: pid()
                ,broker :: ne_binary()
-               ,self_binary = kz_util:to_binary(pid_to_list(self())) :: ne_binary()
+               ,self_binary = kz_term:to_binary(pid_to_list(self())) :: ne_binary()
                ,zone :: ne_binary()
                }).
 -type state() :: #state{}.
@@ -73,7 +73,7 @@ stop(Pid) ->
 init([Parent, Broker]=L) ->
     lager:debug("federating listener ~p on broker ~s", L),
     kz_amqp_channel:consumer_broker(Broker),
-    Zone = kz_util:to_binary(kz_amqp_connections:broker_zone(Broker)),
+    Zone = kz_term:to_binary(kz_amqp_connections:broker_zone(Broker)),
     {'ok', #state{parent=Parent
                  ,broker=Broker
                  ,zone=Zone
@@ -131,24 +131,12 @@ handle_cast(_Msg, State) ->
 handle_info(_Info, State) ->
     {'noreply', State}.
 
-%%--------------------------------------------------------------------
-%% @private
-%% @doc
-%% Allows listener to pass options to handlers
-%%
-%% @spec handle_event(JObj, State) -> {reply, Options}
-%% @end
-%%--------------------------------------------------------------------
--spec handle_event(kz_json:object(), kz_proplist()) -> gen_listener:handle_event_return().
-handle_event(_JObj, _State) ->
-    {'reply', []}.
-
--spec handle_event(kz_json:object(), gen_listener:basic_deliver(), state()) -> gen_listener:handle_event_return().
-handle_event(JObj, BasicDeliver, #state{parent=Parent
-                                       ,broker=Broker
-                                       ,self_binary=Self
-                                       ,zone=Zone
-                                       }) ->
+-spec handle_event(kz_json:object(), gen_listener:basic_deliver(), amqp_basic(), state()) -> gen_listener:handle_event_return().
+handle_event(JObj, BasicDeliver, BasicData, #state{parent=Parent
+                                                  ,broker=Broker
+                                                  ,self_binary=Self
+                                                  ,zone=Zone
+                                                  }) ->
     lager:debug("relaying federated ~s event ~s from ~s to ~p with consumer pid ~p",
                 [kz_api:event_category(JObj), kz_api:event_name(JObj), Zone, Parent, Self]
                ),
@@ -162,6 +150,7 @@ handle_event(JObj, BasicDeliver, #state{parent=Parent
                                                     ,{<<"AMQP-Broker-Zone">>, Zone}
                                                     ], JObj)
                                 ,BasicDeliver
+                                ,BasicData
                                 ),
     'ignore'.
 

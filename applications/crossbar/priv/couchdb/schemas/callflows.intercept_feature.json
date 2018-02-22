@@ -1,21 +1,29 @@
 {
-    "$schema": "http://json-schema.org/draft-03/schema#",
+    "$schema": "http://json-schema.org/draft-04/schema#",
     "_id": "callflows.intercept_feature",
     "description": "Validator for the intercept_feature callflow's data object",
     "properties": {
         "approved_device_id": {
-            "description": ""
+            "description": "Restricts the calling device to this Device",
+            "type": "string"
         },
         "approved_group_id": {
-            "description": ""
+            "description": "Requires the calling device to be part of the Group",
+            "type": "string"
         },
         "approved_user_id": {
-            "description": ""
+            "description": "Requires the calling device to be part of the User",
+            "type": "string"
         },
         "type": {
-            "description": ""
+            "description": "The scope of devices to intercept",
+            "enum": [
+                "user",
+                "device",
+                "extension"
+            ],
+            "type": "string"
         }
     },
-    "required": true,
     "type": "object"
 }

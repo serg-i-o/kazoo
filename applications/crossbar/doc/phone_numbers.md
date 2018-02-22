@@ -1,6 +1,6 @@
 ### Phone Numbers
 
-#### About Phone_numbers
+#### About Phone Numbers
 
 The 2600hz mobile API set: manage numbers.
 
@@ -8,56 +8,52 @@ The 2600hz mobile API set: manage numbers.
 
 Schema for a number
 
+
+
 Key | Description | Type | Default | Required
 --- | ----------- | ---- | ------- | --------
-`cnam` |   | `object` |   | `false`
+`carrier_name` |   | `string(1..30)` |   | `false`
 `cnam.display_name` |   | `string(1..15)` |   | `false`
-`cnam.inbound_lookup` |   | `boolean` |   | `false`
-`e911` |   | `object` |   | `false`
-`e911.activated_time` | The time stamp e911 was provisioned | `string` |   | `false`
+`cnam.inbound_lookup` |   | `boolean()` |   | `false`
+`cnam` |   | `object()` |   | `false`
+`create_with_state` | The state to create numbers in | `string('aging' | 'available' | 'deleted' | 'discovery' | 'in_service' | 'port_in' | 'port_out' | 'released' | 'reserved')` |   | `false`
+`e911.activated_time` | The time stamp e911 was provisioned | `string()` |   | `false`
 `e911.caller_name` | The name that will show to emergency services | `string(3..)` |   | `false`
-`e911.extended_address` | The suit/floor/apt. address where the number is in service | `string` |   | `false`
-`e911.latitude` | The e911 provisioning system calculated service address latitude | `string` |   | `false`
-`e911.legacy_data` | Legacy E911 information | `object` |   | `false`
-`e911.legacy_data.house_number` | The name that will show to emergency services | `string` |   | `false`
-`e911.legacy_data.predirectional` | The name that will show to emergency services | `string` |   | `false`
-`e911.legacy_data.streetname` | The name that will show to emergency services | `string` |   | `false`
-`e911.legacy_data.suite` | The name that will show to emergency services | `string` |   | `false`
-`e911.locality` | The locality (city) where the number is in service | `string` |   | `true`
-`e911.location_id` | The e911 provisioning system internal id for this service address | `string` |   | `false`
-`e911.longitude` | The e911 provisioning system calculated service address longitude | `string` |   | `false`
-`e911.plus_four` | The extended zip/postal code where the number is in service | `string` |   | `false`
-`e911.postal_code` | The zip/postal code where the number is in service | `string` |   | `true`
-`e911.region` | The region (state) where the number is in service | `string` |   | `true`
-`e911.status` | The e911 provisioning system status for this service address | `string('INVALID', 'GEOCODED', 'PROVISIONED', 'REMOVED', 'ERROR')` |   | `false`
-`e911.street_address` | The street address where the number is in service | `string` |   | `true`
-`porting` | Porting (in) information for the phone number | `object` |   | `false`
-`porting.billing_account_id` | The account id the losing carrier has on file | `string` |   | `false`
-`porting.billing_extended_address` | The suit/floor/apt. address the losing carrier has on file | `string` |   | `false`
-`porting.billing_locality` | The locality (city) the losing carrier has on file | `string` |   | `false`
-`porting.billing_name` | The name or company name the losing carrier has on file | `string` |   | `false`
-`porting.billing_postal_code` | The zip/postal code the losing carrier has on file | `string` |   | `false`
-`porting.billing_region` | The region (state) the losing carrier has on file | `string` |   | `false`
-`porting.billing_street_address` | The street address the losing carrier has on file | `string` |   | `false`
-`porting.billing_telephone_number` | The BTN of the account the number belongs to | `string` |   | `false`
-`porting.comments` | An array of comments | `array(string)` |   | `false`
-`porting.comments.[]` |   | `string` |   | `false`
-`porting.customer_contact` | The phone number that can be used to contact the owner of the number | `string` |   | `false`
-`porting.port_id` | The id of the port request | `string` |   | `false`
-`porting.requested_port_date` | The requested port date | `string` |   | `false`
-`porting.service_provider` | The name of the losing carrier | `string` |   | `false`
+`e911.extended_address` | The suit/floor/apt. address where the number is in service | `string()` |   | `false`
+`e911.latitude` | The e911 provisioning system calculated service address latitude | `string()` |   | `false`
+`e911.legacy_data.house_number` | The name that will show to emergency services | `string()` |   | `false`
+`e911.legacy_data.predirectional` | The name that will show to emergency services | `string()` |   | `false`
+`e911.legacy_data.streetname` | The name that will show to emergency services | `string()` |   | `false`
+`e911.legacy_data.suite` | The name that will show to emergency services | `string()` |   | `false`
+`e911.legacy_data` | Legacy E911 information | `object()` |   | `false`
+`e911.locality` | The locality (city) where the number is in service | `string()` |   | `true`
+`e911.location_id` | The e911 provisioning system internal id for this service address | `string()` |   | `false`
+`e911.longitude` | The e911 provisioning system calculated service address longitude | `string()` |   | `false`
+`e911.plus_four` | The extended zip/postal code where the number is in service | `string()` |   | `false`
+`e911.postal_code` | The zip/postal code where the number is in service | `string()` |   | `true`
+`e911.region` | The region (state) where the number is in service | `string(2)` |   | `true`
+`e911.status` | The e911 provisioning system status for this service address | `string('INVALID' | 'GEOCODED' | 'PROVISIONED' | 'REMOVED' | 'ERROR')` |   | `false`
+`e911.street_address` | The street address where the number is in service | `string()` |   | `true`
+`e911` |   | `object()` |   | `false`
+`porting.billing_account_id` | The account id the losing carrier has on file | `string()` |   | `false`
+`porting.billing_extended_address` | The suit/floor/apt. address the losing carrier has on file | `string()` |   | `false`
+`porting.billing_locality` | The locality (city) the losing carrier has on file | `string()` |   | `false`
+`porting.billing_name` | The name or company name the losing carrier has on file | `string()` |   | `false`
+`porting.billing_postal_code` | The zip/postal code the losing carrier has on file | `string()` |   | `false`
+`porting.billing_region` | The region (state) the losing carrier has on file | `string()` |   | `false`
+`porting.billing_street_address` | The street address the losing carrier has on file | `string()` |   | `false`
+`porting.billing_telephone_number` | The BTN of the account the number belongs to | `string()` |   | `false`
+`porting.comments.[]` |   | `string()` |   | `false`
+`porting.comments` | An array of comments | `array(string())` |   | `false`
+`porting.customer_contact` | The phone number that can be used to contact the owner of the number | `string()` |   | `false`
+`porting.port_id` | The id of the port request | `string()` |   | `false`
+`porting.requested_port_date` | The requested port date | `string()` |   | `false`
+`porting.service_provider` | The name of the losing carrier | `string()` |   | `false`
+`porting` | Porting (in) information for the phone number | `object()` |   | `false`
 
 
 
-
-#### Search for numbers
-
-Looks for numbers using the carrier module set up for your account.
-
-- `PREFIX`: a 3-digit number prefix such as an area code (e.g. `415`)
-- `QUANTITY`: maximum amount of numbers to be returned (e.g. `2`)
-- `OFFSET`: page number (e.g. `0`)
-- `COUNTRY`: ISO3166 alpha-2 country code (e.g. `US`)
+#### Fetch
 
 > GET /v2/phone_numbers?prefix={PREFIX}&quantity={QUANTITY}&offset={OFFSET}&country={COUNTRY}
 
@@ -139,6 +135,54 @@ curl -v -X GET \
     "request_id": "{REQUEST_ID}",
     "revision": "{REVISION}",
     "status": "success"
+}
+```
+
+
+#### See how many digits a `{PREFIX}` can take
+
+> GET /v2/accounts/{ACCOUNT_ID}/phone_numbers/carriers_info
+
+Depending on your carriers configuration you may be allowed to query numbers
+by NPA-NXX instead of just NPA.
+
+```shell
+curl -v -X GET \
+    http://{SERVER}:8000/v2/accounts/{ACCOUNT_ID}/phone_numbers/carriers_info
+```
+
+```json
+{
+    "auth_token": "{AUTH_TOKEN}",
+    "data": {
+        "maximal_prefix_length": 3,
+        "usable_carriers": [
+            "bandwidth2",
+            "bandwidth",
+            "inum",
+            "local",
+            "inventory",
+            "managed",
+            "mdn",
+            "other",
+            "simwood",
+            "telnyx",
+            "vitelity",
+            "voip_innovations"
+        ],
+        "usable_creation_states": [
+            "aging",
+            "available",
+            "in_service",
+            "port_in",
+            "reserved"
+        ]
+    },
+    "node": "{NODE}",
+    "request_id": "{REQUEST_ID}",
+    "status": "success",
+    "timestamp": "2017-05-01T20:31:35",
+    "version": "4.0.0"
 }
 ```
 
@@ -390,6 +434,52 @@ curl -v -X POST \
             "inbound_cnam"
         ],
         "id": "{PHONE_NUMBER}",
+        "my_own_field": "some other value",
+        "state": "in_service",
+        "used_by": "callflow"
+    },
+    "request_id": "{REQUEST_ID}",
+    "revision": "{REVISION}",
+    "status": "success"
+}
+```
+
+
+#### Patch public fields of a number
+
+> PATCH /v2/accounts/{ACCOUNT_ID}/phone_numbers/{PHONE_NUMBER}
+
+```shell
+curl -v -X PATCH \
+    -H "X-Auth-Token: {AUTH_TOKEN}" \
+    -d '{"data":{"my_own_field":42}}' \
+    http://{SERVER}:8000/v2/accounts/{ACCOUNT_ID}/phone_numbers/{PHONE_NUMBER}
+```
+
+```json
+{
+    "auth_token": "{AUTH_TOKEN}",
+    "data": {
+        "_read_only": {
+            "created": 63635220353,
+            "features": [
+                "outbound_cnam",
+                "inbound_cnam"
+            ],
+            "modified": 63635220353,
+            "state": "in_service",
+            "used_by": "callflow"
+        },
+        "cnam": {
+            "display_name": "My caller ID",
+            "inbound_lookup": true
+        },
+        "features": [
+            "outbound_cnam",
+            "inbound_cnam"
+        ],
+        "id": "{PHONE_NUMBER}",
+        "my_own_field": 42,
         "state": "in_service",
         "used_by": "callflow"
     },
@@ -403,6 +493,8 @@ curl -v -X POST \
 #### Add a number to the database
 
 Adds a number to the database, returning its properties.
+
+Note: set field `"create_with_state"` in payload to your desired number state (defaults to `"reserved"`).
 
 Note: payload is facultative.
 
@@ -826,7 +918,54 @@ curl -v -X POST \
 ```
 
 
+#### Patch public fields of a list of numbers
+
+> PATCH /v2/accounts/{ACCOUNT_ID}/phone_numbers/collection
+
+```shell
+curl -v -X PATCH \
+    -H "X-Auth-Token: {AUTH_TOKEN}" \
+    -d '{"data": {"numbers": ["{PHONE_NUMBER1}", "{PHONE_NUMBER2}"], "myfield": 2337}}' \
+    http://{SERVER}:8000/v2/accounts/{ACCOUNT_ID}/phone_numbers/collection
+```
+
+```json
+{
+    "auth_token": "{AUTH_TOKEN}",
+    "data": {
+        "success": {
+            "{PHONE_NUMBER1}": {
+                "_read_only": {
+                    "created": 63628454912,
+                    "modified": 63628454912,
+                    "state": "reserved"
+                },
+                "id": "{PHONE_NUMBER1}",
+                "myfield": 2337,
+                "state": "reserved"
+            },
+            "{PHONE_NUMBER2}": {
+                "_read_only": {
+                    "created": 63628454912,
+                    "modified": 63628454912,
+                    "state": "reserved"
+                },
+                "id": "{PHONE_NUMBER2}",
+                "myfield": 2337,
+                "state": "reserved"
+            }
+        }
+    },
+    "request_id": "{REQUEST_ID}",
+    "revision": "{REVISION}",
+    "status": "success"
+}
+```
+
+
 #### Add a list of numbers to the database
+
+Note: set field `"create_with_state"` in payload to your desired number state (defaults to `"reserved"`).
 
 > PUT /v2/accounts/{ACCOUNT_ID}/phone_numbers/collection
 
@@ -1007,6 +1146,60 @@ curl -v -X POST \
 ```
 
 
+#### Fix `used_by` field (and others) of a specific number
+
+> POST /v2/accounts/{ACCOUNT_ID}/phone_numbers/fix/{PHONE_NUMBER}
+
+```shell
+curl -v -X POST \
+    -H "X-Auth-Token: {AUTH_TOKEN}" \
+    http://{SERVER}:8000/v2/accounts/{ACCOUNT_ID}/phone_numbers/fix/%2B15554445563
+```
+
+```json
+{
+    "auth_token": "{AUTH_TOKEN}",
+    "data": {
+        "_read_only": {
+            "created": 63635220353,
+            "features": [
+                "inbound_cnam",
+                "outbound_cnam"
+            ],
+            "features_available": [
+                "cnam",
+                "e911",
+                "port",
+                "prepend"
+            ],
+            "modified": 63635220353,
+            "state": "in_service",
+            "used_by": "callflow"
+        },
+        "cnam": {
+            "display_name": "My Main Num2",
+            "inbound_lookup": true
+        },
+        "features": [
+            "inbound_cnam",
+            "outbound_cnam"
+        ],
+        "id": "+15554445563",
+        "state": "in_service",
+        "ui_metadata": {
+            "origin": "common",
+            "ui": "monster-ui",
+            "version": "3.23"
+        },
+        "used_by": "callflow"
+    },
+    "request_id": "{REQUEST_ID}",
+    "revision": "{REVISION}",
+    "status": "success"
+}
+```
+
+
 #### Return which account a number belongs to
 
 > GET /v2/accounts/{ACCOUNT_ID}/phone_numbers/{PHONE_NUMBER}/identify
@@ -1031,6 +1224,22 @@ curl -v -X GET \
     "request_id": "{REQUEST_ID}",
     "revision": "{REVISION}",
     "status": "success"
+}
+```
+
+###### Number not in service or account disabled
+
+```json
+{
+    "auth_token": "{AUTH_TOKEN}",
+    "data": {
+        "account_id": "009deaaadc97b2ae693c6cc4920988e8",
+        "cause": "not_in_service"
+    },
+    "error": "400",
+    "message": "client error",
+    "request_id": "{REQUEST_ID}",
+    "status": "error"
 }
 ```
 
@@ -1338,14 +1547,14 @@ curl -v -X PUT \
 {
     "data": {
         "used_by": "callflow",
-        "id": "{{NUMBER}}",
+        "id": "{NUMBER}",
         "e911": {
-            "caller_name": "{{NAME}}",
-            "postal_code": "{{ZIP_CODE}}",
-            "street_address": "{{ADDRESS}}",
-            "extended_address": "{{EXTENDED}}",
-            "locality": "{{CITY}}",
-            "region": "{{STATE}}"
+            "caller_name": "{NAME}",
+            "postal_code": "{ZIP_CODE}",
+            "street_address": "{ADDRESS}",
+            "extended_address": "{EXTENDED}",
+            "locality": "{CITY}",
+            "region": "{STATE}"
         }
     }
 }
@@ -1361,12 +1570,12 @@ curl -v -X PUT \
         "address": {
             "invalid": {
                 "cause": {
-                    "caller_name": "{{NAME}}",
-                    "postal_code": "{{ZIP_CODE}}",
-                    "street_address": "{{ADDRESS}}",
-                    "extended_address": "{{EXTENDED}}",
-                    "locality": "{{CITY}}",
-                    "region": "{{STATE}}"
+                    "caller_name": "{NAME}",
+                    "postal_code": "{ZIP_CODE}",
+                    "street_address": "{ADDRESS}",
+                    "extended_address": "{EXTENDED}",
+                    "locality": "{CITY}",
+                    "region": "{STATE}"
                 },
                 "message": "Location is not geocoded"
             }
@@ -1385,24 +1594,24 @@ curl -v -X PUT \
         "multiple_choice": {
             "e911": {
                 "cause": {
-                    "postal_code": "{{ZIP_CODE}}",
-                    "street_address": "{{ADDRESS}}",
-                    "extended_address": "{{EXTENDED}}",
-                    "locality": "{{CITY}}",
-                    "region": "{{STATE}}"
+                    "postal_code": "{ZIP_CODE}",
+                    "street_address": "{ADDRESS}",
+                    "extended_address": "{EXTENDED}",
+                    "locality": "{CITY}",
+                    "region": "{STATE}"
                 },
                 "details": [{
-                    "postal_code": "{{ZIP_CODE}}",
-                    "street_address": "{{ADDRESS}}",
-                    "extended_address": "{{EXTENDED}}",
-                    "locality": "{{CITY}}",
-                    "region": "{{STATE}}"
+                    "postal_code": "{ZIP_CODE}",
+                    "street_address": "{ADDRESS}",
+                    "extended_address": "{EXTENDED}",
+                    "locality": "{CITY}",
+                    "region": "{STATE}"
                 }, {
-                    "postal_code": "{{ZIP_CODE}}",
-                    "street_address": "{{ADDRESS}}",
-                    "extended_address": "{{EXTENDED}}",
-                    "locality": "{{CITY}}",
-                    "region": "{{STATE}}"
+                    "postal_code": "{ZIP_CODE}",
+                    "street_address": "{ADDRESS}",
+                    "extended_address": "{EXTENDED}",
+                    "locality": "{CITY}",
+                    "region": "{STATE}"
                 }],
                 "message": "more than one address found"
             }
@@ -1420,7 +1629,7 @@ curl -v -X PUT \
 {
     "data": {
         "used_by": "callflow",
-        "id": "{{NUMBER}}",
+        "id": "{NUMBER}",
         "e911": {
             "street_address": "116 NATOMA ST",
             "extended_address": "APT 116",

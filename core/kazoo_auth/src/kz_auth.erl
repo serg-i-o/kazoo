@@ -76,7 +76,7 @@ authenticate(Token)
         _ -> {'error', 'authentication_failed'}
     end;
 authenticate(JObj) ->
-    Token = kz_auth_util:map_keys_to_atoms(kz_json:to_map(JObj)),
+    Token = kz_maps:keys_to_atoms(kz_json:to_map(JObj)),
     authenticate(Token#{original => JObj}).
 
 -spec authorize_token(map() | ne_binary()) -> {'ok', kz_json:object()} | {'error', any()}.
@@ -116,7 +116,7 @@ validate_claims(#{user_map := #{<<"pvt_account_id">> := AccountId
                     ],
             case kz_datamgr:open_cache_doc(kz_util:format_account_db(AccountId), OwnerId) of
                 {'ok', _Doc} -> {'ok', kz_json:set_values(Props, kz_json:from_map(Payload))};
-                _ -> {'error', {404, <<"mapped account does not exist">>}}
+                _ -> {'error', {403, <<"mapped account does not exist">>}}
             end;
         _OtherAccountId ->
             {'error', {401, <<"account_header_mismatch">>}}
@@ -148,10 +148,10 @@ validate_claims(#{user_map := #{<<"pvt_accounts">> := Accounts}, payload := Payl
                     {'ok', kz_json:set_values(Props, kz_json:from_map(Payload))};
                 'false' -> {'error', {401, <<"account header mismatch">>}}
             end;
-        _OtherAccountId -> {'error', {404, <<"no associated account_id">>}}
+        _OtherAccountId -> {'error', {403, <<"no associated account_id">>}}
     end;
 
-validate_claims(#{}, _Options) -> {'error', {404, <<"no associated account_id">>}}.
+validate_claims(#{}, _Options) -> {'error', {403, <<"no associated account_id">>}}.
 
 -spec ensure_claims(map()) -> {'ok', kz_json:object()} | {'error', any()}.
 ensure_claims(#{payload := Payload}) ->
@@ -160,12 +160,24 @@ ensure_claims(#{payload := Payload}) ->
 
 -spec include_claims(kz_proplist()) -> kz_proplist().
 include_claims(Claims) ->
+    Routines = [fun include_identity_sign/1
+               ,fun ensure_issuer/1
+               ],
+    lists:foldl(fun(Fun, Acc) -> Fun(Acc) end, Claims, Routines).
+
+-spec include_identity_sign(kz_proplist()) -> kz_proplist().
+include_identity_sign(Claims) ->
     case kz_auth_identity:sign(Claims) of
         {'ok', Signature} -> [{<<"identity_sig">>, kz_base64url:encode(Signature)} | Claims];
         _Else ->
             lager:debug("identity signing json token failed : ~p", [_Else]),
             Claims
     end.
+
+-spec ensure_issuer(kz_proplist()) -> kz_proplist().
+ensure_issuer(Claims) ->
+    Issuer = props:get_value(<<"iss">>, Claims, <<"kazoo">>),
+    props:set_value(<<"iss">>, Issuer, Claims).
 
 -spec authenticate_fold(map(), list()) -> map().
 authenticate_fold(Token, []) -> Token;

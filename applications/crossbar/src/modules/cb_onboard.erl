@@ -121,7 +121,7 @@ put(Context) ->
 %% Any errors will also be collected.
 %% @end
 %%--------------------------------------------------------------------
--spec create_extensions(kz_json:object(), cb_context:context(), {proplist(), kz_json:object()}) -> {proplist(), kz_json:object()}.
+-spec create_extensions(kz_json:object(), cb_context:context(), {kz_proplist(), kz_json:object()}) -> {kz_proplist(), kz_json:object()}.
 create_extensions(JObj, Context, Results) ->
     Extensions = kz_json:get_value(<<"extensions">>, JObj, []),
     create_extensions(Extensions, 1, Context, Results).
@@ -139,7 +139,7 @@ create_extensions([Exten|Extens], Iteration, Context, {PassAcc, FailAcc}) ->
         'true' ->
             create_extensions(Extens, Iteration + 1, Context, {[P|PassAcc], FailAcc});
         'false' ->
-            Failures = kz_json:set_value([<<"extensions">>, kz_util:to_binary(Iteration)], F, FailAcc),
+            Failures = kz_json:set_value([<<"extensions">>, kz_term:to_binary(Iteration)], F, FailAcc),
             create_extensions(Extens, Iteration + 1, Context, {[P|PassAcc], Failures})
     end.
 
@@ -151,8 +151,8 @@ create_extensions([Exten|Extens], Iteration, Context, {PassAcc, FailAcc}) ->
 %% json object.
 %% @end
 %%--------------------------------------------------------------------
--spec create_account(kz_json:object(), cb_context:context(), {proplist(), kz_json:object()}) ->
-                            {proplist(), kz_json:object()}.
+-spec create_account(kz_json:object(), cb_context:context(), {kz_proplist(), kz_json:object()}) ->
+                            {kz_proplist(), kz_json:object()}.
 create_account(JObj, Context, {Pass, Fail}) ->
     Account = kz_json:get_value(<<"account">>, JObj, kz_json:new()),
     Generators = [fun(J) -> kz_doc:set_id(J, kz_datamgr:get_uuid()) end
@@ -176,8 +176,8 @@ create_account(JObj, Context, {Pass, Fail}) ->
 %% json object.
 %% @end
 %%--------------------------------------------------------------------
--spec create_phone_numbers(kz_json:object(), cb_context:context(), {proplist(), kz_json:object()}) ->
-                                  {proplist(), kz_json:object()}.
+-spec create_phone_numbers(kz_json:object(), cb_context:context(), {kz_proplist(), kz_json:object()}) ->
+                                  {kz_proplist(), kz_json:object()}.
 create_phone_numbers(JObj, Context, Results) ->
     PhoneNumbers = kz_json:get_value(<<"phone_numbers">>, JObj),
     lists:foldr(fun(Number, R) ->
@@ -207,7 +207,7 @@ create_phone_number(Number, Properties, Context, {Pass, Fail}) ->
 %% json object.
 %% @end
 %%--------------------------------------------------------------------
--spec create_braintree_cards(kz_json:object(), cb_context:context(), {proplist(), kz_json:object()}) -> {proplist(), kz_json:object()}.
+-spec create_braintree_cards(kz_json:object(), cb_context:context(), {kz_proplist(), kz_json:object()}) -> {kz_proplist(), kz_json:object()}.
 create_braintree_cards(JObj, Context, {Pass, Fail}) ->
     Account = get_context_jobj(<<"accounts">>, Pass),
     case kz_doc:id(Account) of
@@ -245,8 +245,8 @@ create_braintree_cards(JObj, Context, {Pass, Fail}) ->
 %% json object.
 %% @end
 %%--------------------------------------------------------------------
--spec create_user(kz_json:object(), pos_integer(), cb_context:context(), {proplist(), kz_json:object()})
-                 -> {proplist(), kz_json:object()}.
+-spec create_user(kz_json:object(), pos_integer(), cb_context:context(), {kz_proplist(), kz_json:object()})
+                 -> {kz_proplist(), kz_json:object()}.
 create_user(JObj, Iteration, Context, {Pass, Fail}) ->
     User = kz_json:get_value(<<"user">>, JObj, kz_json:new()),
     Generators = [fun(J) -> kz_doc:set_id(J, kz_datamgr:get_uuid()) end
@@ -265,7 +265,7 @@ create_user(JObj, Iteration, Context, {Pass, Fail}) ->
                  ,fun(J) ->
                           case kz_json:get_ne_value(<<"last_name">>, J) of
                               'undefined' ->
-                                  kz_json:set_value(<<"last_name">>, kz_util:to_binary(Iteration), J);
+                                  kz_json:set_value(<<"last_name">>, kz_term:to_binary(Iteration), J);
                               _ -> J
                           end
                   end
@@ -297,8 +297,8 @@ create_user(JObj, Iteration, Context, {Pass, Fail}) ->
 %% json object.
 %% @end
 %%--------------------------------------------------------------------
--spec create_device(kz_json:object(), pos_integer(), cb_context:context(), {proplist(), kz_json:object()})
-                   -> {proplist(), kz_json:object()}.
+-spec create_device(kz_json:object(), pos_integer(), cb_context:context(), {kz_proplist(), kz_json:object()})
+                   -> {kz_proplist(), kz_json:object()}.
 create_device(JObj, Iteration, Context, {Pass, Fail}) ->
     Device = kz_json:get_value(<<"device">>, JObj, kz_json:new()),
     Generators = [fun(J) -> kz_doc:set_id(J, kz_datamgr:get_uuid()) end
@@ -314,7 +314,7 @@ create_device(JObj, Iteration, Context, {Pass, Fail}) ->
                               'undefined' ->
                                   User = get_context_jobj(<<"users">>, Pass),
                                   FirstName = kz_json:get_value(<<"first_name">>, User, <<"User">>),
-                                  LastName = kz_json:get_value(<<"last_name">>, User, kz_util:to_binary(Iteration)),
+                                  LastName = kz_json:get_value(<<"last_name">>, User, kz_term:to_binary(Iteration)),
                                   Name = list_to_binary([FirstName, " ", LastName, "'s Device"]),
                                   kz_json:set_value(<<"name">>, Name, J);
                               _ ->
@@ -325,7 +325,7 @@ create_device(JObj, Iteration, Context, {Pass, Fail}) ->
                           case kz_device:sip_username(J) of
                               'undefined' ->
                                   Strength = kapps_config:get_integer(?OB_CONFIG_CAT, <<"device_username_strength">>, 3),
-                                  kz_device:set_sip_username(J, list_to_binary(["user_", kz_util:rand_hex_binary(Strength)]));
+                                  kz_device:set_sip_username(J, list_to_binary(["user_", kz_binary:rand_hex(Strength)]));
                               _ ->
                                   J
                           end
@@ -334,7 +334,7 @@ create_device(JObj, Iteration, Context, {Pass, Fail}) ->
                           case kz_device:sip_password(J) of
                               'undefined' ->
                                   Strength = kapps_config:get_integer(?OB_CONFIG_CAT, <<"device_pwd_strength">>, 6),
-                                  kz_device:set_sip_password(J, kz_util:rand_hex_binary(Strength));
+                                  kz_device:set_sip_password(J, kz_binary:rand_hex(Strength));
                               _ ->
                                   J
                           end
@@ -356,8 +356,8 @@ create_device(JObj, Iteration, Context, {Pass, Fail}) ->
 %% json object.
 %% @end
 %%--------------------------------------------------------------------
--spec create_vmbox(kz_json:object(), pos_integer(), cb_context:context(), {proplist(), kz_json:object()})
-                  -> {proplist(), kz_json:object()}.
+-spec create_vmbox(kz_json:object(), pos_integer(), cb_context:context(), {kz_proplist(), kz_json:object()})
+                  -> {kz_proplist(), kz_json:object()}.
 create_vmbox(JObj, Iteration, Context, {Pass, Fail}) ->
     VMBox = kz_json:get_value(<<"vmbox">>, JObj, kz_json:new()),
     Generators = [fun(J) -> kz_doc:set_id(J, kz_datamgr:get_uuid()) end
@@ -372,7 +372,7 @@ create_vmbox(JObj, Iteration, Context, {Pass, Fail}) ->
                           case kz_json:get_ne_value(<<"mailbox">>, J) of
                               'undefined' ->
                                   StartExten = kapps_config:get_integer(?OB_CONFIG_CAT, <<"default_vm_start_exten">>, 3 * ?MILLISECONDS_IN_SECOND),
-                                  kz_json:set_value(<<"mailbox">>, kz_util:to_binary(StartExten + Iteration), J);
+                                  kz_json:set_value(<<"mailbox">>, kz_term:to_binary(StartExten + Iteration), J);
                               _ ->
                                   J
                           end
@@ -382,7 +382,7 @@ create_vmbox(JObj, Iteration, Context, {Pass, Fail}) ->
                               'undefined' ->
                                   User = get_context_jobj(<<"users">>, Pass),
                                   FirstName = kz_json:get_value(<<"first_name">>, User, <<"User">>),
-                                  LastName = kz_json:get_value(<<"last_name">>, User, kz_util:to_binary(Iteration)),
+                                  LastName = kz_json:get_value(<<"last_name">>, User, kz_term:to_binary(Iteration)),
                                   Name = list_to_binary([FirstName, " ", LastName, "'s Voicemail"]),
                                   kz_json:set_value(<<"name">>, Name, J);
                               _ ->
@@ -406,8 +406,8 @@ create_vmbox(JObj, Iteration, Context, {Pass, Fail}) ->
 %% to the error json object.
 %% @end
 %%--------------------------------------------------------------------
--spec create_exten_callflow(kz_json:object(), pos_integer(), cb_context:context(), {proplist(), kz_json:object()})
-                           -> {proplist(), kz_json:object()}.
+-spec create_exten_callflow(kz_json:object(), pos_integer(), cb_context:context(), {kz_proplist(), kz_json:object()})
+                           -> {kz_proplist(), kz_json:object()}.
 create_exten_callflow(JObj, Iteration, Context, {Pass, Fail}) ->
     Callflow = kz_json:get_value(<<"callflow">>, JObj, kz_json:new()),
     Generators = [fun(J) ->
@@ -422,13 +422,13 @@ create_exten_callflow(JObj, Iteration, Context, {Pass, Fail}) ->
                  ,fun(J) -> kz_doc:set_id(J, kz_datamgr:get_uuid()) end
                  ,fun(J) ->
                           case [Num || Num <- kz_json:get_ne_value(<<"numbers">>, J, [])
-                                           , not kz_util:is_empty(Num)]
+                                           , not kz_term:is_empty(Num)]
                           of
                               [] ->
                                   StartExten = kapps_config:get_integer(?OB_CONFIG_CAT
                                                                        ,<<"default_callflow_start_exten">>
                                                                        ,2 * ?MILLISECONDS_IN_SECOND),
-                                  kz_json:set_value(<<"numbers">>, [kz_util:to_binary(StartExten + Iteration)], J);
+                                  kz_json:set_value(<<"numbers">>, [kz_term:to_binary(StartExten + Iteration)], J);
                               Numbers -> kz_json:set_value(<<"numbers">>, Numbers, J)
                           end
                   end
@@ -449,8 +449,8 @@ create_exten_callflow(JObj, Iteration, Context, {Pass, Fail}) ->
 %% the objects.  Starts with the account :)
 %% @end
 %%--------------------------------------------------------------------
--spec populate_new_account(proplist(), cb_context:context()) -> cb_context:context().
--spec populate_new_account(proplist(), ne_binary(), kz_json:object()) -> kz_json:object().
+-spec populate_new_account(kz_proplist(), cb_context:context()) -> cb_context:context().
+-spec populate_new_account(kz_proplist(), ne_binary(), kz_json:object()) -> kz_json:object().
 
 populate_new_account(Props, _) ->
     Context = props:get_value(?KZ_ACCOUNTS_DB, Props),
@@ -529,16 +529,16 @@ populate_new_account([{Event, Context}|Props], AccountDb, Results) ->
     JObj = cb_context:doc(Context1),
     case cb_context:response(Context1) of
         {'ok', _} ->
-            case kz_json:get_value(<<"priv_level">>, JObj) of
-                <<"admin">> ->
+            case kzd_user:is_account_admin(JObj) of
+                'true' ->
                     populate_new_account(Props, AccountDb
                                         ,kz_json:set_value(<<"owner_id">>, kz_doc:id(JObj), Results));
-                _ ->
+                'false' ->
                     populate_new_account(Props, AccountDb, Results)
             end;
         {'error', {_, _, Errors}} ->
             populate_new_account(Props, AccountDb
-                                ,kz_json:set_value([<<"errors">>, Event, kz_util:to_binary(Iteration)], Errors, Results))
+                                ,kz_json:set_value([<<"errors">>, Event, kz_term:to_binary(Iteration)], Errors, Results))
     end.
 
 prepare_props(Props) ->
@@ -553,7 +553,7 @@ prepare_props(Props) ->
 %% context records for a specific key.
 %% @end
 %%--------------------------------------------------------------------
--spec get_context_jobj(ne_binary(), proplist()) -> kz_json:object().
+-spec get_context_jobj(ne_binary(), kz_proplist()) -> kz_json:object().
 get_context_jobj(Key, Pass) ->
     case props:get_value(Key, Pass) of
         Context when is_tuple(Context) -> cb_context:doc(Context);
@@ -573,11 +573,12 @@ create_response(Context) ->
         'undefined' ->
             crossbar_util:response_invalid_data(JObj, Context);
         AccountId ->
+            TS = kz_time:current_tstamp(),
             Token = [{<<"account_id">>, AccountId}
                     ,{<<"owner_id">>, kz_json:get_value(<<"owner_id">>, JObj)}
-                    ,{<<"created">>, calendar:datetime_to_gregorian_seconds(calendar:universal_time())}
-                    ,{<<"modified">>, calendar:datetime_to_gregorian_seconds(calendar:universal_time())}
-                    ,{<<"method">>, kz_util:to_binary(?MODULE)}
+                    ,{<<"created">>, TS}
+                    ,{<<"modified">>, TS}
+                    ,{<<"method">>, kz_term:to_binary(?MODULE)}
                     ],
             case kz_datamgr:save_doc(?KZ_TOKEN_DB, kz_json:from_list(Token)) of
                 {'ok', Doc} ->
@@ -608,15 +609,15 @@ notfy_new_account(JObj) ->
              ,{<<"Account-DB">>, kz_doc:account_db(JObj)}
               | kz_api:default_headers(?APP_VERSION, ?APP_NAME)
              ],
-    kapi_notifications:publish_new_account(Notify).
+    kapps_notify_publisher:cast(Notify, fun kapi_notifications:publish_new_account/1).
 
 -spec generate_username(api_binary(), api_binary(), api_binary()) ->
                                ne_binary().
 generate_username('undefined', 'undefined', _) ->
-    kz_util:rand_hex_binary(3);
+    kz_binary:rand_hex(3);
 generate_username('undefined', _, 'undefined') ->
-    kz_util:rand_hex_binary(3);
+    kz_binary:rand_hex(3);
 generate_username('undefined', <<FirstLetter:1/binary, _/binary>>, LastName) ->
-    <<FirstLetter/binary, (kz_util:to_binary(LastName))/binary>>;
+    <<FirstLetter/binary, (kz_term:to_binary(LastName))/binary>>;
 generate_username(Email, _, _) ->
     Email.

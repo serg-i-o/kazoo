@@ -1,21 +1,25 @@
 {
-    "$schema": "http://json-schema.org/draft-03/schema#",
+    "$schema": "http://json-schema.org/draft-04/schema#",
     "_id": "callflows.set_variable",
     "description": "Validator for the set_variable callflow's data object",
     "properties": {
         "channel": {
             "default": "a",
-            "description": "",
+            "description": "Which channel to set the variable on",
+            "enum": [
+                "a",
+                "both"
+            ],
             "type": "string"
         },
         "value": {
-            "description": "",
+            "description": "The value to set 'variable'",
             "type": "string"
         },
         "variable": {
-            "description": ""
+            "description": "The variable name to set on the leg(s)",
+            "type": "string"
         }
     },
-    "required": true,
     "type": "object"
 }

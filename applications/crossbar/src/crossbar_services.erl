@@ -122,7 +122,7 @@ extract_item_from_category(CategoryKey, ItemKey, ItemJObj, Acc) ->
                          ,kz_transaction:transactions()
                          ,integer()) -> kz_transaction:transactions().
 create_transactions(Context, Item, Acc) ->
-    Quantity = kz_json:get_integer_value(<<"quantity">>, Item, 0),
+    Quantity = kz_json:get_integer_value(<<"activate_quantity">>, Item, 0),
     create_transactions(Context, Item, Acc, Quantity).
 
 create_transactions(_Context, _Item, Acc, 0) -> Acc;
@@ -133,18 +133,12 @@ create_transactions(Context, Item, Acc, Quantity) ->
     Routines = [fun set_meta_data/3
                ,fun set_event/3
                ],
-    Transaction =
-        lists:foldl(
-          fun(F, T) -> F(Context, Item, T) end
-                   ,kz_transaction:debit(AccountId, Units)
-                   ,Routines
-         ),
-    [Transaction|Acc].
+    App = fun(F, T) -> F(Context, Item, T) end,
+    Debit = kz_transaction:debit(AccountId, Units),
+    [lists:foldl(App, Debit, Routines) | Acc].
 
--spec set_meta_data(cb_context:context()
-                   ,kz_json:object()
-                   ,kz_transaction:transaction()
-                   ) -> kz_transaction:transaction().
+-spec set_meta_data(cb_context:context(), kz_json:object(), kz_transaction:transaction()) ->
+                           kz_transaction:transaction().
 set_meta_data(Context, Item, Transaction) ->
     MetaData =
         kz_json:from_list(
@@ -154,8 +148,8 @@ set_meta_data(Context, Item, Transaction) ->
           ]),
     kz_transaction:set_metadata(MetaData, Transaction).
 
--spec set_event(cb_context:context() ,kz_json:object()
-               ,kz_transaction:transaction()) -> kz_transaction:transaction().
+-spec set_event(cb_context:context(), kz_json:object(), kz_transaction:transaction()) ->
+                       kz_transaction:transaction().
 set_event(_Context, Item, Transaction) ->
     ItemValue = kz_json:get_value(<<"item">>, Item, <<>>),
     Event = <<"Activation charges for ", ItemValue/binary>>,
@@ -179,12 +173,11 @@ dry_run(Services) ->
 calc_service_updates(Context, <<"device">>) ->
     DeviceType = kz_device:device_type(cb_context:doc(Context)),
     Services = fetch_service(Context),
-
     kz_service_devices:reconcile(Services, DeviceType);
 calc_service_updates(Context, <<"user">>) ->
     Services = fetch_service(Context),
     JObj = cb_context:doc(Context),
-    UserType = kz_json:get_value(<<"priv_level">>, JObj),
+    UserType = kzd_user:priv_level(JObj),
     kz_service_users:reconcile(Services, UserType);
 calc_service_updates(Context, <<"limits">>) ->
     Services = fetch_service(Context),
@@ -199,7 +192,7 @@ calc_service_updates(Context, <<"limits">>) ->
 calc_service_updates(Context, <<"port_request">>) ->
     PortNumbers = kz_json:get_value(<<"numbers">>, cb_context:doc(Context)),
     PhoneNumbers =
-        [knm_phone_number:set_feature(create_phone_number(Num, kz_json:values(Num, PortNumbers)), ?FEATURE_PORT, kz_json:new())
+        [create_port_number(Num, kz_json:values(Num, PortNumbers))
          || Num <- kz_json:get_keys(PortNumbers)
         ],
     kz_service_phone_numbers:reconcile(fetch_service(Context), PhoneNumbers);
@@ -234,15 +227,13 @@ calc_service_updates(_Context, _Type, _Props) ->
     lager:warning("unknown type ~p, cannot execute dry run", [_Type]),
     'undefined'.
 
--spec create_phone_number(ne_binary(), list() | kz_json:object()) ->
-                                 knm_phone_number:knm_phone_number().
-create_phone_number(Number, Features) ->
-    JObj = kz_json:from_list(
-             [{<<"_id">>, Number}
-             ,{<<"features">>, Features}
-             ]
-            ),
-    knm_phone_number:from_json(JObj).
+-spec create_port_number(ne_binary(), ne_binaries()) -> knm_phone_number:knm_phone_number().
+create_port_number(Number, Features) ->
+    JObj = kz_json:from_list([{<<"_id">>, Number}
+                             ,{<<"features">>, Features}
+                             ]),
+    PN = knm_phone_number:from_json_with_options(JObj, []),
+    knm_phone_number:set_feature(PN, ?FEATURE_PORT, kz_json:new()).
 
 %%--------------------------------------------------------------------
 %% @private
@@ -260,29 +251,28 @@ reconcile(Context) ->
     of
         'false' -> Context;
         'true' ->
-            lager:debug("maybe reconciling services for account ~s"
-                       ,[cb_context:account_id(Context)]
-                       ),
-            _ = kz_services:save_as_dirty(cb_context:account_id(Context)),
+            AccountId = cb_context:account_id(Context),
+            lager:debug("maybe reconciling services for account ~s", [AccountId]),
+            Services = kz_services:reconcile_only(AccountId),
+            _ = kz_services:save_as_dirty(Services),
             Context
     end.
 
--spec base_audit_log(cb_context:context(), kz_services:services()) ->
-                            kz_json:object().
+-spec base_audit_log(cb_context:context(), kz_services:services()) -> kz_json:object().
 base_audit_log(Context, Services) ->
+    AccountId = cb_context:account_id(Context),
     AccountJObj = cb_context:account_doc(Context),
-    Tree = kz_account:tree(AccountJObj) ++ [cb_context:account_id(Context)],
+    Tree = kz_account:tree(AccountJObj) ++ [AccountId],
 
     lists:foldl(fun base_audit_log_fold/2
                ,kzd_audit_log:new()
                ,[{fun kzd_audit_log:set_tree/2, Tree}
-                ,{fun kzd_audit_log:set_authenticating_user/2, base_auth_user(Context)}
+                ,{fun kzd_audit_log:set_authenticating_user/2, base_auth_user_info(Context)}
                 ,{fun kzd_audit_log:set_audit_account/3
-                 ,cb_context:account_id(Context)
+                 ,AccountId
                  ,base_audit_account(Context, Services)
                  }
-                ]
-               ).
+                ]).
 
 -type audit_log_fun_2() :: {fun((kzd_audit_log:doc(), Term) -> kzd_audit_log:doc()), Term}.
 -type audit_log_fun_3() :: {fun((kzd_audit_log:doc(), Term1, Term2) -> kzd_audit_log:doc()), Term1, Term2}.
@@ -305,9 +295,10 @@ base_audit_account(Context, Services) ->
         ]
        )).
 
--spec base_auth_user(cb_context:context()) -> kz_json:object().
-base_auth_user(Context) ->
+-spec base_auth_user_info(cb_context:context()) -> kz_json:object().
+base_auth_user_info(Context) ->
     AccountJObj = cb_context:auth_account_doc(Context),
+    AuthDoc = cb_context:auth_doc(Context),
     kz_json:from_list(
       props:filter_empty(
         [{<<"account_id">>, kz_doc:account_id(AccountJObj)}
@@ -316,6 +307,7 @@ base_auth_user(Context) ->
         ,{<<"realm">>, kz_account:realm(AccountJObj)}
         ,{<<"language">>, kz_account:language(AccountJObj)}
         ,{<<"timezone">>, kz_account:timezone(AccountJObj)}
+        ,{<<"auth_user_id">>, kz_json:get_value(<<"owner_id">>, AuthDoc)}
         ]
       )
      ).
@@ -349,8 +341,8 @@ maybe_notify_reseller(Context, Services, AuditLog) ->
         'false' ->
             Props = [{<<"Account-ID">>, cb_context:account_id(Context)}
                     ,{<<"Audit-Log">>, AuditLog}
+                    ,{<<"Time-Stamp">>, kz_time:current_tstamp()}
                      | kz_api:default_headers(?APP_NAME, ?APP_VERSION)
                     ],
-            kz_amqp_worker:cast(Props, fun kapi_notifications:publish_service_added/1),
-            lager:debug("published service_added to reseller account ~s~n", [ResellerId])
+            kapps_notify_publisher:cast(Props, fun kapi_notifications:publish_service_added/1)
   end.

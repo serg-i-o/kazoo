@@ -154,6 +154,7 @@
                            #'exchange.declare'{} |
                            #'confirm.select'{} |
                            #'channel.flow'{} | #'channel.flow_ok'{} |
+                           basic_publish() |
                            '_' | 'undefined'.
 -type kz_amqp_commands() :: [kz_amqp_command()].
 
@@ -178,7 +179,7 @@
 -type kz_amqp_type() :: 'sticky' | 'float'.
 
 -record(kz_amqp_assignment, {timestamp = os:timestamp() :: kz_now() | '_'
-                            ,consumer :: pid() | '$2' | '_'
+                            ,consumer :: api_pid() | '$2' | '_'
                             ,consumer_ref :: api_reference() | '_'
                             ,type = 'float' :: kz_amqp_type() | 'undefined' | '_'
                             ,channel :: api_pid() | '$1' | '_'
@@ -197,9 +198,9 @@
 
 -record(kz_amqp_connection, {broker :: ne_binary() | '_'
                             ,params :: #'amqp_params_direct'{} | #'amqp_params_network'{} | '_'
-                            ,manager :: pid() | '_'
-                            ,connection :: pid() | '_'
-                            ,connection_ref :: reference() | '_'
+                            ,manager :: api_pid() | '_'
+                            ,connection :: api_pid() | '_'
+                            ,connection_ref :: api_reference() | '_'
                             ,channel :: api_pid() | '$1' | '_'
                             ,channel_ref :: api_reference() | '$1' | '_'
                             ,reconnect_ref :: api_reference() | '_'
@@ -228,6 +229,8 @@
 -type basic_publish() :: #'basic.publish'{}.
 -type basic_deliver() :: #'basic.deliver'{}.
 -type amqp_msg() :: #'amqp_msg'{}.
+-type amqp_basic() :: #'P_basic'{}.
+-type amqp_deliver() :: {basic_deliver(), amqp_msg()}.
 
 -define(AMQP_HIDDEN_TAG, <<"hidden">>).
 

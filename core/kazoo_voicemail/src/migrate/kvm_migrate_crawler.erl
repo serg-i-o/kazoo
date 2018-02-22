@@ -48,9 +48,9 @@
                ,total_account_failed = 0 :: non_neg_integer()
                ,failed_accounts = [] :: ne_binaries()
                ,calling_process = 'undefined' :: api_pid()
-               ,timer_ref :: reference()
-               ,retention_seconds :: gregorian_seconds()
-               ,account_queue :: queue:queue()
+               ,timer_ref :: api_reference()
+               ,retention_seconds = kvm_util:retention_seconds() :: gregorian_seconds()
+               ,account_queue :: queue:queue() | 'undefined'
                }).
 -type state() :: #state{}.
 
@@ -138,10 +138,10 @@ init(Pid) ->
             {'stop', #state{}};
         Ids ->
             ?WARNING("################### BEGINNING MIGRATING VOICEMAIL FOR ~b ACCOUNTS ###################~n~n", [length(Ids)]),
-            AccountIds = kz_util:shuffle_list(Ids),
+            AccountIds = kz_term:shuffle_list(Ids),
             %% first start migrating messages in retention durations
             RetentionSeconds = kvm_util:retention_seconds(),
-            Queue = populate_queue(AccountIds, kz_util:current_tstamp(), RetentionSeconds),
+            Queue = populate_queue(AccountIds, kz_time:current_tstamp(), RetentionSeconds),
             {'ok', #state{account_ids = AccountIds
                          ,total_account = length(AccountIds)
                          ,account_queue = Queue

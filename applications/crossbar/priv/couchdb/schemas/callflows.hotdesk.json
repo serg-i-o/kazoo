@@ -1,16 +1,26 @@
 {
-    "$schema": "http://json-schema.org/draft-03/schema#",
+    "$schema": "http://json-schema.org/draft-04/schema#",
     "_id": "callflows.hotdesk",
     "description": "Validator for the hotdesk callflow's data object",
     "properties": {
         "action": {
-            "description": ""
+            "description": "The action to take for hotdesking",
+            "enum": [
+                "logout",
+                "login",
+                "toggle",
+                "bridge"
+            ],
+            "type": "string"
+        },
+        "id": {
+            "description": "Hotdesk ID",
+            "type": "string"
         },
         "interdigit_timeout": {
-            "description": "",
+            "description": "How long, in seconds, to wait between keypresses",
             "type": "integer"
         }
     },
-    "required": true,
     "type": "object"
 }

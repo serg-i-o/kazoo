@@ -11,9 +11,10 @@
 -module(sup).
 
 -export([main/1]).
+-export([in_kazoo/4]).
 
--include_lib("kazoo/include/kz_types.hrl").
--include_lib("kazoo/include/kz_log.hrl").
+-include_lib("kazoo_stdlib/include/kz_types.hrl").
+-include_lib("kazoo_stdlib/include/kz_log.hrl").
 
 -define(MAX_CHARS, round(math:pow(2012, 80))).
 
@@ -27,7 +28,8 @@ main(CommandLineArgs) ->
 main(CommandLineArgs, Loops) ->
     _ = os:cmd("epmd -daemon"),
     _ = net_kernel:stop(),
-    case net_kernel:start([my_name(), long_or_short_name()]) of
+    SUPName = my_name(),
+    case net_kernel:start([SUPName, long_or_short_name()]) of
         {'error', _} when Loops < 3 ->
             stderr("Unable to start command bridge network kernel, try again", []),
             halt(1);
@@ -37,45 +39,76 @@ main(CommandLineArgs, Loops) ->
             {'ok', Options, Args} = parse_args(CommandLineArgs),
             lists:member('help', Options)
                 andalso print_help(),
-            Verbose = props:get_value('verbose', Options) =/= 'undefined',
-            Target = get_target(Options, Verbose),
+            IsVerbose = props:get_value('verbose', Options) =/= 'undefined',
+            Target = get_target(Options, IsVerbose),
             Module =
                 case props:get_value('module', Options) of
                     'undefined' -> print_invalid_cli_args();
                     M -> list_to_atom(M)
                 end,
+            IsMaintenanceCommand = lists:suffix("_maintenance", props:get_value('module', Options)),
             Function =
                 case props:get_value('function', Options) of
                     'undefined' -> print_invalid_cli_args();
                     F -> list_to_atom(F)
                 end,
+            Arguments = [list_to_binary(Arg) || Arg <- Args],
             Timeout = case props:get_value('timeout', Options) of 0 -> 'infinity'; T -> T * 1000 end,
-            Verbose
+            IsVerbose
                 andalso stdout("Running ~s:~s(~s)", [Module, Function, string:join(Args, ", ")]),
-            case rpc:call(Target, Module, Function, [list_to_binary(Arg) || Arg <- Args], Timeout) of
+
+            case rpc:call(Target, ?MODULE, in_kazoo, [SUPName, Module, Function, Arguments], Timeout) of
                 {'badrpc', {'EXIT',{'undef', _}}} ->
                     print_invalid_cli_args();
+                {badrpc, {'EXIT', {timeout_value,[{Module,Function,_,_}|_]}}} ->
+                    stderr("Command failed: timeout~n", []),
+                    halt(4);
                 {'badrpc', Reason} ->
                     String = io_lib:print(Reason, 1, ?MAX_CHARS, -1),
-                    stderr("Command failed: ~s", [String]),
-                    halt(1);
+                    stderr("Command failed: ~s~n", [String]),
+                    halt(3);
+                no_return when IsMaintenanceCommand ->
+                    halt(0);
+                Result when IsMaintenanceCommand ->
+                    print_result(Result, IsVerbose),
+                    Code = case ok =:= Result of
+                               true -> 0;
+                               false -> 2
+                           end,
+                    halt(Code);
                 'no_return' ->
                     halt(0);
-                Result when Verbose ->
-                    String = io_lib:print(Result, 1, ?MAX_CHARS, -1),
-                    stdout("Result: ~s", [String]),
-                    halt(0);
                 Result ->
-                    String = io_lib:print(Result, 1, ?MAX_CHARS, -1),
-                    stdout("~s", [String]),
+                    print_result(Result, IsVerbose),
                     halt(0)
             end
     end.
 
-
 %%% Internals
 
--spec get_target(proplist(), boolean()) -> atom().
+-spec in_kazoo(atom(), module(), atom(), binaries()) -> no_return().
+in_kazoo(SUPName, M, F, As) ->
+    kz_util:put_callid(SUPName),
+    lager:notice("~s: ~s ~s ~s", [?MODULE, M, F, kz_util:iolist_join($,, As)]),
+    R = apply(M, F, As),
+    lager:notice("~s result: ~p", [?MODULE, R]),
+    R.
+
+-spec print_result(any(), boolean()) -> ok.
+print_result(Result, true) ->
+    String = io_lib:print(Result, 1, ?MAX_CHARS, -1),
+    try stdout("Result: ~s", [String])
+    catch
+        erro:badarg -> stdout("Result: ~p", [String])
+    end;
+print_result(Result, false) ->
+    String = io_lib:print(Result, 1, ?MAX_CHARS, -1),
+    try stdout("~s", [String])
+    catch
+        erro:badarg -> stdout("~p", [String])
+    end.
+
+-spec get_target(kz_proplist(), boolean()) -> atom().
 get_target(Options, Verbose) ->
     Node = props:get_value('node', Options),
     Host = get_host(),
@@ -91,7 +124,7 @@ get_target(Options, Verbose) ->
             print_ping_failed(Target, Cookie)
     end.
 
--spec get_cookie(proplist(), atom()) -> atom().
+-spec get_cookie(kz_proplist(), atom()) -> atom().
 get_cookie(Options, Node) ->
     CookieStr =
         case { props:get_value('cookie', Options, "")
@@ -102,7 +135,7 @@ get_cookie(Options, Node) ->
             {_, [C]} -> C;
             {"", []} -> print_no_setcookie()
         end,
-    Cookie = kz_util:to_atom(CookieStr, 'true'),
+    Cookie = kz_term:to_atom(CookieStr, 'true'),
     'true' = erlang:set_cookie(node(), Cookie),
     Cookie.
 
@@ -119,9 +152,10 @@ get_host() ->
             print_unresolvable_host(Host)
     end.
 
--spec my_name() -> atom().
+-spec my_name() -> node().
 my_name() ->
-    list_to_atom("sup_" ++ os:getpid() ++ "@" ++ localhost()).
+    Name = iolist_to_binary(["sup_", kz_binary:rand_hex(2), $@, localhost()]),
+    kz_term:to_atom(Name, true).
 
 -spec localhost() -> nonempty_string().
 localhost() ->
@@ -140,7 +174,7 @@ print_invalid_cli_args() ->
     stderr("Invalid command or wrong number of arguments, please try again", []),
     halt(1).
 
--spec parse_args(string()) -> {'ok', proplist(), list()}.
+-spec parse_args(string()) -> {'ok', kz_proplist(), list()}.
 parse_args(CommandLineArgs) ->
     case getopt:parse(option_spec_list(), CommandLineArgs) of
         {'ok', {Options, Args}} when is_list(Options) ->

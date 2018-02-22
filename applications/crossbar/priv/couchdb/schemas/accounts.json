@@ -3,6 +3,21 @@
     "_id": "accounts",
     "description": "Accounts represent tenants or customers on the system. Each account represents an individual dataset or sandbox that only one tenant can access. The data set is architecturally independent from other tenants.",
     "properties": {
+        "call_recording": {
+            "additionalProperties": false,
+            "description": "call recording configuration",
+            "properties": {
+                "account": {
+                    "$ref": "call_recording",
+                    "type": "object"
+                },
+                "endpoint": {
+                    "$ref": "call_recording",
+                    "type": "object"
+                }
+            },
+            "type": "object"
+        },
         "call_restriction": {
             "additionalProperties": {
                 "properties": {
@@ -50,8 +65,11 @@
             "description": "Determines if the account is currently enabled",
             "type": "boolean"
         },
+        "formatters": {
+            "$ref": "formatters",
+            "type": "object"
+        },
         "language": {
-            "default": "en-us",
             "description": "The language for this account",
             "type": "string"
         },
@@ -94,10 +112,9 @@
         },
         "realm": {
             "description": "The realm of the account, ie: 'account1.2600hz.com'",
-            "format": "uri",
             "maxLength": 253,
             "minLength": 4,
-            "pattern": "^([.\\w_-]+)$",
+            "pattern": "^[.\\w_-]+$",
             "type": "string"
         },
         "ringtones": {

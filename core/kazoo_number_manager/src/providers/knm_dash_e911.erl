@@ -93,22 +93,26 @@ feature(Number) ->
 %% @end
 %%--------------------------------------------------------------------
 -spec maybe_update_e911(knm_number:knm_number()) -> knm_number:knm_number().
-maybe_update_e911(Number) ->
-    CurrentE911 = feature(Number),
-    E911 = kz_json:get_ne_value(?FEATURE_E911, knm_phone_number:doc(knm_number:phone_number(Number))),
+maybe_update_e911(N) ->
+    PN = knm_number:phone_number(N),
+    CurrentE911 = feature(N),
+    E911 = kz_json:get_ne_value(?FEATURE_E911, knm_phone_number:doc(PN)),
     NotChanged = kz_json:are_equal(CurrentE911, E911),
-    case kz_util:is_empty(E911) of
+    case kz_term:is_empty(E911) of
         'true' ->
             lager:debug("information has been removed, updating upstream"),
-            _ = remove_number(Number),
-            knm_services:deactivate_feature(Number, ?FEATURE_E911);
+            _ = remove_number(N),
+            knm_services:deactivate_feature(N, ?FEATURE_E911);
         'false' when NotChanged  ->
-            Number;
+            N;
         'false' ->
             lager:debug("information has been changed: ~s", [kz_json:encode(E911)]),
-            _NewFeature = maybe_update_e911(Number, E911),
-            lager:debug("using address ~p", [_NewFeature]),
-            knm_services:activate_feature(Number, {?FEATURE_E911, E911})
+            NewE911 = maybe_update_e911(N, E911),
+            lager:debug("using address ~p", [NewE911]),
+            NewDoc = kz_json:set_value(?FEATURE_E911, NewE911, knm_phone_number:doc(PN)),
+            NewPN = knm_phone_number:reset_doc(PN, NewDoc),
+            NewN = knm_number:set_phone_number(N, NewPN),
+            knm_services:activate_feature(NewN, {?FEATURE_E911, NewE911})
     end.
 
 -spec maybe_update_e911(knm_number:knm_number(), kz_json:object()) -> kz_json:object().
@@ -120,7 +124,7 @@ maybe_update_e911(Number, Address) ->
             knm_errors:unspecified(E, Number);
         {'invalid', Reason}->
             lager:error("error while checking location ~p", [Reason]),
-            Error = <<Reason/binary, " (", Address/binary, ")">>,
+            Error = <<Reason/binary, " (", (kz_json:encode(Address))/binary, ")">>,
             knm_errors:invalid(Number, Error);
         {'provisioned', _} ->
             lager:debug("location seems already provisioned"),
@@ -197,14 +201,14 @@ provision_geocoded(E911) ->
 is_valid_location(Location) ->
     case emergency_provisioning_request('validateLocation', Location) of
         {'ok', Response} -> parse_response(Response);
-        {'error', Reason} -> {'error', kz_util:to_binary(Reason)}
+        {'error', Reason} -> {'error', kz_term:to_binary(Reason)}
     end.
 
 %% @private
 -spec parse_response(xml_el()) -> location_response().
 -spec parse_response(ne_binary(), xml_el()) -> location_response().
 parse_response(Response) ->
-    StatusCode = kz_util:get_xml_value("//Location/status/code/text()", Response),
+    StatusCode = kz_xml:get_value("//Location/status/code/text()", Response),
     parse_response(StatusCode, Response).
 
 parse_response(<<"GEOCODED">>, Response) ->
@@ -212,11 +216,11 @@ parse_response(<<"GEOCODED">>, Response) ->
 parse_response(<<"PROVISIONED">>, Response) ->
     {'provisioned', location_xml_to_json_address(xmerl_xpath:string("//Location", Response))};
 parse_response(<<"INVALID">>, Response) ->
-    {'invalid', kz_util:get_xml_value("//Location/status/description/text()", Response)};
+    {'invalid', kz_xml:get_value("//Location/status/description/text()", Response)};
 parse_response(<<"ERROR">>, Response) ->
-    {'error', kz_util:get_xml_value("//Location/status/description/text()", Response)};
+    {'error', kz_xml:get_value("//Location/status/description/text()", Response)};
 parse_response(Else, _) ->
-    {'error', kz_util:to_binary(Else)}.
+    {'error', kz_term:to_binary(Else)}.
 
 %%--------------------------------------------------------------------
 %% @private
@@ -229,15 +233,15 @@ parse_response(Else, _) ->
                           {'provisioned', kz_json:object()} |
                           {'error', binary()}.
 add_location(Number, Location, CallerName) ->
-    Props = [{'uri', [{'uri', [kz_util:to_list(<<"tel:", (knm_converters:to_1npan(Number))/binary>>)]}
-                     ,{'callername', [kz_util:to_list(CallerName)]}
+    Props = [{'uri', [{'uri', [kz_term:to_list(<<"tel:", (knm_converters:to_1npan(Number))/binary>>)]}
+                     ,{'callername', [kz_term:to_list(CallerName)]}
                      ]
              }
              | Location
             ],
     case emergency_provisioning_request('addLocation', Props) of
         {'ok', Response} -> parse_response(Response);
-        {'error', Reason} -> {'error', kz_util:to_binary(Reason)}
+        {'error', Reason} -> {'error', kz_term:to_binary(Reason)}
     end.
 
 %%--------------------------------------------------------------------
@@ -248,11 +252,11 @@ add_location(Number, Location, CallerName) ->
 %%--------------------------------------------------------------------
 -spec provision_location(ne_binary()) -> api_binary().
 provision_location(LocationId) ->
-    Props = [{'locationid', [kz_util:to_list(LocationId)]}],
+    Props = [{'locationid', [kz_term:to_list(LocationId)]}],
     case emergency_provisioning_request('provisionLocation', Props) of
         {'error', _} -> 'undefined';
         {'ok', Response} ->
-            kz_util:get_xml_value("//LocationStatus/code/text()", Response)
+            kz_xml:get_value("//LocationStatus/code/text()", Response)
     end.
 
 %%--------------------------------------------------------------------
@@ -265,7 +269,7 @@ provision_location(LocationId) ->
 remove_number(Number) ->
     Num = knm_phone_number:number(knm_number:phone_number(Number)),
     lager:debug("removing from upstream '~s'", [Num]),
-    Props = [{'uri', [kz_util:to_list(<<"tel:", (knm_converters:to_1npan(Num))/binary>>)]}],
+    Props = [{'uri', [kz_term:to_list(<<"tel:", (knm_converters:to_1npan(Num))/binary>>)]}],
     case emergency_provisioning_request('removeURI', Props) of
         {'error', 'server_error'} ->
             lager:debug("removed number from upstream"),
@@ -274,7 +278,7 @@ remove_number(Number) ->
             lager:debug("removed number from upstream: ~p", [_E]),
             <<"REMOVED">>;
         {'ok', Response} ->
-            case kz_util:get_xml_value("//URIStatus/code/text()", Response) of
+            case kz_xml:get_value("//URIStatus/code/text()", Response) of
                 <<"REMOVED">> = R ->
                     lager:debug("removed number from upstream"),
                     R;
@@ -307,7 +311,7 @@ remove_number(Number) ->
                                             {'ok', xml_el()} |
                                             {'error', emergency_provisioning_error()}.
 emergency_provisioning_request(Verb, Props) ->
-    URL = list_to_binary([?EMERG_URL, "/", kz_util:to_lower_binary(Verb)]),
+    URL = list_to_binary([?EMERG_URL, "/", kz_term:to_lower_binary(Verb)]),
     Body = unicode:characters_to_binary(
              xmerl:export_simple([{Verb, Props}]
                                 ,'xmerl_xml'
@@ -325,7 +329,7 @@ emergency_provisioning_request(Verb, Props) ->
                   ],
     lager:debug("making ~s request to upstream ~s", [Verb, URL]),
     ?DEBUG("Request:~n~s ~s~n~s~n", ['post', URL, Body]),
-    case kz_http:post(kz_util:to_list(URL), Headers, Body, HTTPOptions) of
+    case kz_http:post(kz_term:to_list(URL), Headers, Body, HTTPOptions) of
         {'ok', 401, _, _Response} ->
             ?DEBUG("Response:~n401~n~s~n", [_Response]),
             lager:debug("request error: 401 (unauthenticated)"),
@@ -349,7 +353,7 @@ emergency_provisioning_request(Verb, Props) ->
         {'ok', Code, _, Response} ->
             ?DEBUG("Response:~n~p~n~s~n", [Code, Response]),
             lager:debug("received response from upstream"),
-            try xmerl_scan:string(kz_util:to_list(Response)) of
+            try xmerl_scan:string(kz_term:to_list(Response)) of
                 {Xml, _} -> {'ok', Xml}
             catch
                 _:R ->
@@ -400,24 +404,23 @@ location_xml_to_json_address([Xml]) ->
 location_xml_to_json_address(Xml) when is_list(Xml) ->
     [location_xml_to_json_address(X) || X <- Xml];
 location_xml_to_json_address(Xml) ->
-    Props =
-        [{?E911_STREET1, kz_util:get_xml_value("address1/text()", Xml)}
-        ,{?E911_STREET2, kz_util:get_xml_value("address2/text()", Xml)}
-        ,{<<"activated_time">>, kz_util:get_xml_value("activated_time/text()", Xml)}
-        ,{?E911_NAME, kz_util:get_xml_value("callername/text()", Xml)}
-        ,{<<"comments">>, kz_util:get_xml_value("comments/text()", Xml)}
-        ,{?E911_CITY, kz_util:get_xml_value("community/text()", Xml)}
-        ,{<<"order_id">>, kz_util:get_xml_value("customerorderid/text()", Xml)}
-        ,{<<"latitude">>, kz_util:get_xml_value("latitude/text()", Xml)}
-        ,{<<"longitude">>, kz_util:get_xml_value("longitude/text()", Xml)}
-        ,{<<"location_id">>, kz_util:get_xml_value("locationid/text()", Xml)}
-        ,{<<"plus_four">>, kz_util:get_xml_value("plusfour/text()", Xml)}
-        ,{?E911_ZIP, kz_util:get_xml_value("postalcode/text()", Xml)}
-        ,{?E911_STATE, kz_util:get_xml_value("state/text()", Xml)}
-        ,{<<"status">>, kz_util:get_xml_value("status/code/text()", Xml)}
-        ,{<<"legacy_data">>, legacy_data_xml_to_json(xmerl_xpath:string("legacydata", Xml))}
-        ],
-    kz_json:from_list(props:filter_undefined(Props)).
+    kz_json:from_list(
+      [{?E911_STREET1, kz_xml:get_value("address1/text()", Xml)}
+      ,{?E911_STREET2, kz_xml:get_value("address2/text()", Xml)}
+      ,{<<"activated_time">>, kz_xml:get_value("activated_time/text()", Xml)}
+      ,{?E911_NAME, kz_xml:get_value("callername/text()", Xml)}
+      ,{<<"comments">>, kz_xml:get_value("comments/text()", Xml)}
+      ,{?E911_CITY, kz_xml:get_value("community/text()", Xml)}
+      ,{<<"order_id">>, kz_xml:get_value("customerorderid/text()", Xml)}
+      ,{<<"latitude">>, kz_xml:get_value("latitude/text()", Xml)}
+      ,{<<"longitude">>, kz_xml:get_value("longitude/text()", Xml)}
+      ,{<<"location_id">>, kz_xml:get_value("locationid/text()", Xml)}
+      ,{<<"plus_four">>, kz_xml:get_value("plusfour/text()", Xml)}
+      ,{?E911_ZIP, kz_xml:get_value("postalcode/text()", Xml)}
+      ,{?E911_STATE, kz_xml:get_value("state/text()", Xml)}
+      ,{<<"status">>, kz_xml:get_value("status/code/text()", Xml)}
+      ,{<<"legacy_data">>, legacy_data_xml_to_json(xmerl_xpath:string("legacydata", Xml))}
+      ]).
 
 %%--------------------------------------------------------------------
 %% @private
@@ -433,9 +436,9 @@ legacy_data_xml_to_json([Xml]) ->
 legacy_data_xml_to_json(Xml) when is_list(Xml) ->
     [legacy_data_xml_to_json(X) || X <- Xml];
 legacy_data_xml_to_json(Xml) ->
-    Props = [{<<"house_number">>, kz_util:get_xml_value("housenumber/text()", Xml)}
-            ,{<<"predirectional">>, kz_util:get_xml_value("predirectional/text()", Xml)}
-            ,{<<"streetname">>, kz_util:get_xml_value("streetname/text()", Xml)}
-            ,{<<"suite">>, kz_util:get_xml_value("suite/text()", Xml)}
-            ],
-    kz_json:from_list(props:filter_undefined(Props)).
+    kz_json:from_list(
+      [{<<"house_number">>, kz_xml:get_value("housenumber/text()", Xml)}
+      ,{<<"predirectional">>, kz_xml:get_value("predirectional/text()", Xml)}
+      ,{<<"streetname">>, kz_xml:get_value("streetname/text()", Xml)}
+      ,{<<"suite">>, kz_xml:get_value("suite/text()", Xml)}
+      ]).

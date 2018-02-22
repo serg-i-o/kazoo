@@ -8,12 +8,13 @@
 
 -export([push/3, push/4, sync_push/3, sync_push/4]).
 
--include_lib("kazoo/include/kz_log.hrl").
+-include_lib("kazoo_stdlib/include/kz_log.hrl").
 
 -define(SERVER, ?MODULE).
 -define(RETRY, 3).
 
--record(state, {key}).
+-record(state, {key :: nonempty_string()
+               }).
 
 -spec init(any()) -> {ok, #state{}} | {ok, #state{}, non_neg_integer()} | {ok, #state{}, hibernate} | {stop, any()} | ignore.
 -spec handle_call(any(), {pid(),any()}, #state{}) -> {reply, any(), #state{}} | {reply, any(), #state{}, non_neg_integer()} | {reply, any(), #state{}, hibernate} | {noreply, #state{}} | {noreply, #state{}, non_neg_integer()} | {noreply, #state{}, hibernate} | {stop, any(), any(), #state{}} | {stop, any(), #state{}}.
@@ -25,7 +26,7 @@
 
 -spec start(atom(), any()) -> {ok, undefined | pid()} | {error, any()}.
 start(Name, Key) when is_binary(Key) ->
-    start(Name, kz_util:to_list(Key));
+    start(Name, kz_term:to_list(Key));
 start(Name, Key) ->
     gcm_sup:start_child(Name, Key).
 

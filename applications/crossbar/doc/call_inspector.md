@@ -1,6 +1,6 @@
-### Call_inspector
+### Call Inspector
 
-#### About Call_inspector
+#### About Call Inspector
 
 The Call Inspector Crossbar resource allows the client to query and inspect data related to the Call Inspector application.
 
@@ -26,7 +26,7 @@ Use the *sup* command above to start the endpoint at runtime.
 
 
 
-#### List SIP dialogues recorded
+#### Fetch
 
 > GET /v2/accounts/{ACCOUNT_ID}/call_inspector
 

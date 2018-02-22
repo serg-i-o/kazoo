@@ -7,7 +7,8 @@
 %%%-------------------------------------------------------------------
 -module(kazoo_media_maintenance).
 
--export([remove_empty_media_docs/1
+-export([remove_empty_media_docs/0
+        ,remove_empty_media_docs/1
         ,migrate/0, migrate_prompts/0
         ,import_prompts/1, import_prompts/2
         ,import_prompt/1, import_prompt/2
@@ -42,7 +43,7 @@ set_account_language(Account, Language) ->
     try kapps_account_config:set(AccountId
                                 ,?CONFIG_CAT
                                 ,?PROMPT_LANGUAGE_KEY
-                                ,kz_util:to_lower_binary(Language)
+                                ,kz_term:to_lower_binary(Language)
                                 )
     of
         _Config ->
@@ -53,8 +54,8 @@ set_account_language(Account, Language) ->
         _E:_R -> 'ok'
     end.
 
--spec import_prompts(file:name()) -> 'ok'.
--spec import_prompts(file:name(), text()) -> 'ok'.
+-spec import_prompts(file:filename_all()) -> 'ok'.
+-spec import_prompts(file:filename_all(), text()) -> 'ok'.
 import_prompts(DirPath) ->
     import_prompts(DirPath, kz_media_util:default_prompt_language()).
 
@@ -65,13 +66,13 @@ import_prompts(DirPath, Lang) ->
         'true' ->
             kz_datamgr:db_create(?KZ_MEDIA_DB),
             MediaPath = filename:join([DirPath, "*.{wav,mp3}"]),
-            case filelib:wildcard(kz_util:to_list(MediaPath)) of
+            case filelib:wildcard(kz_term:to_list(MediaPath)) of
                 [] -> io:format("failed to find media files in '~s'~n", [DirPath]);
                 Files -> import_files(DirPath, Lang, Files)
             end
     end.
 
--spec import_files(file:name(), ne_binary(), [file:filename()]) -> 'ok'.
+-spec import_files(file:filename_all(), ne_binary(), [file:filename_all()]) -> 'ok'.
 import_files(Path, Lang, Files) ->
     io:format("importing prompts from '~s' with language '~s'~n", [Path, Lang]),
     case import_prompts_from_files(Files, Lang) of
@@ -82,17 +83,17 @@ import_files(Path, Lang, Files) ->
             'ok'
     end.
 
--spec import_prompts_from_files([file:filename()], ne_binary()) ->
-                                       [{file:filename(), {'error', _}}].
+-spec import_prompts_from_files([file:filename_all()], ne_binary()) ->
+                                       [{file:filename_all(), {'error', _}}].
 import_prompts_from_files(Files, Lang) ->
-    [{F, Err}
-     || F <- Files,
-        (Err = (catch import_prompt(F, Lang))) =/= 'ok'
+    [{File, Err}
+     || File <- Files,
+        (Err = (catch import_prompt(File, Lang))) =/= 'ok'
     ].
 
--spec import_prompt(file:filename()) -> 'ok' | {'error', any()}.
--spec import_prompt(file:filename(), text()) -> 'ok' | {'error', any()}.
--spec import_prompt(file:filename(), text(), ne_binary()) -> 'ok' | {'error', any()}.
+-spec import_prompt(file:filename_all()) -> 'ok' | {'error', any()}.
+-spec import_prompt(file:filename_all(), text()) -> 'ok' | {'error', any()}.
+-spec import_prompt(file:filename_all(), text(), ne_binary()) -> 'ok' | {'error', any()}.
 
 import_prompt(Path) ->
     import_prompt(Path, kz_media_util:default_prompt_language()).
@@ -110,46 +111,24 @@ import_prompt(Path, Lang) ->
     end.
 
 import_prompt(Path0, Lang0, Contents) ->
-    Lang = kz_util:to_binary(Lang0),
-    Path = kz_util:to_binary(Path0),
+    Lang = kz_term:to_binary(Lang0),
+    Path = kz_term:to_binary(Path0),
 
-    Extension = filename:extension(Path),
-    PromptName = kz_util:to_binary(filename:basename(Path, Extension)),
+    ContentLength = byte_size(Contents),
 
-    {Category, Type, _} = cow_mimetypes:all(Path),
-
-    ContentLength = iolist_size(Contents),
-
-    ID = kz_media_util:prompt_id(PromptName, Lang),
-
-    io:format("  importing as '~s'~n", [ID]),
-
-    Now = kz_util:current_tstamp(),
-    ContentType = <<Category/binary, "/", Type/binary>>,
-
-    MetaJObj = kz_json:from_list(
-                 [{<<"_id">>, ID}
-                 ,{<<"name">>, ID}
-                 ,{<<"prompt_id">>, PromptName}
-                 ,{<<"description">>, <<"System prompt in ", Lang/binary, " for ", PromptName/binary>>}
-                 ,{<<"content_length">>, ContentLength}
-                 ,{<<"language">>, kz_util:to_lower_binary(Lang)}
-                 ,{<<"content_type">>, ContentType}
-                 ,{<<"source_type">>, ?MODULE}
-                 ,{<<"streamable">>, 'true'}
-                 ,{<<"pvt_type">>, <<"media">>}
-                 ,{<<"pvt_created">>, Now}
-                 ,{<<"pvt_modified">>, Now}
-                 ,{<<"pvt_account_db">>, ?KZ_MEDIA_DB}
-                 ]),
+    MetaJObj = media_meta_doc(Path, Lang, ContentLength),
 
     case kz_datamgr:ensure_saved(?KZ_MEDIA_DB, MetaJObj) of
         {'ok', MetaJObj1} ->
             io:format("  saved metadata about '~s'~n", [Path]),
-            upload_prompt(ID
-                         ,<<PromptName/binary, (kz_util:to_binary(Extension))/binary>>
+
+            AttachmentName = iolist_to_binary([kzd_media:prompt_id(MetaJObj1)
+                                              ,kz_term:to_binary(filename:extension(Path))
+                                              ]),
+            upload_prompt(kz_doc:id(MetaJObj1)
+                         ,AttachmentName
                          ,Contents
-                         ,[{'content_type', kz_util:to_list(ContentType)}
+                         ,[{'content_type', kz_json:get_string_value(<<"content_type">>, MetaJObj1)}
                           ,{'content_length', ContentLength}
                           ,{'rev', kz_doc:revision(MetaJObj1)}
                           ]
@@ -158,6 +137,53 @@ import_prompt(Path0, Lang0, Contents) ->
             io:format("  error saving metadata: ~p~n", [E]),
             Error
     end.
+
+-spec media_meta_doc(file:filename_all(), ne_binary(), pos_integer()) ->
+                            kz_json:object().
+media_meta_doc(Path, Lang, ContentLength) ->
+    MediaDoc = base_media_doc(Path, Lang, ContentLength),
+    kz_doc:update_pvt_parameters(MediaDoc
+                                ,?KZ_MEDIA_DB
+                                ,[{'type', kzd_media:type()}
+                                 ,{'now', kz_time:current_tstamp()}
+                                 ]
+                                ).
+
+-spec base_media_doc(file:filename_all(), ne_binary(), pos_integer()) ->
+                            kz_json:object().
+base_media_doc(Path, Lang, ContentLength) ->
+    PromptName = prompt_name_from_path(Path),
+    ContentType = content_type_from_path(Path),
+    ID = kz_media_util:prompt_id(PromptName, Lang),
+
+    io:format("  importing as '~s'~n", [ID]),
+
+    kz_json:from_list(
+      [{<<"_id">>, ID}
+      ,{<<"name">>, ID}
+      ,{<<"prompt_id">>, PromptName}
+      ,{<<"description">>, media_description(PromptName, Lang)}
+      ,{<<"content_length">>, ContentLength}
+      ,{<<"language">>, kz_term:to_lower_binary(Lang)}
+      ,{<<"content_type">>, ContentType}
+      ,{<<"source_type">>, kz_term:to_binary(?MODULE)}
+      ,{<<"streamable">>, 'true'}
+      ]
+     ).
+
+-spec prompt_name_from_path(file:filename_all()) -> ne_binary().
+prompt_name_from_path(Path) ->
+    Extension = filename:extension(Path),
+    kz_term:to_binary(filename:basename(Path, Extension)).
+
+-spec content_type_from_path(file:filename_all()) -> ne_binary().
+content_type_from_path(Path) ->
+    {Category, Type, _} = cow_mimetypes:all(Path),
+    filename:join([Category, Type]).
+
+-spec media_description(ne_binary(), ne_binary()) -> ne_binary().
+media_description(PromptName, Lang) ->
+    <<"System prompt in ", Lang/binary, " for ", PromptName/binary>>.
 
 -spec upload_prompt(ne_binary(), ne_binary(), ne_binary(), kz_proplist()) ->
                            'ok' |
@@ -216,7 +242,15 @@ maybe_retry_upload(ID, AttachmentName, Contents, Options, Retries) ->
 
 -spec refresh() -> 'ok'.
 refresh() ->
-    kz_datamgr:revise_doc_from_file(?KZ_MEDIA_DB, 'crossbar', "account/media.json"),
+    Req = [{<<"Database">>, ?KZ_MEDIA_DB}
+          ,{<<"Classification">>, kz_datamgr:db_classification(?KZ_MEDIA_DB)}
+          ,{<<"Action">>, <<"refresh_views">>}
+           | kz_api:default_headers(?APP_NAME, ?APP_VERSION)
+          ],
+    {'ok', _} = kz_amqp_worker:call(Req
+                                   ,fun kapi_maintenance:publish_req/1
+                                   ,fun kapi_maintenance:resp_v/1
+                                   ),
     'ok'.
 
 -spec maybe_migrate_system_config(ne_binary()) -> 'ok'.
@@ -312,6 +346,26 @@ maybe_update_media_config(Node, K, V, MediaJObj) ->
             MediaJObj
     end.
 
+-spec remove_empty_media_docs() -> 'no_return'.
+remove_empty_media_docs() ->
+    {'ok', JObjs} = kz_datamgr:all_docs(?KZ_MEDIA_DB, ['include_docs']),
+    remove_empty_system_media(JObjs).
+
+-spec remove_empty_system_media(kz_json:objects()) -> 'no_return'.
+remove_empty_system_media([]) -> 'no_return';
+remove_empty_system_media([JObj|JObjs]) ->
+    Doc = kz_json:get_value(<<"doc">>, JObj),
+    Id = kz_json:get_value(<<"id">>, JObj),
+    case kz_json:get_ne_value(<<"_attachments">>, Doc) =:= 'undefined'
+        andalso binary:match(Id, <<"_design">>) =:= 'nomatch'
+    of
+        'true' ->
+            _ = io:format("media document ~s has no attachments, removing~n", [Id]),
+            _ = kz_datamgr:del_doc(?KZ_MEDIA_DB, Doc),
+            remove_empty_system_media(JObjs);
+        'false' -> remove_empty_system_media(JObjs)
+    end.
+
 -spec remove_empty_media_docs(ne_binary()) -> 'ok'.
 remove_empty_media_docs(AccountId) ->
     AccountDb = kz_util:format_account_id(AccountId, 'encoded'),
@@ -324,7 +378,7 @@ remove_empty_media_docs(AccountId, AccountDb) ->
             io:format("no media docs in account ~s~n", [AccountId]);
         {'ok', MediaDocs} ->
             io:format("found ~b media docs in account ~s~n", [length(MediaDocs), AccountId]),
-            Filename = media_doc_filename(AccountId, kz_util:current_tstamp()),
+            Filename = media_doc_filename(AccountId, kz_time:current_tstamp()),
             io:format("archiving removed media docs to ~s~n", [Filename]),
             {'ok', File} = file:open(Filename, ['write', 'binary', 'append']),
             catch remove_empty_media_docs(AccountId, AccountDb, File, MediaDocs),
@@ -335,7 +389,7 @@ remove_empty_media_docs(AccountId, AccountDb) ->
 
 -spec media_doc_filename(ne_binary(), non_neg_integer()) -> file:name().
 media_doc_filename(AccountId, Timestamp) ->
-    Path = ["/tmp/empty_media_", AccountId, "_", kz_util:to_binary(Timestamp), ".json"],
+    Path = ["/tmp/empty_media_", AccountId, "_", kz_term:to_binary(Timestamp), ".json"],
     binary_to_list(list_to_binary(Path)).
 
 -spec remove_empty_media_docs(ne_binary(), ne_binary(), file:io_device(), kz_json:objects()) -> 'ok'.

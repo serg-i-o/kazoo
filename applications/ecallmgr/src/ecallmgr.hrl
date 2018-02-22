@@ -1,7 +1,7 @@
 -ifndef(ECALLMGR_HRL).
 
--include_lib("kazoo/include/kz_types.hrl").
--include_lib("kazoo/include/kz_log.hrl").
+-include_lib("kazoo_stdlib/include/kz_types.hrl").
+-include_lib("kazoo_stdlib/include/kz_log.hrl").
 -include_lib("kazoo_documents/include/kazoo_documents.hrl").
 
 -include("fs_event_filters.hrl").
@@ -16,12 +16,12 @@
 
 -define(DEFAULT_FETCH_TIMEOUT, 2600).
 
--define(FS_NODES, ecallmgr_config:get(<<"fs_nodes">>, [])).
--define(FS_NODES(Node), ecallmgr_config:get(<<"fs_nodes">>, [], Node)).
+-define(FS_NODES, ecallmgr_config:get_ne_binaries(<<"fs_nodes">>, [])).
+-define(FS_NODES(Node), ecallmgr_config:get_ne_binaries(<<"fs_nodes">>, [], Node)).
 
 -define(ECALLMGR_PLAYBACK_MEDIA_KEY(M), {'playback_media', M}).
 
--define(DEFAULT_FREESWITCH_CONTEXT, ecallmgr_config:get(<<"freeswitch_context">>, <<"context_2">>)).
+-define(DEFAULT_FREESWITCH_CONTEXT, ecallmgr_config:get_ne_binary(<<"freeswitch_context">>, <<"context_2">>)).
 
 -define(SIP_INTERFACE, "sipinterface_1").
 -define(DEFAULT_FS_PROFILE, "sipinterface_1").
@@ -32,6 +32,10 @@
 
 -define(DEFAULT_SAMPLE_RATE, ecallmgr_config:get_integer(<<"record_sample_rate">>, 8000)).
 -define(DEFAULT_STEREO_SAMPLE_RATE, ecallmgr_config:get_integer(<<"record_stereo_sample_rate">>, 16000)).
+
+-type fs_app() :: {ne_binary(), binary() | 'noop'} |
+                  {ne_binary(), ne_binary(), atom()}.
+-type fs_apps() :: [fs_app()].
 
 -type fs_api_ret()       :: {'ok', binary()} |
                             {'error', 'badarg'} |
@@ -54,7 +58,7 @@
                           ,from :: api_binary() | '$2' | '_'
                           ,node :: atom() | '$1' | '_'
                           ,expires = 300 :: pos_integer() | '$1' | '_'
-                          ,timestamp = kz_util:current_tstamp() :: pos_integer() | '$2' | '_'
+                          ,timestamp = kz_time:current_tstamp() :: pos_integer() | '$2' | '_'
                           }).
 
 -record(channel, {uuid :: api_binary() | '$1' | '$2' | '_'
@@ -99,6 +103,7 @@
 
 -type channel() :: #channel{}.
 -type channels() :: [channel()].
+-type channel_updates() :: [{pos_integer(), any()}].
 
 -record(conference, {name :: api_binary() | '$1' | '_'
                     ,uuid :: api_binary() | '$1' | '_'
@@ -114,7 +119,7 @@
                     ,dynamic = 'true' :: boolean() | '_'
                     ,exit_sound = 'true' :: boolean() | '_'
                     ,enter_sound = 'true' :: boolean() | '_'
-                    ,start_time = kz_util:current_tstamp() :: non_neg_integer() | '_'
+                    ,start_time = kz_time:current_tstamp() :: non_neg_integer() | '_'
                     ,switch_hostname :: api_binary() | '_'
                     ,switch_url :: api_binary() | '_'
                     ,switch_external_ip :: api_binary() | '_'
@@ -127,21 +132,21 @@
 -type conference() :: #conference{}.
 -type conferences() :: [conference()].
 
--record(participant, {uuid :: api_binary() | '$1' | '_'
+-record(participant, {uuid :: api_ne_binary() | '$1' | '_'
                      ,node :: atom() | '$2' | '_'
-                     ,conference_uuid :: api_binary() | '$1'| '_'
-                     ,conference_name :: api_binary() | '$1'| '_'
-                     ,join_time = kz_util:current_tstamp() :: non_neg_integer() | '_'
-                     ,caller_id_name :: api_binary() | '_'
-                     ,caller_id_number :: api_binary() | '_'
-                     ,conference_channel_vars :: kz_proplist() | '_'
-                     ,custom_channel_vars :: kz_proplist() | '_'
+                     ,conference_uuid :: api_ne_binary() | '$1'| '_'
+                     ,conference_name :: api_ne_binary() | '$1'| '_'
+                     ,join_time = kz_time:current_tstamp() :: gregorian_seconds() | '_'
+                     ,caller_id_name :: api_ne_binary() | '_'
+                     ,caller_id_number :: api_ne_binary() | '_'
+                     ,conference_channel_vars = [] :: kz_proplist() | '_'
+                     ,custom_channel_vars = [] :: kz_proplist() | '_'
                      }).
 -type participant() :: #participant{}.
 -type participants() :: [participant()].
 
--define(DEFAULT_REALM, ecallmgr_config:get(<<"default_realm">>, <<"nodomain.com">>)).
--define(MAX_TIMEOUT_FOR_NODE_RESTART, ecallmgr_config:get_integer(<<"max_timeout_for_node_restart">>, 10 * ?MILLISECONDS_IN_SECOND)). % 10 seconds
+-define(DEFAULT_REALM, ecallmgr_config:get_ne_binary(<<"default_realm">>, <<"nodomain.com">>)).
+-define(MAX_TIMEOUT_FOR_NODE_RESTART, ecallmgr_config:get_integer(<<"max_timeout_for_node_restart">>, 10 * ?MILLISECONDS_IN_SECOND)).
 -define(MAX_NODE_RESTART_FAILURES, 3).
 
 -define(EXPIRES_DEVIATION_TIME,
@@ -161,15 +166,15 @@
 -define(STARTUP_FILE, [code:priv_dir(?APP), "/startup.config"]).
 -define(SETTINGS_FILE, [code:priv_dir(?APP), "/settings.config"]).
 
--define(AUTHZ_RESPONSE_KEY(CallId), {'authz_response', CallId}).
-
--define(STARTUP_FILE_CONTENTS, <<"{'fs_nodes', []}.
-{'fs_cmds', [{'load', \"mod_sofia\"}
-             ,{'reloadacl', \"\"}
-]}.">>).
+-define(STARTUP_FILE_CONTENTS, <<"{'fs_nodes', []}.\n"
+                                 "{'fs_cmds', [{'load', \"mod_sofia\"}\n"
+                                 "            ,{'reloadacl', \"\"}\n"
+                                 "            ]}.\n"
+                               >>).
 
 %% We pass Application custom channel variables with our own prefix
-%% When an event occurs, we include all prefixed vars in the API message
+%% When an event occurs, we include all prefixed vars in the API
+%% message
 -define(CHANNEL_VAR_PREFIX, "ecallmgr_").
 
 -define(CCV(Key), <<?CHANNEL_VAR_PREFIX, Key/binary>>).
@@ -182,9 +187,13 @@
 
 -define(CREDS_KEY(Realm, Username), {'authn', Username, Realm}).
 
-%% Call and Channel Vars that have a special prefix instead of the standard CHANNEL_VAR_PREFIX prefix
-%% [{AMQP-Header, FS-var-name}]
-%% so FS-var-name of "foo_var" would become "foo_var=foo_val" in the channel/call string
+-define(DP_EVENT_VARS, [{<<"Execute-On-Answer">>, <<"execute_on_answer">>}]).
+-define(BRIDGE_CHANNEL_VAR_SEPARATOR, "!").
+
+%% Call and Channel Vars that have a special prefix instead of the
+%% standard CHANNEL_VAR_PREFIX prefix [{AMQP-Header, FS-var-name}] so
+%% FS-var-name of "foo_var" would become "foo_var=foo_val" in the
+%% channel/call string
 -define(SPECIAL_CHANNEL_VARS, [{<<"Auto-Answer">>, <<"sip_auto_answer">>}
                               ,{<<"Auto-Answer-Suppress-Notify">>, <<"sip_auto_answer_suppress_notify">>}
                               ,{<<"Eavesdrop-Group">>, <<"eavesdrop_group">>}
@@ -226,6 +235,7 @@
                               ,{<<"Origination-UUID">>, <<"origination_uuid">>}
                               ,{<<"Ignore-Display-Updates">>, <<"ignore_display_updates">>}
                               ,{<<"Eavesdrop-Group-ID">>, <<"eavesdrop_group">>}
+                              ,{<<"Media-Webrtc">>, <<"media_webrtc">>}
 
                               ,{<<"Loopback-Bowout">>, <<"loopback_bowout">>}
                               ,{<<"Simplify-Loopback">>, <<"loopback_bowout_on_execute">>}
@@ -303,11 +313,13 @@
                               ,{<<"Conference-Exit-Sound">>, <<"conference_exit_sound">>}
                               ,{<<"SIP-Refer-To">>, <<"sip_refer_to">>}
                               ,{<<"SIP-Referred-By">>, <<"sip_h_Referred-By">>}
+                              ,{<<"Origination-Call-ID">>, <<"sip_origination_call_id">>}
+                              ,{<<"RTCP-MUX">>, <<"rtcp_mux">>}
                               ]).
 
-%% [{FreeSWITCH-App-Name, Kazoo-App-Name}]
-%% Dialplan-related applications
-%% convert from FS-named applications to Kazoo-named Dialplan applications
+%% [{FreeSWITCH-App-Name, Kazoo-App-Name}] Dialplan-related
+%% applications convert from FS-named applications to Kazoo-named
+%% Dialplan applications
 -define(FS_APPLICATION_NAMES, [{<<"playback">>, <<"play">>}
                               ,{<<"playback">>, <<"tts">>}
                               ,{<<"play-file">>, <<"play">>}
@@ -355,6 +367,7 @@
                    ,['CHANNEL_BRIDGE', 'CHANNEL_UNBRIDGE', 'CHANNEL_EXECUTE_COMPLETE']
                    ,['CHANNEL_DATA','CALL_UPDATE', 'CALL_SECURE']
                    ,['CHANNEL_HOLD', 'CHANNEL_UNHOLD']
+                   ,['PRESENCE_IN']
                    ]).
 
 -define(FS_SOFIA_TRANSFER_EVENTS, ['sofia::transferor'
@@ -362,7 +375,7 @@
                                   ,'sofia::replaced'
                                   ,'sofia::intercepted'
                                   ]).
--define(IS_SOFIA_TRANSFER(N), lists:member(kz_util:to_atom(N, 'true'), ?FS_SOFIA_TRANSFER_EVENTS)).
+-define(IS_SOFIA_TRANSFER(N), lists:member(kz_term:to_atom(N, 'true'), ?FS_SOFIA_TRANSFER_EVENTS)).
 
 -define(FS_CUSTOM_EVENTS, [['kazoo::noop'
                            ,'kazoo::masquerade'
@@ -371,7 +384,6 @@
                            ,'sofia::transferee'
                            ,'sofia::replaced'
                            ,'sofia::intercepted'
-                           ,'sofia::register'
                            ]
                           ,'conference::maintenance'
                           ,['spandsp::txfaxresult'
@@ -471,11 +483,14 @@
 
 -define(FS_EVENT_REG_MSG(Node, EvtName), {'event', Node, EvtName}).
 -define(FS_CALL_EVENT_REG_MSG(Node, EvtName), {'call_event', Node, EvtName}).
+-define(FS_CALL_EVENT_MSG(Node, EvtName, CallId), {'call_event', Node, EvtName, CallId}).
 -define(FS_CALL_EVENTS_PROCESS_REG(Node, CallId)
        ,{'n', 'l', {'call_events_process', Node, CallId}}
        ).
 
 -define(FS_ROUTE_MSG(Node, Section, Context), {'route', Node, Section, Context}).
+
+-define(FS_OPTION_MSG(Node), {'option', Node}).
 
 -define(FS_CARRIER_ACL_LIST, <<"trusted">>).
 -define(FS_SBC_ACL_LIST, <<"authoritative">>).
@@ -500,18 +515,18 @@
                          ,<<"Member-Ghost">>
                          ]).
 
--define(CONFERENCE_VAR_MAP, [{<<"variable_conference_moderator">>, {<<"Is-Moderator">>, fun kz_util:to_boolean/1}}
-                            ,{<<"Floor">>, fun kz_util:to_boolean/1}
-                            ,{<<"Video">>, fun kz_util:to_boolean/1}
-                            ,{<<"See">>, fun kz_util:to_boolean/1}
-                            ,{<<"Speak">>, fun kz_util:to_boolean/1}
-                            ,{<<"Hear">>, fun kz_util:to_boolean/1}
-                            ,{<<"Talking">>, fun kz_util:to_boolean/1}
-                            ,{<<"Mute-Detect">>, fun kz_util:to_boolean/1}
-                            ,{<<"Energy-Level">>, fun kz_util:to_integer/1}
-                            ,{<<"Current-Energy">>, fun kz_util:to_integer/1}
-                            ,{<<"Member-ID">>, fun kz_util:to_integer/1}
-                            ,{<<"Member-Ghost">>, fun kz_util:to_boolean/1}
+-define(CONFERENCE_VAR_MAP, [{<<"variable_conference_moderator">>, {<<"Is-Moderator">>, fun kz_term:to_boolean/1}}
+                            ,{<<"Floor">>, fun kz_term:to_boolean/1}
+                            ,{<<"Video">>, fun kz_term:to_boolean/1}
+                            ,{<<"See">>, fun kz_term:to_boolean/1}
+                            ,{<<"Speak">>, fun kz_term:to_boolean/1}
+                            ,{<<"Hear">>, fun kz_term:to_boolean/1}
+                            ,{<<"Talking">>, fun kz_term:to_boolean/1}
+                            ,{<<"Mute-Detect">>, fun kz_term:to_boolean/1}
+                            ,{<<"Energy-Level">>, fun kz_term:to_integer/1}
+                            ,{<<"Current-Energy">>, fun kz_term:to_integer/1}
+                            ,{<<"Member-ID">>, fun kz_term:to_integer/1}
+                            ,{<<"Member-Ghost">>, fun kz_term:to_boolean/1}
                             ]).
 
 -define(FS_EVENT_FILTERS,
@@ -537,6 +552,7 @@
         ,<<"resource">>
         ,<<"route_sup">>
         ,<<"channel_hold">>
+        ,<<"presence">>
         ]).
 
 -define(ECALLMGR_HRL, 'true').

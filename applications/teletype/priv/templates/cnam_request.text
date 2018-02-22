@@ -1,34 +1,29 @@
-Caller name update request for {{request.number}}
+                Caller Name Change Request for {{request.number}}
 
-Request
-Display-Name: "{{cnam.display_name}}"
 
-Number
-Number: {{request.number}}
-State: {{request.number_state}}
-Local-Number: {{request.local_number}}
+Caller name identification for number {{request.number}} has been changed to '{{cnam.display_name}}'.
+Following is the detailed information about this change.
 
-Account
-Account ID: {{account.id}}
-Account Name: {{account.name}}
-Account Realm: {{account.realm}}
+    Note: Changes to Caller Identification can take up to 48 hours to take effect based on your carrier.
 
-{% if admin %}Admin
-First Name: {{user.first_name}}
-Last Name: {{user.last_name}}
-Email: {{user.email}}
-Timezone: {{user.timezone}}
 
-{% endif %}{% if devices %}SIP Credentials
-{% for device in devices %}User: {{device.user.first_name}} {{device.user.last_name}}
-Email: {{device.user.email|default:""}}
-SIP Username: {{device.sip.username}}
-SIP Password: {{device.sip.password}}
-SIP Realm: {{account.realm}}
+=== Change Request Details ===
 
-{% endfor %}{% endif %}{% if account.pvt_wnm_numbers %}Phone Numbers
-{% for number in account.pvt_wnm_numbers %}{{number}}
-{% endfor %}
-{% endif %}
+    Caller Display Name: {{cnam.display_name}}
+    Number: {{request.number}}
+    Number State: {{request.number_state}}
+    Local Number: {{request.local_number}}
+    Display-Name: "{{cnam.display_name}}"
 
-Sent from {{system.hostname}}
+
+
+Account Information
+
+    Account ID: {{account.id}}
+    Account Name: {{account.name}}
+    Account Realm: {{account.realm}}
+
+
+
+
+Sent from {{system.encoded_node}}

@@ -65,9 +65,11 @@
         ,?KEY_QUEUE_ID
         ,?KEY_RAW_HEADERS
         ,?KEY_SERVER_ID
+        ,?KEY_REQUEST_FROM_PID
+        ,?KEY_REPLY_TO_PID
         ]).
--define(DEFAULT_VALUES, [{?KEY_NODE, kz_util:to_binary(node())}
-                        ,{?KEY_MSG_ID, kz_util:rand_hex_binary(16)}
+-define(DEFAULT_VALUES, [{?KEY_NODE, kz_term:to_binary(node())}
+                        ,{?KEY_MSG_ID, kz_binary:rand_hex(16)}
                         ]).
 -define(DEFAULT_TYPES, [{?KEY_SERVER_ID, fun is_binary/1}
                        ,{?KEY_EVENT_CATEGORY, fun is_binary/1}

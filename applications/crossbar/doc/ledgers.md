@@ -2,35 +2,62 @@
 
 #### About Ledgers
 
-#### Schema
+#### Ledgers Schema
 
 ledgers document
 
 Key | Description | Type | Default | Required
 --- | ----------- | ---- | ------- | --------
-`account` | Account info | `object` |   | `false`
-`account.id` | Account ID | `string` |   | `false`
-`account.name` | Account name | `string` |   | `false`
-`amount` | Ledger amount | `integer` |   | `false`
-`description` | Useful description for ledger | `string` |   | `false`
-`metadata` | Metadata for ledger document | `object` |   | `false`
-`period` | Period of ledger | `object` |   | `false`
-`period.end` | Period end | `integer` |   | `false`
-`period.start` | Period start | `integer` |   | `false`
-`source` | Origin of ledger | `object` |   | `true`
-`source.id` | Source ID | `string` |   | `true`
-`source.service` | Source service | `string` |   | `true`
-`usage` | Usage for ledger | `object` |   | `true`
-`usage.quantity` | Usage quantity | `integer` |   | `true`
-`usage.type` | Usage type | `string` |   | `true`
-`usage.unit` | Usage unit | `string` |   | `true`
+`account.id` | Account ID | `string()` |   | `false`
+`account.name` | Account name | `string()` |   | `false`
+`account` | Account info | `object()` |   | `false`
+`amount` | Ledger amount | `integer()` |   | `false`
+`description` | Useful description for ledger | `string()` |   | `false`
+`metadata` | Metadata for ledger document | `object()` |   | `false`
+`period.end` | Period end | `integer()` |   | `false`
+`period.start` | Period start | `integer()` |   | `false`
+`period` | Period of ledger | `object()` |   | `false`
+`source.id` | Source ID | `string()` |   | `true`
+`source.service` | Source service | `string()` |   | `true`
+`source` | Origin of ledger | `object()` |   | `true`
+`usage.quantity` | Usage quantity | `integer()` |   | `true`
+`usage.type` | Usage type | `string()` |   | `true`
+`usage.unit` | Usage unit | `string()` |   | `true`
+`usage` | Usage for ledger | `object()` |   | `true`
 
+#### Get Available Ledgers
 
+List available ledger sources from the account's reseller.
 
+> GET /v2/accounts/{ACCOUNT_ID}/ledgers/available
 
-#### List current Ledgers
+```shell
+curl -v -X GET \
+    -H "X-Auth-Token: {AUTH_TOKEN}" \
+    http://{SERVER}:8000/v2/accounts/{ACCOUNT_ID}/ledgers/available
+```
 
-List current ledgers and value for an account.
+```json
+{
+    "auth_token": "{AUTH_TOKEN}",
+    "data": [
+        {
+            "name": "per-minute-voip",
+            "friendly_name": "Per Minute VoIP",
+            "markup_type": [
+                "percentage"
+            ]
+        }
+    ],
+    "node": "{NODE}",
+    "request_id": "{REQUEST_ID}",
+    "status": "success",
+    "timestamp": "{TIMESTAMP}",
+    "version": "{VERSION}"
+}
+```
+
+#### Fetch
 
 > GET /v2/accounts/{ACCOUNT_ID}/ledgers
 
@@ -42,13 +69,30 @@ curl -v -X GET \
 
 ```json
 {
+    "auth_token": "{AUTH_TOKEN}",
     "data": {
-        "per-minute-voip": -825,
-        "support": -148
+        "mobile_data": {
+            "amount": -10.5,
+            "usage": {
+                "quantity": 1000,
+                "type": "debit",
+                "unit": "MB"
+            }
+        },
+        "per-minute-voip": {
+            "amount": -54.7404,
+            "usage": {
+                "quantity": 14520,
+                "type": "voice",
+                "unit": "sec"
+            }
+        }
     },
+    "node": "{NODE}",
     "request_id": "{REQUEST_ID}",
     "status": "success",
-    "auth_token": "{AUTH_TOKEN}"
+    "timestamp": "{TIMESTAMP}",
+    "version": "{VERSION}"
 }
 ```
 

@@ -1,5 +1,5 @@
 %%%-------------------------------------------------------------------
-%%% @copyright (C) 2017, 2600Hz INC
+%%% @copyright (C) 2016-2017, 2600Hz INC
 %%% @doc
 %%%  Run tasks scheduled by kz_tasks.
 %%% @end
@@ -13,18 +13,20 @@
 
 -include("tasks.hrl").
 
--record(state, {task_id :: kz_tasks:task_id()
-               ,api = kz_json:object()
-               ,fassoc :: kz_csv:fassoc()
-               ,extra_args :: kz_proplist()
+-record(state, {task_id :: kz_tasks:id()
+               ,api :: kz_json:object()
+               ,verifier :: kz_csv:mapped_row_verifier()
+               ,input_header :: kz_csv:row()
+               ,output_header :: kz_tasks:output_header()
+               ,extra_args :: kz_tasks:extra_args()
                ,total_failed = 0 :: non_neg_integer()
                ,total_succeeded = 0 :: non_neg_integer()
+               ,columns = sets:new() :: kz_tasks:columns()
                }).
 -type state() :: #state{}.
 
 -define(IN, 'csv_in').
--define(OUT(TaskId), <<"/tmp/task_out.", (TaskId)/binary, ".csv">>).
-
+-define(OUT(TaskId), kz_tasks_scheduler:output_path(TaskId)).
 
 %%%===================================================================
 %%% API
@@ -35,7 +37,7 @@
 %% @doc
 %% @end
 %%--------------------------------------------------------------------
--spec start(kz_tasks:task_id(), kz_json:object(), ne_binaries()) -> 'ok'.
+-spec start(kz_tasks:id(), kz_json:object(), kz_tasks:extra_args()) -> ok.
 start(TaskId, API, ExtraArgs) ->
     _ = kz_util:put_callid(TaskId),
     case init(TaskId, API, ExtraArgs) of
@@ -52,41 +54,49 @@ start(TaskId, API, ExtraArgs) ->
 %%%===================================================================
 
 %% @private
--spec init(kz_tasks:task_id(), kz_json:object(), kz_proplist()) -> {'ok', state()} |
-                                                                   {'error', any()}.
+-spec init(kz_tasks:id(), kz_json:object(), kz_tasks:extra_args()) -> {ok, state()} |
+                                                                      {error, any()}.
 init(TaskId, API, ExtraArgs) ->
-    case kz_datamgr:fetch_attachment(?KZ_TASKS_DB, TaskId, ?KZ_TASKS_ATTACHMENT_NAME_IN) of
+    case kz_datamgr:fetch_attachment(?KZ_TASKS_DB, TaskId, ?KZ_TASKS_ANAME_IN) of
         {'error', _R}=Error ->
             lager:error("failed loading attachment ~s from ~s/~s: ~p"
-                       ,[?KZ_TASKS_ATTACHMENT_NAME_IN, ?KZ_TASKS_DB, TaskId, _R]),
+                       ,[?KZ_TASKS_ANAME_IN, ?KZ_TASKS_DB, TaskId, _R]
+                       ),
             Error;
         {'ok', CSV} ->
-            {Header, CSVRest} = kz_csv:take_row(CSV),
-            case write_output_csv_header(TaskId, API, Header) of
-                {'error', _R}=Error ->
-                    lager:error("failed to write CSV header in ~s", [?OUT(TaskId)]),
-                    Error;
-                'ok' ->
-                    Verifier = build_verifier(API),
-                    OrderedFields = kz_tasks:mandatory(API) ++ kz_tasks:optional(API),
-                    FAssoc = kz_csv:associator(Header, OrderedFields, Verifier),
-                    State = #state{task_id = TaskId
-                                  ,api = API
-                                  ,fassoc = FAssoc
-                                  ,extra_args = ExtraArgs
-                                  },
-                    _ = put(?IN, CSVRest),
-                    {'ok', State}
-            end
+            init_from_csv(TaskId, API, ExtraArgs, CSV)
+    end.
+
+-spec init_from_csv(kz_tasks:id(), kz_json:object(), kz_tasks:extra_args(), binary()) ->
+                           {'ok', state()} |
+                           {'error', any()}.
+init_from_csv(TaskId, API, ExtraArgs, CSV) ->
+    {InputHeader, CSVRest} = kz_csv:take_row(CSV),
+    OutputHeader = output_csv_header(API, InputHeader),
+    case write_output_csv_header(TaskId, OutputHeader) of
+        {'error', _R}=Error ->
+            lager:error("failed to write CSV header in ~s", [?OUT(TaskId)]),
+            Error;
+        'ok' ->
+            State = #state{task_id = TaskId
+                          ,api = API
+                          ,verifier = build_verifier(API)
+                          ,extra_args = ExtraArgs
+                          ,input_header = InputHeader
+                          ,output_header = OutputHeader
+                          },
+            _ = put(?IN, CSVRest),
+            {'ok', State}
     end.
 
 %% @private
--spec build_verifier(kz_json:object()) -> kz_csv:verifier().
+-spec build_verifier(kz_json:object()) -> kz_csv:mapped_row_verifier().
 build_verifier(API) ->
+    Mandatory = kz_tasks:mandatory(API),
     fun (Field, 'undefined') ->
             %% Always validate empty optional fields.
             %% Always deny empty mandatory fields.
-            not lists:member(Field, kz_tasks:mandatory(API));
+            not lists:member(Field, Mandatory);
         (Field, Value) ->
             case tasks_bindings:apply(API, Field, [Value]) of
                 ['true'] -> 'true';
@@ -100,117 +110,184 @@ build_verifier(API) ->
     end.
 
 %% @private
--spec loop(task_iterator(), state()) -> any().
-loop(IterValue, State=#state{task_id = TaskId
-                            ,api = API
-                            ,fassoc = FAssoc
-                            ,extra_args = ExtraArgs
+-spec loop(kz_tasks:iterator(), state()) -> any().
+loop(IterValue, State=#state{api = API
+                            ,input_header = InputHeader
                             }) ->
-    case kz_csv:take_row(get(?IN)) of
-        'eof' -> teardown(State, API, IterValue);
-        {Row, CSVRest} ->
-            case is_task_successful(TaskId, API, ExtraArgs, FAssoc, Row, IterValue) of
-                'stop' -> teardown(State, API, IterValue);
-                {IsSuccessful, Written, 'stop'} ->
-                    NewState = state_after_writing(IsSuccessful, Written, State),
-                    teardown(NewState, API, IterValue);
-                {IsSuccessful, Written, NewIterValue} ->
-                    NewState = state_after_writing(IsSuccessful, Written, State),
+    case kz_csv:take_mapped_row(InputHeader, get(?IN)) of
+        'eof' -> teardown(API, IterValue, State);
+        {MappedRow0, CSVRest} ->
+            MappedRow = pad_mapped_row(API, MappedRow0),
+            case is_task_successful(MappedRow, IterValue, State) of
+                'stop' -> teardown(API, IterValue, State);
+                {IsSuccessful, Columns, Written, 'stop'} ->
+                    NewState = state_after_writing(IsSuccessful, Columns, Written, State),
+                    teardown(API, IterValue, NewState);
+                {IsSuccessful, Columns, Written, NewIterValue} ->
+                    NewState = state_after_writing(IsSuccessful, Columns, Written, State),
                     _ = put(?IN, CSVRest),
                     loop(NewIterValue, NewState)
             end
     end.
 
--spec teardown(state(), kz_json:object(), any()) -> 'stop'.
-teardown(State, API, IterValue) ->
-    TaskId = State#state.task_id,
+-spec pad_mapped_row(kz_json:object(), kz_csv:mapped_row()) -> kz_csv:mapped_row().
+pad_mapped_row(API, MappedRow) ->
+    MissingFields = kz_tasks:possible_fields(API) -- maps:keys(MappedRow),
+    F = fun (Field, Row) -> Row#{Field => undefined} end,
+    lists:foldl(F, MappedRow, MissingFields).
+
+-spec teardown(kz_json:object(), any(), state()) -> 'stop'.
+teardown(API, IterValue, #state{task_id = TaskId
+                               ,total_succeeded = TotalSucceeded
+                               ,total_failed = TotalFailed
+                               ,columns = Columns
+                               }) ->
     _ = kz_tasks_scheduler:worker_finished(TaskId
-                                          ,State#state.total_succeeded
-                                          ,State#state.total_failed
-                                          ,?OUT(TaskId)
+                                          ,TotalSucceeded
+                                          ,TotalFailed
+                                          ,Columns
                                           ),
     _ = erase(?IN),
     _ = kz_tasks_scheduler:cleanup_task(API, IterValue),
     'stop'.
 
 %% @private
--spec state_after_writing(boolean(), non_neg_integer(), state()) -> state().
-state_after_writing('true', Written, State) ->
-    new_state_after_writing(Written, 0, State);
-state_after_writing('false', Written, State) ->
-    new_state_after_writing(0, Written, State).
+-spec state_after_writing(boolean(), kz_tasks:columns(), non_neg_integer(), state()) -> state().
+state_after_writing('true', Columns, Written, State) ->
+    new_state_after_writing(Columns, Written, 0, State);
+state_after_writing('false', Columns, Written, State) ->
+    new_state_after_writing(Columns, 0, Written, State).
 
 %% @private
--spec new_state_after_writing(non_neg_integer(), non_neg_integer(), state()) -> state().
-new_state_after_writing(WrittenSucceeded, WrittenFailed, State) ->
-    NewTotalSucceeded = WrittenSucceeded + State#state.total_succeeded,
-    NewTotalFailed = WrittenFailed + State#state.total_failed,
-    S = State#state{total_succeeded = NewTotalSucceeded
-                   ,total_failed = NewTotalFailed
+-spec new_state_after_writing(kz_tasks:columns(), non_neg_integer(), non_neg_integer(), state()) -> state().
+new_state_after_writing(NewColumns, WrittenSucceeded, WrittenFailed
+                       ,State=#state{task_id = Taskid
+                                    ,total_succeeded = TotalSucceeded
+                                    ,total_failed = TotalFailed
+                                    ,columns = Columns
+                                    }) ->
+    S = State#state{total_succeeded = NewTotalSucceeded = WrittenSucceeded + TotalSucceeded
+                   ,total_failed = NewTotalFailed = WrittenFailed + TotalFailed
+                   ,columns = sets:union(Columns, NewColumns)
                    },
-    _ = kz_tasks_scheduler:worker_maybe_send_update(State#state.task_id
-                                                   ,NewTotalSucceeded
-                                                   ,NewTotalFailed
-                                                   ),
+    _ = kz_tasks_scheduler:worker_maybe_send_update(Taskid, NewTotalSucceeded, NewTotalFailed),
     _ = kz_tasks_scheduler:worker_pause(),
     S.
 
 %% @private
--spec is_task_successful(kz_tasks:task_id(), kz_json:object(), kz_proplist()
-                        ,kz_csv:fassoc(), kz_csv:row(), task_iterator()) ->
-                                {boolean(), non_neg_integer(), task_iterator()} |
-                                'stop'.
-is_task_successful(TaskId, API, ExtraArgs, FAssoc, RawRow, IterValue) ->
-    try FAssoc(RawRow) of
-        {'true', RowArgs} ->
-            Args = [ExtraArgs, IterValue | RowArgs],
+-spec is_task_successful(kz_csv:mapped_row(), kz_tasks:iterator(), state()) ->
+                                {boolean(), kz_tasks:columns(), non_neg_integer(), kz_tasks:iterator()} |
+                                stop.
+is_task_successful(MappedRow
+                  ,IterValue
+                  ,State=#state{api = API
+                               ,verifier = Verifier
+                               ,extra_args = ExtraArgs
+                               }) ->
+    try kz_csv:verify_mapped_row(Verifier, MappedRow) of
+        [] ->
+            Args = [ExtraArgs, IterValue, MappedRow],
             case tasks_bindings:apply(API, Args) of
                 ['stop'] -> 'stop';
                 [{'EXIT', {_Error, _ST}}] ->
-                    lager:debug("args: ~p", [Args]),
+                    lager:error("args: ~p", [Args]),
                     lager:error("error: ~p", [_Error]),
                     kz_util:log_stacktrace(_ST),
-                    Written = store_return(TaskId, RawRow, ?WORKER_TASK_FAILED),
-                    {'false', Written, 'stop'};
-                [{NewRowOrRows, NewIterValue}] when is_list(NewRowOrRows) ->
-                    Written = store_return(TaskId, RawRow, NewRowOrRows),
-                    {'true', Written, NewIterValue};
+                    {Columns,Written} = store_return(State, MappedRow, ?WORKER_TASK_FAILED),
+                    {'false', Columns, Written, 'stop'};
+                [{[_|_]=NewRowOrRows, NewIterValue}] ->
+                    {Columns,Written} = store_return(State, MappedRow, NewRowOrRows),
+                    {'true', Columns, Written, NewIterValue};
+                [{#{?OUTPUT_CSV_HEADER_ERROR := ?NE_BINARY}=NewMappedRowOrMappedRows, NewIterValue}] ->
+                    {Columns,Written} = store_return(State, MappedRow, NewMappedRowOrMappedRows),
+                    {false, Columns, Written, NewIterValue};
+                [{#{}=NewMappedRowOrMappedRows, NewIterValue}] ->
+                    {Columns,Written} = store_return(State, MappedRow, NewMappedRowOrMappedRows),
+                    {'true', Columns, Written, NewIterValue};
+                [{'ok', NewIterValue}] ->
+                    {'true', State#state.columns, 1, NewIterValue};
                 [{Error, NewIterValue}] ->
                     lager:error("~p", [Error]),
-                    Written = store_return(TaskId, RawRow, Error),
-                    {'false', Written, NewIterValue};
-                [NewRowOrRows=NewIterValue] when is_list(NewRowOrRows) ->
-                    Written = store_return(TaskId, RawRow, NewRowOrRows),
-                    {'true', Written, NewIterValue};
+                    {Columns,Written} = store_return(State, MappedRow, Error),
+                    {'false', Columns, Written, NewIterValue};
+                [[_|_]=NewRowOrRows=NewIterValue] ->
+                    {Columns,Written} = store_return(State, MappedRow, NewRowOrRows),
+                    {'true', Columns, Written, NewIterValue};
+                [#{?OUTPUT_CSV_HEADER_ERROR := ?NE_BINARY}=NewMappedRowOrMappedRows=NewIterValue] ->
+                    {Columns,Written} = store_return(State, MappedRow, NewMappedRowOrMappedRows),
+                    {false, Columns, Written, NewIterValue};
+                [#{}=NewMappedRowOrMappedRows=NewIterValue] ->
+                    {Columns,Written} = store_return(State, MappedRow, NewMappedRowOrMappedRows),
+                    {'true', Columns, Written, NewIterValue};
                 NewRow=NewIterValue ->
-                    Written = store_return(TaskId, RawRow, NewRow),
-                    {'false', Written, NewIterValue}
+                    {Columns,Written} = store_return(State, MappedRow, NewRow),
+                    {'false', Columns, Written, NewIterValue}
             end;
-        'false' ->
-            lager:error("verifier failed on ~p", [RawRow]),
-            Written = store_return(TaskId, RawRow, ?WORKER_TASK_TYPE),
+        Fields ->
+            PPFields = kz_binary:join(Fields, $\s),
+            lager:error("verifier ~s failed on ~p", [PPFields, maps:with(Fields, MappedRow)]),
+            {Columns,Written} = store_return(State, MappedRow, <<"bad field(s) ", PPFields/binary>>),
             %% Stop on crashes, but only skip typefailed rows.
-            {'false', Written, IterValue}
+            {'false', Columns, Written, IterValue}
     catch
         _:_R ->
             ST = erlang:get_stacktrace(),
             lager:error("verifier crashed: ~p", [_R]),
             kz_util:log_stacktrace(ST),
-            Written = store_return(TaskId, RawRow, ?WORKER_TASK_MAYBE_OK),
-            {'false', Written, 'stop'}
+            {Columns,Written} = store_return(State, MappedRow, ?WORKER_TASK_MAYBE_OK),
+            {'false', Columns, Written, 'stop'}
     end.
 
 %% @private
--spec store_return(kz_tasks:task_id(), kz_csv:row(), task_return()) -> pos_integer().
-store_return(TaskId, Row, Rows=[_List|_]) when is_list(_List) ->
-    lists:sum([store_return(TaskId, Row, R) || R <- Rows]);
-store_return(TaskId, Row, Reason) ->
-    Data = [kz_csv:row_to_iolist(Row), $,, reason(Reason), $\n],
-    kz_util:write_file(?OUT(TaskId), Data, ['append']),
+-spec store_return(state(), kz_csv:mapped_row(), kz_tasks:return()) -> {kz_tasks:columns(), pos_integer()}.
+store_return(State, MappedRow, Rows=[_List|_]) when is_list(_List) ->
+    {ListOfColumns, ListOfWritten} =
+        lists:unzip([store_return(State, MappedRow, Row) || Row <- Rows]),
+    {sets:union(ListOfColumns), lists:sum(ListOfWritten)};
+store_return(#state{task_id = TaskId
+                   ,output_header = {replace, Header}
+                   }, _InputMappedRow, OutputMappedRow)
+  when is_map(OutputMappedRow) ->
+    write_row(TaskId, Header, OutputMappedRow);
+store_return(#state{task_id = TaskId
+                   ,output_header = {replace, Header}
+                   }, InputMappedRow, Reason) ->
+    MappedRow = InputMappedRow#{?OUTPUT_CSV_HEADER_ERROR => Reason},
+    write_row(TaskId, Header, MappedRow);
+store_return(#state{task_id = TaskId
+                   ,output_header = Header
+                   }, InputMappedRow, OutputMappedRow)
+  when is_map(OutputMappedRow) ->
+    MappedRow = maps:merge(InputMappedRow, OutputMappedRow),
+    write_row(TaskId, Header, MappedRow);
+store_return(#state{task_id = TaskId
+                   ,output_header = Header
+                   }, InputMappedRow, Reason) ->
+    Data = kz_csv:mapped_row_to_iolist(Header, InputMappedRow),
+    IOList = [Data, $,, reason(Reason)],
+    Written = write_row(TaskId, IOList),
+    {columns(InputMappedRow), Written}.
+
+-spec write_row(kz_tasks:id(), kz_csv:header(), kz_csv:mapped_row()) -> {kz_tasks:columns(), 1}.
+write_row(TaskId, Header, MappedRow) ->
+    IOList = kz_csv:mapped_row_to_iolist(Header, MappedRow),
+    Written = write_row(TaskId, IOList),
+    {columns(MappedRow), Written}.
+
+-spec write_row(kz_tasks:id(), iodata()) -> 1.
+write_row(TaskId, IOList) ->
+    kz_util:write_file(?OUT(TaskId), [IOList,$\n], ['append']),
     1.
 
+-spec columns(kz_csv:mapped_row()) -> kz_tasks:columns().
+columns(MappedRow) ->
+    Found = [K || {K,V} <- maps:to_list(MappedRow),
+                  V =/= undefined
+            ],
+    sets:from_list(Found).
+
 %% @private
--spec reason(task_return()) -> iodata().
+-spec reason(kz_tasks:return()) -> iodata().
 reason([_|_]=Row) ->
     kz_csv:row_to_iolist(Row);
 reason(?NE_BINARY=Reason) ->
@@ -218,11 +295,18 @@ reason(?NE_BINARY=Reason) ->
 reason(_) -> <<>>.
 
 %% @private
--spec write_output_csv_header(kz_tasks:task_id(), kz_json:object(), kz_csv:row()) ->
-                                     'ok' | {'error', any()}.
-write_output_csv_header(TaskId, API, HeaderRow) ->
-    HeaderRHS = kz_tasks_scheduler:get_output_header(API),
-    Data = [kz_csv:row_to_iolist(HeaderRow ++ HeaderRHS), $\n],
+-spec write_output_csv_header(kz_tasks:id(), kz_tasks:output_header()) -> ok | {error, any()}.
+write_output_csv_header(TaskId, {replace,Header}) ->
+    write_output_csv_header(TaskId, Header);
+write_output_csv_header(TaskId, Header) ->
+    Data = [kz_csv:row_to_iolist(Header), $\n],
     file:write_file(?OUT(TaskId), Data).
+
+-spec output_csv_header(kz_json:object(), kz_csv:row()) -> kz_tasks:output_header().
+output_csv_header(API, HeaderRow) ->
+    case kz_tasks_scheduler:get_output_header(API) of
+        H={replace, _FullHeader} -> H;
+        HeaderRHS -> HeaderRow ++ HeaderRHS
+    end.
 
 %%% End of Module.

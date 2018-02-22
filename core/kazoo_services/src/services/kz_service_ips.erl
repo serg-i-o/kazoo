@@ -6,10 +6,11 @@
 %%% @contributors
 %%%-------------------------------------------------------------------
 -module(kz_service_ips).
+-behaviour(kz_gen_service).
 
 -export([reconcile/1, reconcile/2]).
 
--include("kazoo_services.hrl").
+-include("services.hrl").
 
 %%--------------------------------------------------------------------
 %% @public
@@ -49,6 +50,6 @@ reconcile_foldl({Type, Quantity}, Services) ->
     OldQuantity = kz_services:updated_quantity(<<"ips">>, Type, Services),
     kz_services:update(<<"ips">>
                       ,Type
-                      ,OldQuantity + kz_util:to_integer(Quantity)
+                      ,OldQuantity + kz_term:to_integer(Quantity)
                       ,Services
                       ).

@@ -1,5 +1,5 @@
 %%%-------------------------------------------------------------------
-%%% @copyright (C) 2017, 2600Hz
+%%% @copyright (C) 2016-2017, 2600Hz
 %%% @doc
 %%% @end
 %%% @contributors
@@ -10,8 +10,33 @@
 -include_lib("eunit/include/eunit.hrl").
 -include("knm.hrl").
 
+info_test_() ->
+    InfoJObj1 = knm_carriers:info(?MASTER_ACCOUNT_ID, ?RESELLER_ACCOUNT_ID, ?RESELLER_ACCOUNT_ID),
+    InfoJObj2 = knm_carriers:info(?MASTER_ACCOUNT_ID, ?CHILD_ACCOUNT_ID, ?RESELLER_ACCOUNT_ID),
+    InfoJObj3 = knm_carriers:info(?MASTER_ACCOUNT_ID, ?CHILD_ACCOUNT_ID, undefined),
+    InfoJObj4 = knm_carriers:info(?MASTER_ACCOUNT_ID, ?CHILD_ACCOUNT_ID, ?CHILD_ACCOUNT_ID),
+    InfoJObj5 = knm_carriers:info(?RESELLER_ACCOUNT_ID, ?RESELLER_ACCOUNT_ID, ?RESELLER_ACCOUNT_ID),
+    InfoJObj6 = knm_carriers:info(?CHILD_ACCOUNT_ID, ?CHILD_ACCOUNT_ID, ?CHILD_ACCOUNT_ID),
+    [?_assertEqual(10, kz_json:get_value(<<"maximal_prefix_length">>, InfoJObj1))
+    ,?_assertEqual(10, kz_json:get_value(<<"maximal_prefix_length">>, InfoJObj2))
+    ,?_assertEqual(10, kz_json:get_value(<<"maximal_prefix_length">>, InfoJObj3))
+    ,?_assertEqual(3, kz_json:get_value(<<"maximal_prefix_length">>, InfoJObj4))
+    ,?_assert(lists:member(<<"local">>, kz_json:get_value(<<"usable_carriers">>, InfoJObj4)))
+    ,?_assert(sets:is_subset(sets:from_list([?NUMBER_STATE_IN_SERVICE
+                                            ,?NUMBER_STATE_RESERVED
+                                            ,?NUMBER_STATE_AVAILABLE
+                                            ])
+                            ,sets:from_list(kz_json:get_value(<<"usable_creation_states">>, InfoJObj4))
+                            )
+             )
+    ,?_assertEqual([?NUMBER_STATE_IN_SERVICE, ?NUMBER_STATE_RESERVED]
+                  ,lists:usort(kz_json:get_value(<<"usable_creation_states">>, InfoJObj5))
+                  )
+    ,?_assertEqual([], kz_json:get_value(<<"usable_creation_states">>, InfoJObj6))
+    ].
+
 is_number_billable_test_() ->
-    {ok, N} = knm_number:get(?TEST_OLD_NUM),
+    {ok, N} = knm_number:get(?TEST_OLD1_NUM),
     PN1 = knm_number:phone_number(N),
     PN2 = knm_phone_number:set_module_name(PN1, <<"knm_bandwidth2">>),
     PN3 = knm_phone_number:set_module_name(PN1, <<"wnm_pacwest">>),
@@ -40,12 +65,7 @@ check_test_() ->
 
 find_local_test_() ->
     [{"Finding local numbers not supported"
-     ,?_assertMatch({'error', 'not_available'}
-                   ,knm_local:find_numbers(<<"415">>, 1, [])
-                   )
-     }
-    ,{"Finding local numbers returns empty list"
-     ,?_assertEqual([], knm_carriers:find(<<"415">>))
+     ,?_assertMatch({'error', 'not_available'}, knm_local:find_numbers(<<"415">>, 1, []))
      }
     ].
 
@@ -94,8 +114,8 @@ find_blocks(Options0) ->
     ,?_assertEqual(?END_BLOCK, kz_json:get_value(<<"number">>, EndRep))
     ,?_assertEqual(?START_BLOCK, element(1,element(2,StartNumber)))
     ,?_assertEqual(?END_BLOCK, element(1,element(2,EndNumber)))
-    ,?_assertEqual(?CARRIER_OTHER, kz_util:to_binary(element(2,element(2,StartNumber))))
-    ,?_assertEqual(?CARRIER_OTHER, kz_util:to_binary(element(2,element(2,EndNumber))))
+    ,?_assertEqual(?CARRIER_OTHER, kz_term:to_binary(element(2,element(2,StartNumber))))
+    ,?_assertEqual(?CARRIER_OTHER, kz_term:to_binary(element(2,element(2,EndNumber))))
     ].
 
 find_numbers(Options0) ->
@@ -104,10 +124,12 @@ find_numbers(Options0) ->
     Options = [{'phonebook_url', ?NUMBER_PHONEBOOK_URL}
               ,{'account_id', ?MASTER_ACCOUNT_ID}
               ,{'quantity', 10}
-              ,{prefix, Prefix}
+              ,{'prefix', Prefix}
                | Options0
               ],
+    ?LOG_DEBUG("knm_search:find(~p)", [Options]),
     Results = knm_search:find(Options),
+    ?LOG_DEBUG("results: ~p", [Results]),
     [{"Verify results returned is the expected amount"
      ,?_assertEqual(Limit, length(Results))
      }

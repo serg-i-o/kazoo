@@ -15,9 +15,9 @@
         ,head/1, head/2, head/3
         ,trace/1, trace/2, trace/3
         ,post/1, post/2, post/3, post/4
+        ,patch/1, patch/2, patch/3, patch/4
         ,put/1, put/2, put/3, put/4
         ,delete/1, delete/2, delete/3, delete/4
-        ,handle_response/1
         ]).
 
 -include("kz_web.hrl").
@@ -27,10 +27,11 @@
                   'head' |
                   'options' |
                   'post' |
+                  'patch' |
                   'put' |
                   'trace'.
 
--type http_body() :: string() | binary().
+-type http_body() :: iodata().
 
 -type httpc_result() :: {any(), kz_proplist(), http_body()} |
                         {string(), string() | binary()} |
@@ -129,6 +130,19 @@ post(Url, Headers, Body) ->
     req('post', Url, Headers, Body, []).
 post(Url, Headers, Body, Options) ->
     req('post', Url, Headers, Body, Options).
+
+-spec patch(string()) -> ret().
+-spec patch(string(), kz_proplist()) -> ret().
+-spec patch(string(), kz_proplist(), http_body()) -> ret().
+-spec patch(string(), kz_proplist(), http_body(), kz_proplist()) -> ret().
+patch(Url) ->
+    req('patch', Url, [], [], []).
+patch(Url, Headers) ->
+    req('patch', Url, Headers, [], []).
+patch(Url, Headers, Body) ->
+    req('patch', Url, Headers, Body, []).
+patch(Url, Headers, Body, Options) ->
+    req('patch', Url, Headers, Body, Options).
 
 -spec put(string()) -> ret().
 -spec put(string(), kz_proplist()) -> ret().
@@ -262,14 +276,15 @@ maybe_basic_auth(Headers, Options) ->
 %% @doc Build httpc request argument based on method
 %%--------------------------------------------------------------------
 -spec build_request(method(), text(), kz_proplist(), http_body()) -> httpc_request().
-build_request(Method, Url, Headers, _Body) when (Method == 'options');
-                                                (Method == 'get');
-                                                (Method == 'head');
-                                                (Method == 'trace') ->
-    {kz_util:to_list(Url), ensure_string_headers(Headers)};
-build_request(Method, Url, Headers, Body) when (Method == 'post');
-                                               (Method == 'put');
-                                               (Method == 'delete') ->
+build_request(Method, Url, Headers, _Body) when Method =:= 'options';
+                                                Method =:= 'get';
+                                                Method =:= 'head';
+                                                Method =:= 'trace' ->
+    {kz_term:to_list(Url), ensure_string_headers(Headers)};
+build_request(Method, Url, Headers, Body) when Method =:= 'post';
+                                               Method =:= 'put';
+                                               Method =:= 'patch';
+                                               Method =:= 'delete' ->
     ContentType = props:get_first_defined(["Content-Type"
                                           ,"content-type"
                                           ,'content_type'
@@ -278,15 +293,16 @@ build_request(Method, Url, Headers, Body) when (Method == 'post');
                                           ,<<"content_type">>
                                           ]
                                          ,Headers
-                                         ,""),
-    {kz_util:to_list(Url)
+                                         ,""
+                                         ),
+    {kz_term:to_list(Url)
     ,ensure_string_headers(Headers)
-    ,kz_util:to_list(ContentType)
-    ,kz_util:to_binary(Body)
+    ,kz_term:to_list(ContentType)
+    ,kz_term:to_binary(Body)
     }.
 
 ensure_string_headers(Headers) ->
-    [{kz_util:to_list(K), kz_util:to_list(V)} || {K,V} <- Headers].
+    [{kz_term:to_list(K), kz_term:to_list(V)} || {K,V} <- Headers].
 %%--------------------------------------------------------------------
 %% @private
 %% @doc Get options out of a propslist based on options type

@@ -67,7 +67,7 @@ authz_details([]) ->
 authz_details([Channel|Channels]) ->
     io:format("~n", []),
     Props = j5_channels:to_props(Channel),
-    Timestamp = kz_util:current_tstamp(),
+    Timestamp = kz_time:current_tstamp(),
     pretty_print_field(<<"Call ID">>, props:get_value(<<"Call-ID">>, Props)),
     pretty_print_field(<<"Other Leg Call ID">>, props:get_value(<<"Other-Leg-Call-ID">>, Props)),
     pretty_print_field(<<"Direction">>, props:get_value(<<"Direction">>, Props)),
@@ -107,7 +107,7 @@ authz_details_duration(Key, Props, Timestamp) ->
     case props:get_integer_value(Key, Props) of
         'undefined' -> "0s";
         Created ->
-            [kz_util:to_list(Timestamp - Created), "s"]
+            [kz_term:to_list(Timestamp - Created), "s"]
     end.
 
 -spec limits_summary() -> 'no_return'.
@@ -162,12 +162,7 @@ limits_summary_prepay(Limit) ->
     case j5_limits:allow_prepay(Limit) of
         'false' -> "disabled";
         'true' ->
-            AccountId = j5_limits:account_id(Limit),
-            kz_util:to_list(
-              wht_util:units_to_dollars(
-                wht_util:current_balance(AccountId)
-               )
-             )
+            current_balance(j5_limits:account_id(Limit))
     end.
 
 -spec limits_summary_postpay(j5_limits:limits()) -> string().
@@ -175,7 +170,7 @@ limits_summary_postpay(Limit) ->
     case j5_limits:allow_postpay(Limit) of
         'false' -> "disabled";
         'true' ->
-            kz_util:to_list(
+            kz_term:to_list(
               wht_util:units_to_dollars(
                 j5_limits:max_postpay(Limit)
                )
@@ -192,14 +187,14 @@ limit_summary_header() ->
 
 -spec limits_details(atom() | string() | ne_binary()) -> 'no_return'.
 limits_details(Account) when not is_binary(Account) ->
-    limits_details(kz_util:to_binary(Account));
+    limits_details(kz_term:to_binary(Account));
 limits_details(Account) ->
     AccountId = kz_util:format_account_id(Account, 'raw'),
     Props = j5_limits:to_props(j5_limits:get(AccountId)),
     io:format("Account Info:~n", []),
     pretty_print_field("  Account ID", props:get_value('account_id', Props)),
     pretty_print_field("  Account DB", props:get_value('account_db', Props)),
-    pretty_print_field("  Current Balance", wht_util:units_to_dollars(wht_util:current_balance(AccountId))),
+    pretty_print_field("  Current Balance", current_balance(AccountId)),
     io:format("Configuration:~n", []),
     pretty_print_field("  Enabled", props:get_value('enabled', Props)),
     pretty_print_field("  Prepay Allowed", props:get_value('allow_prepay', Props)),
@@ -243,3 +238,10 @@ pretty_print_field(Name, Value) when is_number(Value) ->
     io:format("~-25s: ~w~n", [Name, Value]);
 pretty_print_field(Name, Value) ->
     io:format("~-25s: ~s~n", [Name, Value]).
+
+-spec current_balance(ne_binary()) -> ne_binary().
+current_balance(AccountId) ->
+    case wht_util:current_balance(AccountId) of
+        {'ok', Balance} -> kz_term:to_list(wht_util:units_to_dollars(Balance));
+        {'error', _R} -> kz_term:to_list(io_lib:format("not known at the moment: ~p", [_R]))
+    end.

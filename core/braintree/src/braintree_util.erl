@@ -65,16 +65,16 @@ props_to_xml([{K, Attr, [{_, _}|_]=V}|T], Xml) ->
 props_to_xml([{K, Attr, [{_, _, _}|_]=V}|T], Xml) ->
     props_to_xml(T, [{K, Attr, props_to_xml(V, [])}|Xml]);
 props_to_xml([{K, Attr, V}|T], Xml) when is_boolean(V) ->
-    props_to_xml(T, [{K, [{'type', "boolean"}|Attr], [kz_util:to_list(V)]}|Xml]);
+    props_to_xml(T, [{K, [{'type', "boolean"}|Attr], [kz_term:to_list(V)]}|Xml]);
 props_to_xml([{K, Attr, V}|T], Xml) ->
-    props_to_xml(T, [{K, Attr, [kz_util:to_list(V)]}|Xml]);
+    props_to_xml(T, [{K, Attr, [kz_term:to_list(V)]}|Xml]);
 
 props_to_xml([{K, [{_, _}|_]=V}|T], Xml) ->
     props_to_xml(T, [{K, props_to_xml(V, [])}|Xml]);
 props_to_xml([{K, V}|T], Xml) when is_boolean(V) ->
-    props_to_xml(T, [{K, [{'type', "boolean"}], [kz_util:to_list(V)]}|Xml]);
+    props_to_xml(T, [{K, [{'type', "boolean"}], [kz_term:to_list(V)]}|Xml]);
 props_to_xml([{K, V}|T], Xml) ->
-    props_to_xml(T, [{K, [kz_util:to_list(V)]}|Xml]).
+    props_to_xml(T, [{K, [kz_term:to_list(V)]}|Xml]).
 
 %%--------------------------------------------------------------------
 %% @public
@@ -84,11 +84,11 @@ props_to_xml([{K, V}|T], Xml) ->
 %%--------------------------------------------------------------------
 -spec bt_error_to_json(bt_error()) -> kz_json:object().
 bt_error_to_json(BtError) ->
-    Props = [{<<"code">>, BtError#bt_error.code}
-            ,{<<"message">>, BtError#bt_error.message}
-            ,{<<"attribute">>, BtError#bt_error.attribute}
-            ],
-    kz_json:from_list(props:filter_undefined(Props)).
+    kz_json:from_list(
+      [{<<"code">>, BtError#bt_error.code}
+      ,{<<"message">>, BtError#bt_error.message}
+      ,{<<"attribute">>, BtError#bt_error.attribute}
+      ]).
 
 %%--------------------------------------------------------------------
 %% @public
@@ -98,16 +98,16 @@ bt_error_to_json(BtError) ->
 %%--------------------------------------------------------------------
 -spec bt_verification_to_json(bt_verification()) -> kz_json:object().
 bt_verification_to_json(BtVerification) ->
-    Props = [{<<"verification_status">>, BtVerification#bt_verification.verification_status}
-            ,{<<"processor_response_code">>, BtVerification#bt_verification.processor_response_code}
-            ,{<<"processor_response_text">>, BtVerification#bt_verification.processor_response_text}
-            ,{<<"cvv_response_code">>, BtVerification#bt_verification.cvv_response_code}
-            ,{<<"avs_response_code">>, BtVerification#bt_verification.avs_response_code}
-            ,{<<"postal_response_code">>, BtVerification#bt_verification.postal_response_code}
-            ,{<<"street_response_code">>, BtVerification#bt_verification.street_response_code}
-            ,{<<"gateway_rejection_reason">>, BtVerification#bt_verification.gateway_rejection_reason}
-            ],
-    kz_json:from_list(props:filter_undefined(Props)).
+    kz_json:from_list(
+      [{<<"verification_status">>, BtVerification#bt_verification.verification_status}
+      ,{<<"processor_response_code">>, BtVerification#bt_verification.processor_response_code}
+      ,{<<"processor_response_text">>, BtVerification#bt_verification.processor_response_text}
+      ,{<<"cvv_response_code">>, BtVerification#bt_verification.cvv_response_code}
+      ,{<<"avs_response_code">>, BtVerification#bt_verification.avs_response_code}
+      ,{<<"postal_response_code">>, BtVerification#bt_verification.postal_response_code}
+      ,{<<"street_response_code">>, BtVerification#bt_verification.street_response_code}
+      ,{<<"gateway_rejection_reason">>, BtVerification#bt_verification.gateway_rejection_reason}
+      ]).
 
 %%--------------------------------------------------------------------
 %% @public
@@ -117,11 +117,11 @@ bt_verification_to_json(BtVerification) ->
 %%--------------------------------------------------------------------
 -spec bt_api_error_to_json(bt_api_error()) -> kz_json:object().
 bt_api_error_to_json(BtApiError) ->
-    Props = [{<<"errors">>, [bt_error_to_json(Error) || Error <- BtApiError#bt_api_error.errors]}
-            ,{<<"verification">>, bt_verification_to_json(BtApiError#bt_api_error.verification)}
-            ,{<<"message">>, BtApiError#bt_api_error.message}
-            ],
-    kz_json:from_list(props:filter_undefined(Props)).
+    kz_json:from_list(
+      [{<<"errors">>, [bt_error_to_json(Error) || Error <- BtApiError#bt_api_error.errors]}
+      ,{<<"verification">>, bt_verification_to_json(BtApiError#bt_api_error.verification)}
+      ,{<<"message">>, BtApiError#bt_api_error.message}
+      ]).
 
 %%--------------------------------------------------------------------
 %% @public
@@ -239,7 +239,7 @@ error_io_fault() ->
 %%--------------------------------------------------------------------
 -spec error_min_amount(number() | ne_binary()) -> no_return().
 error_min_amount(Amount) ->
-    Error = <<"Unable to process a transaction for less than $", (kz_util:to_binary(Amount))/binary>>,
+    Error = <<"Unable to process a transaction for less than $", (kz_term:to_binary(Amount))/binary>>,
     lager:debug("~s", [Error]),
               throw({'min_amount', kz_json:from_list([{<<"min_amount">>, Error}])}).
 
@@ -251,6 +251,6 @@ error_min_amount(Amount) ->
 %%--------------------------------------------------------------------
 -spec error_max_amount(number() | ne_binary()) -> no_return().
 error_max_amount(Amount) ->
-    Error = <<"Unable to process a transaction for more than $", (kz_util:to_binary(Amount))/binary>>,
+    Error = <<"Unable to process a transaction for more than $", (kz_term:to_binary(Amount))/binary>>,
     lager:debug("~s", [Error]),
               throw({'max_amount', kz_json:from_list([{<<"max_amount">>, Error}])}).

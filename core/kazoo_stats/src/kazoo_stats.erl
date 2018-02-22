@@ -24,8 +24,8 @@
         ,getdb/0
         ]).
 
--include_lib("kazoo/include/kz_log.hrl").
--include_lib("kazoo/include/kz_types.hrl").
+-include_lib("kazoo_stdlib/include/kz_log.hrl").
+-include_lib("kazoo_stdlib/include/kz_types.hrl").
 
 -define(SERVER, ?MODULE).
 
@@ -273,7 +273,7 @@ recursive_from_proplist(List) when is_list(List) ->
     case lists:all(fun is_integer/1, List) of
         'true' -> List;
         'false' ->
-            kz_json:from_list([{kz_util:to_binary(K)
+            kz_json:from_list([{kz_term:to_binary(K)
                                ,recursive_from_proplist(V)}
                                || {K,V} <- List
                               ])

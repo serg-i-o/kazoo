@@ -37,12 +37,16 @@ init() ->
 
 -spec handle_req(kz_json:object(), kz_proplist()) -> any().
 handle_req(JObj, _Props) ->
-    'true' = kapi_notifications:voicemail_v(JObj),
+    'true' = kapi_notifications:voicemail_new_v(JObj),
     _ = kz_util:put_callid(JObj),
 
     lager:debug("new voicemail left, sending to email if enabled"),
 
-    AccountDb = kz_json:get_value(<<"Account-DB">>, JObj),
+    RespQ = kz_api:server_id(JObj),
+    MsgId = kz_api:msg_id(JObj),
+    notify_util:send_update(RespQ, MsgId, <<"pending">>),
+
+    AccountDb = kz_util:format_account_db(kz_json:get_value(<<"Account-ID">>, JObj)),
 
     VMBoxId = kz_json:get_value(<<"Voicemail-Box">>, JObj),
     lager:debug("loading vm box ~s", [VMBoxId]),
@@ -54,19 +58,17 @@ handle_req(JObj, _Props) ->
 
     %% If the box has emails, continue processing
     %% otherwise stop processing
-    case Emails =/= [] of
-        'false' -> lager:debug("box ~s has no emails or owner doesn't want emails", [VMBoxId]);
-        'true' -> continue_processing(JObj, AccountDb, VMBox, Emails)
-    end.
+    SendResult =
+        case Emails =/= [] of
+            'false' -> lager:debug("box ~s has no emails or owner doesn't want emails", [VMBoxId]);
+            'true' -> continue_processing(JObj, AccountDb, VMBox, Emails)
+        end,
+    notify_util:maybe_send_update(SendResult, RespQ, MsgId).
 
--spec continue_processing(kz_json:object(), ne_binary(), kz_json:object(), ne_binaries()) -> 'ok'.
+-spec continue_processing(kz_json:object(), ne_binary(), kz_json:object(), ne_binaries()) -> send_email_return().
 continue_processing(JObj, AccountDb, VMBox, Emails) ->
-    RespQ = kz_json:get_value(<<"Server-ID">>, JObj),
-    MsgId = kz_json:get_value(<<"Msg-ID">>, JObj),
-    AccountDb = kz_json:get_value(<<"Account-DB">>, JObj),
+    AccountDb = kz_util:format_account_db(kz_json:get_value(<<"Account-ID">>, JObj)),
 
-
-    'ok' = notify_util:send_update(RespQ, MsgId, <<"pending">>),
     lager:debug("VM->Email enabled for user, sending to ~p", [Emails]),
     {'ok', AccountJObj} = kz_account:fetch(AccountDb),
     Timezone = kzd_voicemail_box:timezone(VMBox, <<"UTC">>),
@@ -84,10 +86,7 @@ continue_processing(JObj, AccountDb, VMBox, Emails) ->
     CustomSubjectTemplate = kz_json:get_value(?EMAIL_SUBJECT_TEMPLATE_KEY, AccountJObj),
     {'ok', Subject} = notify_util:render_template(CustomSubjectTemplate, ?DEFAULT_SUBJ_TMPL, Props),
 
-    build_and_send_email(TxtBody, HTMLBody, Subject, Emails
-                        ,props:filter_undefined(Props)
-                        ,{RespQ, MsgId}
-                        ).
+    build_and_send_email(TxtBody, HTMLBody, Subject, Emails, props:filter_undefined(Props)).
 
 -spec maybe_add_user_email(ne_binaries(), api_binary(), boolean()) -> ne_binaries().
 maybe_add_user_email(BoxEmails, 'undefined', _) -> BoxEmails;
@@ -138,7 +137,7 @@ create_template_props(Event, Timezone, Account) ->
                          ,{<<"to_user">>, knm_util:pretty_print(ToE164)}
                          ,{<<"to_realm">>, kz_json:get_value(<<"To-Realm">>, Event)}
                          ,{<<"box">>, kz_json:get_value(<<"Voicemail-Box">>, Event)}
-                         ,{<<"media">>, kz_json:get_value(<<"Voicemail-Name">>, Event)}
+                         ,{<<"media">>, kz_json:get_value(<<"Voicemail-ID">>, Event)}
                          ,{<<"length">>, preaty_print_length(Event)}
                          ,{<<"transcription">>, kz_json:get_value([<<"Voicemail-Transcription">>, <<"text">>], Event)}
                          ,{<<"call_id">>, kz_json:get_value(<<"Call-ID">>, Event)}
@@ -151,7 +150,7 @@ create_template_props(Event, Timezone, Account) ->
 magic_hash(Event) ->
     AccountId = kz_json:get_value(<<"Account-ID">>, Event),
     VMBoxId = kz_json:get_value(<<"Voicemail-Box">>, Event),
-    MessageId = kz_json:get_value(<<"Voicemail-Name">>, Event),
+    MessageId = kz_json:get_value(<<"Voicemail-ID">>, Event),
 
     try list_to_binary([<<"/v1/accounts/">>, AccountId, <<"/vmboxes/">>, VMBoxId
                        ,<<"/messages/">>, MessageId, <<"/raw">>
@@ -168,9 +167,8 @@ magic_hash(Event) ->
 %% process the AMQP requests
 %% @end
 %%--------------------------------------------------------------------
--type respond_to() :: {api_binary(), ne_binary()}.
--spec build_and_send_email(iolist(), iolist(), iolist(), ne_binaries(), kz_proplist(), respond_to()) -> 'ok'.
-build_and_send_email(TxtBody, HTMLBody, Subject, To, Props, {RespQ, MsgId}) ->
+-spec build_and_send_email(iolist(), iolist(), iolist(), ne_binaries(), kz_proplist()) -> send_email_return().
+build_and_send_email(TxtBody, HTMLBody, Subject, To, Props) ->
     Voicemail = props:get_value(<<"voicemail">>, Props),
     Service = props:get_value(<<"service">>, Props),
     AccountId = props:get_value(<<"account_id">>, Props),
@@ -230,10 +228,7 @@ build_and_send_email(TxtBody, HTMLBody, Subject, To, Props, {RespQ, MsgId}) ->
               }
               || T <- To
              ],
-    case [notify_util:send_email(From, T, Email) || {T, Email} <- Emails] of
-        ['ok'|_] -> notify_util:send_update(RespQ, MsgId, <<"completed">>);
-        [{'error', Reason}|_] -> notify_util:send_update(RespQ, MsgId, <<"failed">>, Reason)
-    end.
+    [notify_util:send_email(From, T, Email) || {T, Email} <- Emails].
 
 %%--------------------------------------------------------------------
 %% @private
@@ -251,15 +246,15 @@ get_file_name(MediaJObj, Props) ->
              }
         of
             {'undefined', 'undefined'} -> <<"Unknown">>;
-            {'undefined', Num} -> knm_util:pretty_print(kz_util:to_binary(Num));
-            {Name, _} -> knm_util:pretty_print(kz_util:to_binary(Name))
+            {'undefined', Num} -> knm_util:pretty_print(kz_term:to_binary(Num));
+            {Name, _} -> knm_util:pretty_print(kz_term:to_binary(Name))
         end,
 
     LocalDateTime = props:get_value(<<"date_called">>, Voicemail, <<"0000-00-00_00-00-00">>),
     Extension = get_extension(MediaJObj),
-    FName = list_to_binary([CallerID, "_", kz_util:pretty_print_datetime(LocalDateTime), ".", Extension]),
+    FName = list_to_binary([CallerID, "_", kz_time:pretty_print_datetime(LocalDateTime), ".", Extension]),
 
-    binary:replace(kz_util:to_lower_binary(FName), <<" ">>, <<"_">>).
+    binary:replace(kz_term:to_lower_binary(FName), <<" ">>, <<"_">>).
 
 -spec get_extension(kz_json:object()) -> ne_binary().
 get_extension(MediaJObj) ->
@@ -274,7 +269,7 @@ get_extension(MediaJObj) ->
 attachment_to_extension(AttachmentsJObj) ->
     kz_json:get_value(<<"extension">>
                      ,kz_json:map(fun attachment_to_extension/2, AttachmentsJObj)
-                     ,kapps_config:get(<<"callflow">>, [<<"voicemail">>, <<"extension">>], <<"mp3">>)
+                     ,kapps_config:get_ne_binary(<<"callflow">>, [<<"voicemail">>, <<"extension">>], <<"mp3">>)
                      ).
 
 -spec attachment_to_extension(ne_binary(), kz_json:object()) -> {ne_binary(), ne_binary()}.
@@ -299,6 +294,6 @@ preaty_print_length('undefined') ->
 preaty_print_length(Milliseconds) when is_integer(Milliseconds) ->
     Seconds = round(Milliseconds / ?MILLISECONDS_IN_SECOND) rem 60,
     Minutes = trunc(Milliseconds / ?MILLISECONDS_IN_MINUTE) rem 60,
-    kz_util:to_binary(io_lib:format("~2..0w:~2..0w", [Minutes, Seconds]));
+    kz_term:to_binary(io_lib:format("~2..0w:~2..0w", [Minutes, Seconds]));
 preaty_print_length(Event) ->
     preaty_print_length(kz_json:get_integer_value(<<"Voicemail-Length">>, Event)).

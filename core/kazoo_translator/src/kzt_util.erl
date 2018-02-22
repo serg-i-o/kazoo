@@ -61,19 +61,19 @@
 
 -spec http_method(api_binary() | list()) -> 'get' | 'post'.
 http_method(L) when is_list(L) ->
-    http_method(kz_util:to_binary(props:get_value('method', L)));
+    http_method(kz_term:to_binary(props:get_value('method', L)));
 http_method('undefined') -> ?DEFAULT_HTTP_METHOD;
 http_method(<<_/binary>> = Method) ->
-    MethodBin = kz_util:to_lower_binary(Method),
+    MethodBin = kz_term:to_lower_binary(Method),
 
-    try kz_util:to_atom(MethodBin) of
+    try kz_term:to_atom(MethodBin) of
         'get' -> 'get';
         'post' -> 'post';
         'undefined' -> ?DEFAULT_HTTP_METHOD
     catch
         _E:_R -> ?DEFAULT_HTTP_METHOD
     end;
-http_method(Method) -> http_method(kz_util:to_binary(Method)).
+http_method(Method) -> http_method(kz_term:to_binary(Method)).
 
 -spec resolve_uri(ne_binary(), ne_binary()) -> ne_binary().
 resolve_uri(Path, NewPath) ->
@@ -319,18 +319,15 @@ get_chat_permissions(Call) ->
 -spec get_request_vars(kapps_call:call()) -> kz_json:object().
 get_request_vars(Call) ->
     kz_json:from_list(
-      props:filter_undefined(
-        [{<<"Digits">>, get_digits_collected(Call)}
-        ,{<<"RecordingUrl">>, get_recording_url(Call)}
-        ,{<<"RecordingDuration">>, get_recording_duration(Call)}
-        ,{<<"DialCallStatus">>, get_dial_call_status(Call)}
-        ,{<<"DialCallSid">>, get_dial_call_sid(Call)}
-        ,{<<"DialCallDuration">>, get_dial_call_duration(Call)}
-        ,{<<"QueueSid">>, get_queue_sid(Call)}
-        ,{<<"CallStatus">>, get_call_status(Call)}
-        ]
-       )
-     ).
+      [{<<"Digits">>, get_digits_collected(Call)}
+      ,{<<"RecordingUrl">>, get_recording_url(Call)}
+      ,{<<"RecordingDuration">>, get_recording_duration(Call)}
+      ,{<<"DialCallStatus">>, get_dial_call_status(Call)}
+      ,{<<"DialCallSid">>, get_dial_call_sid(Call)}
+      ,{<<"DialCallDuration">>, get_dial_call_duration(Call)}
+      ,{<<"QueueSid">>, get_queue_sid(Call)}
+      ,{<<"CallStatus">>, get_call_status(Call)}
+      ]).
 
 -spec iteration(kapps_call:call()) -> kapps_call:call().
 iteration(Call) ->

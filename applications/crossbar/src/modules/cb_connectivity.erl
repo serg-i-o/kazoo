@@ -144,7 +144,7 @@ delete(Context, _) ->
 -spec registration_update(cb_context:context()) -> 'ok'.
 registration_update(Context) ->
     crossbar_util:flush_registrations(
-      kz_util:get_account_realm(cb_context:account_id(Context))
+      kz_account:fetch_realm(cb_context:account_id(Context))
      ).
 
 %%--------------------------------------------------------------------
@@ -166,13 +166,13 @@ track_assignment('post', Context) ->
                      not (lists:member(Num, NewNums))
                  ],
 
-    Updates = cb_modules_util:apply_assignment_updates(Assigned ++ Unassigned),
+    Updates = cb_modules_util:apply_assignment_updates(Assigned ++ Unassigned, Context),
     cb_modules_util:log_assignment_updates(Updates);
 track_assignment('delete', Context) ->
     Nums = get_numbers(cb_context:doc(Context)),
     Unassigned = [{Num, 'undefined'} || Num <- Nums],
 
-    Updates = cb_modules_util:apply_assignment_updates(Unassigned),
+    Updates = cb_modules_util:apply_assignment_updates(Unassigned, Context),
     cb_modules_util:log_assignment_updates(Updates).
 
 %%--------------------------------------------------------------------
@@ -198,7 +198,13 @@ get_numbers_fold(Server, Acc) ->
 %%--------------------------------------------------------------------
 -spec create(cb_context:context()) -> cb_context:context().
 create(Context) ->
-    OnSuccess = fun(C) -> on_successful_validation('undefined', C) end,
+    OnSuccess = fun(C) ->
+                        C1 = on_successful_validation('undefined', C),
+
+                        Doc = cb_context:doc(C1),
+                        Nums = get_numbers(Doc),
+                        cb_modules_util:validate_number_ownership(Nums, C1)
+                end,
     cb_context:validate_request_data(<<"connectivity">>, Context, OnSuccess).
 
 %%--------------------------------------------------------------------
@@ -220,7 +226,13 @@ read(Id, Context) ->
 %%--------------------------------------------------------------------
 -spec update(ne_binary(), cb_context:context()) -> cb_context:context().
 update(Id, Context) ->
-    OnSuccess = fun(C) -> on_successful_validation(Id, C) end,
+    OnSuccess = fun(C) ->
+                        C1 = on_successful_validation(Id, C),
+
+                        Doc = cb_context:doc(C1),
+                        Nums = get_numbers(Doc),
+                        cb_modules_util:validate_number_ownership(Nums, C1)
+                end,
     cb_context:validate_request_data(<<"connectivity">>, Context, OnSuccess).
 
 %%--------------------------------------------------------------------
@@ -264,7 +276,7 @@ summary(Context) ->
 %%--------------------------------------------------------------------
 %% @private
 %% @doc
-%% Normalizes the resuts of a view
+%% Normalizes the results of a view
 %% @end
 %%--------------------------------------------------------------------
 -spec normalize_view_results(kz_json:object(), kz_json:objects()) -> kz_json:objects().

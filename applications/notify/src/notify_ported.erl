@@ -40,12 +40,16 @@ init() ->
 %% process the AMQP requests
 %% @end
 %%--------------------------------------------------------------------
--spec handle_req(kz_json:object(), proplist()) -> 'ok'.
+-spec handle_req(kz_json:object(), kz_proplist()) -> 'ok'.
 handle_req(JObj, _Props) ->
     'true' = kapi_notifications:ported_v(JObj),
     kz_util:put_callid(JObj),
 
     lager:debug("a ported notice has been received, sending email notification"),
+
+    RespQ = kz_api:server_id(JObj),
+    MsgId = kz_api:msg_id(JObj),
+    notify_util:send_update(RespQ, MsgId, <<"pending">>),
 
     {'ok', Account} = notify_util:get_account_doc(JObj),
 
@@ -60,13 +64,15 @@ handle_req(JObj, _Props) ->
     CustomSubjectTemplate = kz_json:get_value([<<"notifications">>, <<"ported">>, <<"email_subject_template">>], Account),
     {'ok', Subject} = notify_util:render_template(CustomSubjectTemplate, ?DEFAULT_SUBJ_TMPL, Props),
 
-    case notify_util:get_rep_email(Account) of
-        'undefined' ->
-            SysAdminEmail = kapps_config:get(?MOD_CONFIG_CAT, <<"default_to">>, <<"">>),
-            build_and_send_email(TxtBody, HTMLBody, Subject, SysAdminEmail, Props);
-        RepEmail ->
-            build_and_send_email(TxtBody, HTMLBody, Subject, RepEmail, Props)
-    end.
+    Result =
+        case notify_util:get_rep_email(Account) of
+            'undefined' ->
+                SysAdminEmail = kapps_config:get_ne_binary_or_ne_binaries(?MOD_CONFIG_CAT, <<"default_to">>),
+                build_and_send_email(TxtBody, HTMLBody, Subject, SysAdminEmail, Props);
+            RepEmail ->
+                build_and_send_email(TxtBody, HTMLBody, Subject, RepEmail, Props)
+        end,
+    notify_util:maybe_send_update(Result, RespQ, MsgId).
 
 %%--------------------------------------------------------------------
 %% @private
@@ -92,7 +98,7 @@ create_template_props(Event, Account) ->
 %%--------------------------------------------------------------------
 -spec get_send_from(kz_json:object()) -> ne_binary().
 get_send_from(Admin) ->
-    DefaultFrom = kz_util:to_binary(node()),
+    DefaultFrom = kz_term:to_binary(node()),
     case kapps_config:get_is_true(?MOD_CONFIG_CAT, <<"send_from_admin_email">>, 'true') of
         'false' -> DefaultFrom;
         'true' -> kz_json:get_ne_value(<<"email">>, Admin, DefaultFrom)
@@ -104,9 +110,9 @@ get_send_from(Admin) ->
 %% process the AMQP requests
 %% @end
 %%--------------------------------------------------------------------
--spec build_and_send_email(iolist(), iolist(), iolist(), ne_binary() | ne_binaries(), kz_proplist()) -> 'ok'.
+-spec build_and_send_email(iolist(), iolist(), iolist(), ne_binary() | ne_binaries(), kz_proplist()) -> send_email_return().
 build_and_send_email(TxtBody, HTMLBody, Subject, To, Props) when is_list(To)->
-    _ = [build_and_send_email(TxtBody, HTMLBody, Subject, T, Props) || T <- To];
+    [build_and_send_email(TxtBody, HTMLBody, Subject, T, Props) || T <- To];
 build_and_send_email(TxtBody, HTMLBody, Subject, To, Props) ->
     From = props:get_value(<<"send_from">>, Props),
     %% Content Type, Subtype, Headers, Parameters, Body

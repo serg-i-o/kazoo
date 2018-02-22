@@ -6,7 +6,7 @@
 
 
 
-#### Check the cluster's version of Kazoo
+#### Fetch
 
 > GET /v2/accounts/{ACCOUNT_ID}/about
 
@@ -20,7 +20,7 @@ curl -v -X GET \
 {
     "auth_token": "{AUTH_TOKEN}",
     "data": {
-        "erlang_version": "18",
+        "erlang_version": "19",
         "ports": 21,
         "processes": 1816,
         "used_memory": 89615664,
@@ -31,4 +31,3 @@ curl -v -X GET \
     "status": "success"
 }
 ```
-

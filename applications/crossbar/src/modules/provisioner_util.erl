@@ -20,10 +20,20 @@
 -export([get_provision_defaults/1]).
 -export([is_mac_address_in_use/2]).
 -export([maybe_sync_sip_data/2]).
+-export([cleanse_mac_address/1]).
 
 -define(MOD_CONFIG_CAT, <<(?CONFIG_CAT)/binary, ".devices">>).
 -define(PROVISIONER_CONFIG, <<"provisioner">>).
 -define(TEMPLATE_ATTCH, <<"template">>).
+
+-define(BASE_HEADERS
+       ,props:filter_undefined(
+          [{"Host", kapps_config:get_string(?MOD_CONFIG_CAT, <<"provisioning_host">>)}
+          ,{"Referer", kapps_config:get_string(?MOD_CONFIG_CAT, <<"provisioning_referer">>)}
+          ,{"User-Agent", kz_term:to_list(erlang:node())}
+          ])).
+-define(JSON_HEADERS, [{"Content-Type", "application/json"} | ?BASE_HEADERS]).
+-define(FORM_HEADERS, [{"Content-Type", "application/x-www-form-urlencoded"} | ?BASE_HEADERS]).
 
 
 -spec get_mac_address(cb_context:context()) -> api_binary().
@@ -41,12 +51,18 @@ get_old_mac_address(Context) ->
         end,
     cleanse_mac_address(MACAddress).
 
--spec cleanse_mac_address(api_binary()) -> api_binary().
+-spec cleanse_mac_address(api_ne_binary()) -> api_ne_binary().
 cleanse_mac_address('undefined') -> 'undefined';
 cleanse_mac_address(MACAddress) ->
-    re:replace(MACAddress, <<"[^0-9a-fA-F]">>, <<>>, ['global'
-                                                     ,{'return','binary'}
-                                                     ]).
+    ReOptions = ['global'
+                ,{'return','binary'}
+                ],
+    MAC = kz_term:to_lower_binary(
+            re:replace(MACAddress, <<"[^0-9a-fA-F]">>, <<>>, ReOptions)),
+    case kz_term:is_empty(MAC) of
+        false -> MAC;
+        true -> undefined
+    end.
 
 %%--------------------------------------------------------------------
 %% @public
@@ -204,7 +220,7 @@ do_full_provisioner_provider(Context) ->
 do_full_provision_contact_list(AccountId) when is_binary(AccountId) ->
     case kz_account:fetch(AccountId) of
         {'ok', JObj} ->
-            Routines = [fun kz_json:public_fields/1
+            Routines = [fun kz_doc:public_fields/1
                        ,fun(J) ->
                                 ResellerId = kz_services:find_reseller_id(AccountId),
                                 kz_json:set_value(<<"provider_id">>, ResellerId, J)
@@ -262,18 +278,13 @@ get_provision_defaults(Context) ->
 
     Url = [kapps_config:get_string(?MOD_CONFIG_CAT, <<"provisioning_url">>)
           ,"?request=data"
-          ,"&brand=", kz_util:to_list(Brand)
-          ,"&model=", kz_util:to_list(Model)
-          ,"&product=", kz_util:to_list(Product)
+          ,"&brand=", kz_term:to_list(Brand)
+          ,"&model=", kz_term:to_list(Model)
+          ,"&product=", kz_term:to_list(Product)
           ],
     UrlString = lists:flatten(Url),
-    Headers = props:filter_undefined(
-                [{"Host", kapps_config:get_string(?MOD_CONFIG_CAT, <<"provisioning_host">>)}
-                ,{"Referer", kapps_config:get_string(?MOD_CONFIG_CAT, <<"provisioning_referer">>)}
-                ,{"User-Agent", kz_util:to_list(erlang:node())}
-                ]),
     lager:debug("attempting to pull provisioning configs from ~s", [UrlString]),
-    case kz_http:get(UrlString, Headers) of
+    case kz_http:get(UrlString, ?BASE_HEADERS) of
         {'ok', 200, _, Response} ->
             lager:debug("great success, accquired provisioning template"),
             JResp = kz_json:decode(Response),
@@ -319,23 +330,19 @@ do_simple_provision(MACAddress, Context) ->
     case kapps_config:get_string(?MOD_CONFIG_CAT, <<"provisioning_url">>) of
         'undefined' -> 'false';
         Url ->
-            AccountRealm = kz_util:get_account_realm(cb_context:account_id(Context)),
-            Headers = props:filter_undefined(
-                        [{"Host", kapps_config:get_string(?MOD_CONFIG_CAT, <<"provisioning_host">>)}
-                        ,{"Referer", kapps_config:get_string(?MOD_CONFIG_CAT, <<"provisioning_referer">>)}
-                        ,{"User-Agent", kz_util:to_list(erlang:node())}
-                        ,{"Content-Type", "application/x-www-form-urlencoded"}
-                        ]),
-            Body = [{"device[mac]", MACAddress}
-                   ,{"device[label]", kz_json:get_value(<<"name">>, JObj)}
-                   ,{"sip[realm]", kz_device:sip_realm(JObj, AccountRealm)}
-                   ,{"sip[username]", kz_device:sip_username(JObj)}
-                   ,{"sip[password]", kz_device:sip_password(JObj)}
-                   ,{"submit", "true"}
-                   ],
-            Encoded = kz_http_util:urlencode(Body),
-            lager:debug("posting to ~s with: ~-300p", [Url, Encoded]),
-            Res = kz_http:post(Url, Headers, Encoded),
+            AccountRealm = kz_account:fetch_realm(cb_context:account_id(Context)),
+            Body =
+                kz_json:from_list(
+                  [{<<"device[mac]">>, MACAddress}
+                  ,{<<"device[label]">>, kz_json:get_ne_binary_value(<<"name">>, JObj)}
+                  ,{<<"sip[realm]">>, kz_device:sip_realm(JObj, AccountRealm)}
+                  ,{<<"sip[username]">>, kz_device:sip_username(JObj)}
+                  ,{<<"sip[password]">>, kz_device:sip_password(JObj)}
+                  ,{<<"submit">>, <<"true">>}
+                  ]),
+            Encoded = kz_http_util:json_to_querystring(Body),
+            lager:debug("posting to ~s with: ~-300s", [Url, Encoded]),
+            Res = kz_http:post(Url, ?FORM_HEADERS, Encoded),
             lager:debug("response from server: ~p", [Res]),
             'true'
     end.
@@ -381,7 +388,7 @@ maybe_send_to_full_provisioner(PartialURL) ->
     case kapps_config:get_binary(?MOD_CONFIG_CAT, <<"provisioning_url">>) of
         'undefined' -> 'false';
         Url ->
-            FullUrl = kz_util:to_lower_string(<<Url/binary, "/", PartialURL/binary>>),
+            FullUrl = kz_term:to_lower_string(<<Url/binary, "/", PartialURL/binary>>),
             send_to_full_provisioner(FullUrl)
     end.
 
@@ -389,14 +396,8 @@ maybe_send_to_full_provisioner(PartialURL, JObj) ->
     case kapps_config:get_binary(?MOD_CONFIG_CAT, <<"provisioning_url">>) of
         'undefined' -> 'false';
         Url ->
-            Headers = props:filter_undefined(
-                        [{"Host", kapps_config:get_string(?MOD_CONFIG_CAT, <<"provisioning_host">>)}
-                        ,{"Referer", kapps_config:get_string(?MOD_CONFIG_CAT, <<"provisioning_referer">>)}
-                        ,{"User-Agent", kz_util:to_list(erlang:node())}
-                        ,{"Content-Type", "application/json"}
-                        ]),
-            FullUrl = kz_util:to_lower_string(<<Url/binary, "/", PartialURL/binary>>),
-            {'ok', _, _, RawJObj} = kz_http:get(FullUrl, Headers, [{'timeout', 10 * ?MILLISECONDS_IN_SECOND}]),
+            FullUrl = kz_term:to_lower_string(<<Url/binary, "/", PartialURL/binary>>),
+            {'ok', _, _, RawJObj} = kz_http:get(FullUrl, ?JSON_HEADERS, [{'timeout', 10 * ?MILLISECONDS_IN_SECOND}]),
             case kz_json:get_integer_value([<<"error">>, <<"code">>], kz_json:decode(RawJObj)) of
                 'undefined' -> send_to_full_provisioner('post', FullUrl, JObj);
                 404 -> send_to_full_provisioner('put', FullUrl, JObj);
@@ -406,45 +407,27 @@ maybe_send_to_full_provisioner(PartialURL, JObj) ->
 
 -spec send_to_full_provisioner(string()) -> boolean().
 send_to_full_provisioner(FullUrl) ->
-    Headers = props:filter_undefined(
-                [{"Host", kapps_config:get_string(?MOD_CONFIG_CAT, <<"provisioning_host">>)}
-                ,{"Referer", kapps_config:get_string(?MOD_CONFIG_CAT, <<"provisioning_referer">>)}
-                ,{"User-Agent", kz_util:to_list(erlang:node())}
-                ,{"Content-Type", "application/json"}
-                ]),
     lager:debug("making ~s request to ~s", ['delete', FullUrl]),
-    Res = kz_http:delete(FullUrl, Headers, [], [{'timeout', 10 * ?MILLISECONDS_IN_SECOND}]),
+    Res = kz_http:delete(FullUrl, ?JSON_HEADERS, [], [{'timeout', 10 * ?MILLISECONDS_IN_SECOND}]),
     lager:debug("response from server: ~p", [Res]),
     'true'.
 
 -spec send_to_full_provisioner('put' | 'post', string(), kz_json:object()) -> boolean().
 send_to_full_provisioner('put', FullUrl, JObj) ->
-    Headers = props:filter_undefined(
-                [{"Host", kapps_config:get_string(?MOD_CONFIG_CAT, <<"provisioning_host">>)}
-                ,{"Referer", kapps_config:get_string(?MOD_CONFIG_CAT, <<"provisioning_referer">>)}
-                ,{"User-Agent", kz_util:to_list(erlang:node())}
-                ,{"Content-Type", "application/json"}
-                ]),
-    Body = kz_util:to_list(kz_json:encode(JObj)),
+    Body = kz_term:to_list(kz_json:encode(JObj)),
     lager:debug("making put request to ~s with: ~-300p", [FullUrl, Body]),
-    Res = kz_http:put(FullUrl, Headers, Body, [{'timeout', 10 * ?MILLISECONDS_IN_SECOND}]),
+    Res = kz_http:put(FullUrl, ?JSON_HEADERS, Body, [{'timeout', 10 * ?MILLISECONDS_IN_SECOND}]),
     lager:debug("response from server: ~p", [Res]),
     'true';
 send_to_full_provisioner('post', FullUrl, JObj) ->
-    Headers = props:filter_undefined(
-                [{"Host", kapps_config:get_string(?MOD_CONFIG_CAT, <<"provisioning_host">>)}
-                ,{"Referer", kapps_config:get_string(?MOD_CONFIG_CAT, <<"provisioning_referer">>)}
-                ,{"User-Agent", kz_util:to_list(erlang:node())}
-                ,{"Content-Type", "application/json"}
-                ]),
-    Props = [{<<"provider_id">>, kz_json:get_value(<<"provider_id">>, JObj)}
-            ,{<<"name">>, kz_json:get_value(<<"name">>, JObj)}
-            ,{<<"settings">>, JObj}
-            ],
-    J =  kz_json:from_list(props:filter_undefined(Props)),
-    Body = kz_util:to_list(kz_json:encode(J)),
+    J = kz_json:from_list(
+          [{<<"provider_id">>, kz_json:get_value(<<"provider_id">>, JObj)}
+          ,{<<"name">>, kz_json:get_value(<<"name">>, JObj)}
+          ,{<<"settings">>, JObj}
+          ]),
+    Body = kz_term:to_list(kz_json:encode(J)),
     lager:debug("making post request to ~s with: ~-300p", [FullUrl, Body]),
-    Res = kz_http:post(FullUrl, Headers, Body, [{'timeout', 10 * ?MILLISECONDS_IN_SECOND}]),
+    Res = kz_http:post(FullUrl, ?JSON_HEADERS, Body, [{'timeout', 10 * ?MILLISECONDS_IN_SECOND}]),
     lager:debug("response from server: ~p", [Res]),
     'true'.
 
@@ -479,13 +462,13 @@ merge_device(MACAddress, Context) ->
                ,fun(J) ->
                         OwnerId = kz_json:get_ne_value(<<"owner_id">>, JObj),
                         Owner = get_owner(OwnerId, AccountId),
-                        kz_json:merge_recursive(J, Owner)
+                        kz_json:merge(J, Owner)
                 end
                ,fun(J) -> kz_json:delete_key(<<"apps">>, J) end
                ,fun(J) -> kz_json:set_value(<<"account_id">>, AccountId, J) end
                ],
     MergedDevice = lists:foldl(fun(F, J) -> F(J) end, JObj, Routines),
-    {'ok', kz_json:public_fields(MergedDevice)}.
+    {'ok', kz_doc:public_fields(MergedDevice)}.
 
 -spec get_owner(api_binary(), ne_binary()) -> kz_json:object().
 get_owner('undefined', _) -> kz_json:new();
@@ -652,7 +635,7 @@ set_global_overrides(_) ->
     [fun(J) ->
              case kz_json:get_value(<<"defaults">>, GlobalDefaults) of
                  'undefined' -> J;
-                 Overrides -> kz_json:merge_recursive(J, Overrides)
+                 Overrides -> kz_json:merge(J, Overrides)
              end
      end
     ].
@@ -673,7 +656,7 @@ set_account_overrides(Context) ->
     [fun(J) ->
              case kz_json:get_value([<<"provision">>, <<"overrides">>], Account) of
                  'undefined' -> J;
-                 Overrides -> kz_json:merge_recursive(J, Overrides)
+                 Overrides -> kz_json:merge(J, Overrides)
              end
      end
     ].
@@ -697,7 +680,7 @@ set_user_overrides(Context) ->
     [fun(J) ->
              case kz_json:get_value([<<"provision">>, <<"overrides">>], User) of
                  'undefined' -> J;
-                 Overrides -> kz_json:merge_recursive(J, Overrides)
+                 Overrides -> kz_json:merge(J, Overrides)
              end
      end
     ].
@@ -716,7 +699,7 @@ set_device_overrides(Context) ->
              case kz_json:get_value([<<"provision">>, <<"overrides">>], Device) of
                  'undefined' -> J;
                  Overrides ->
-                     kz_json:merge_recursive(J, Overrides)
+                     kz_json:merge(J, Overrides)
              end
      end
     ].
@@ -732,14 +715,8 @@ send_provisioning_request(Template, MACAddress) ->
     ProvisionRequest = kz_json:encode(Template),
     UrlTmpl = kapps_config:get_string(?MOD_CONFIG_CAT, <<"provisioning_url">>),
     UrlString = re:replace(UrlTmpl, "{{mac_address}}", MACAddress, ['global', {'return', 'list'}]),
-    Headers = props:filter_undefined(
-                [{"Content-Type", "application/json"}
-                ,{"Host", kapps_config:get_string(?MOD_CONFIG_CAT, <<"provisioner_host">>)}
-                ,{"Referer", kapps_config:get_string(?MOD_CONFIG_CAT, <<"provisioner_referer">>)}
-                ,{"User-Agent", kz_util:to_list(erlang:node())}
-                ]),
     lager:debug("provisioning via ~s", [UrlString]),
-    case kz_http:post(UrlString, Headers, ProvisionRequest) of
+    case kz_http:post(UrlString, ?JSON_HEADERS, ProvisionRequest) of
         {'ok', 200, _, Response} ->
             lager:debug("SUCCESS! BOOM! ~s", [Response]);
         {'ok', Code, _, Response} ->
@@ -753,12 +730,12 @@ send_provisioning_request(Template, MACAddress) ->
 %% @doc
 %% @end
 %%--------------------------------------------------------------------
--spec get_provisioning_type() -> api_binary().
+-spec get_provisioning_type() -> api_ne_binary().
 get_provisioning_type() ->
-    case kapps_config:get_non_empty(?MOD_CONFIG_CAT, <<"provisioning_type">>) of
+    case kapps_config:get_ne_binary(?MOD_CONFIG_CAT, <<"provisioning_type">>) of
         'undefined' ->
             lager:debug("using ~p for provisioner_type", [?PROVISIONER_CONFIG]),
-            kapps_config:get_non_empty(?PROVISIONER_CONFIG, <<"provisioning_type">>);
+            kapps_config:get_ne_binary(?PROVISIONER_CONFIG, <<"provisioning_type">>);
         Result ->
             lager:debug("using ~p for provisioner_type", [?MOD_CONFIG_CAT]),
             Result
@@ -782,15 +759,15 @@ maybe_sync_sip_data(Context, 'device', 'true') ->
         'false' ->
             lager:debug("nothing has changed on device; no check-sync needed");
         'true' ->
-            Realm = kz_util:get_account_realm(cb_context:account_id(Context)),
+            Realm = kz_account:fetch_realm(cb_context:account_id(Context)),
             send_check_sync(OldUsername, Realm, cb_context:req_id(Context))
     end;
 maybe_sync_sip_data(Context, 'device', 'force') ->
     Username = kz_device:sip_username(cb_context:doc(Context)),
-    Realm = kz_util:get_account_realm(cb_context:account_id(Context)),
+    Realm = kz_account:fetch_realm(cb_context:account_id(Context)),
     send_check_sync(Username, Realm, cb_context:req_id(Context));
 maybe_sync_sip_data(Context, 'user', 'true') ->
-    Realm = kz_util:get_account_realm(cb_context:account_id(Context)),
+    Realm = kz_account:fetch_realm(cb_context:account_id(Context)),
     Req = [{<<"Realm">>, Realm}
           ,{<<"Fields">>, [<<"Username">>]}
           ],
@@ -816,7 +793,7 @@ maybe_sync_sip_data(Context, 'user', 'force') ->
         {'ok', []} ->
             lager:debug("no user devices to sync");
         {'ok', DeviceDocs} ->
-            Realm = kz_util:get_account_realm(cb_context:account_id(Context)),
+            Realm = kz_account:fetch_realm(cb_context:account_id(Context)),
             _ = [send_check_sync(kz_device:presence_id(DeviceDoc), Realm, cb_context:req_id(Context))
                  || DeviceDoc <- DeviceDocs
                 ],

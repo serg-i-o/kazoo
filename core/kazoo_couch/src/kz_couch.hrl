@@ -1,9 +1,11 @@
 -ifndef(KZ_COUCH_HRL).
--include_lib("kazoo/include/kz_types.hrl"). % get the kazoo types
--include_lib("kazoo/include/kz_log.hrl").
--include_lib("kazoo/include/kz_databases.hrl").
+
+-include_lib("kazoo_stdlib/include/kz_types.hrl").
+-include_lib("kazoo_stdlib/include/kz_log.hrl").
+-include_lib("kazoo_stdlib/include/kz_databases.hrl").
 -include_lib("kazoo/include/kz_system_config.hrl").
 -include_lib("couchbeam/include/couchbeam.hrl").
+-include("kazoo_couch.hrl").
 
 -define(TIMEOUT, ?MILLISECONDS_IN_HOUR). %% check every hour
 
@@ -53,7 +55,7 @@
                  ,do_compaction = 'false' :: boolean()
                  }).
 
--record(kz_couch_connection, {id = kz_util:current_tstamp()
+-record(kz_couch_connection, {id = kz_time:current_tstamp()
                              ,host = "localhost"
                              ,port = ?DEFAULT_PORT
                              ,username = ""

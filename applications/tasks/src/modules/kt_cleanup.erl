@@ -20,7 +20,7 @@
 
 %% How long to pause before attempting to delete the next chunk of soft-deleted docs
 -define(SOFT_DELETE_PAUSE,
-        kapps_config:get(?CONFIG_CAT, <<"soft_delete_pause_ms">>, 10 * ?MILLISECONDS_IN_SECOND)).
+        kapps_config:get_integer(?CONFIG_CAT, <<"soft_delete_pause_ms">>, 10 * ?MILLISECONDS_IN_SECOND)).
 
 
 %%%===================================================================
@@ -34,6 +34,8 @@ init() ->
 %%% Triggerables
 
 -spec cleanup_soft_deletes(ne_binary()) -> ok.
+cleanup_soft_deletes(?KZ_ACCOUNTS_DB) ->
+    do_cleanup(?KZ_ACCOUNTS_DB);
 cleanup_soft_deletes(Account) ->
     kz_datamgr:suppress_change_notice(),
     case kapps_util:is_account_db(Account) of

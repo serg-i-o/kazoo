@@ -25,7 +25,7 @@
 
 -include_lib("amqp_util.hrl").
 
--define(LOWER(X), kz_util:to_lower_binary(X)).
+-define(LOWER(X), kz_term:to_lower_binary(X)).
 
 -define(SMS_EXCHANGE, <<"sms">>).
 -define(EVENT_CATEGORY, <<"message">>).
@@ -58,7 +58,7 @@
                        ,{<<"SIP-Headers">>, fun kz_json:is_json_object/1}
                        ,{<<"Custom-Channel-Vars">>, fun kz_json:is_json_object/1}
                        ,{<<"Custom-SIP-Headers">>, fun kz_json:is_json_object/1}
-                       ,{<<"Continue-On-Fail">>, fun kz_util:is_boolean/1}
+                       ,{<<"Continue-On-Fail">>, fun kz_term:is_boolean/1}
                        ,{<<"Message-ID">>, fun is_binary/1}
                        ,{<<"Body">>, fun is_binary/1}
                        ]).
@@ -202,7 +202,7 @@
                                                         ,{<<"mandatory">>, 'true'}
                                                         ])).
 -define(SMS_OUTBOUND_OPTIONS_KEY, [<<"outbound">>, <<"options">>]).
--define(SMS_OUTBOUND_OPTIONS, kapps_config:get(<<"sms">>, ?SMS_OUTBOUND_OPTIONS_KEY, ?SMS_DEFAULT_OUTBOUND_OPTIONS)).
+-define(SMS_OUTBOUND_OPTIONS, kapps_config:get_json(<<"sms">>, ?SMS_OUTBOUND_OPTIONS_KEY, ?SMS_DEFAULT_OUTBOUND_OPTIONS)).
 
 -spec message(api_terms()) -> api_formatter_return().
 message(Prop) when is_list(Prop) ->
@@ -442,6 +442,6 @@ publish_resume(Req, ContentType) ->
 -spec amqp_options(api_object()) -> kz_proplist().
 amqp_options('undefined') -> [];
 amqp_options(JObj) ->
-    [{kz_util:to_atom(K, 'true'), V}
+    [{kz_term:to_atom(K, 'true'), V}
      || {K, V} <- kz_json:to_proplist(JObj)
     ].

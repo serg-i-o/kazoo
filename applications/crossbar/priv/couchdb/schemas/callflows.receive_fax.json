@@ -1,20 +1,29 @@
 {
-    "$schema": "http://json-schema.org/draft-03/schema#",
+    "$schema": "http://json-schema.org/draft-04/schema#",
     "_id": "callflows.receive_fax",
     "description": "Validator for the receive_fax callflow's data object",
     "properties": {
         "media": {
             "properties": {
                 "fax_option": {
-                    "description": ""
+                    "description": "Caller flag for T38 settings",
+                    "enum": [
+                        "auto",
+                        true,
+                        false
+                    ],
+                    "type": [
+                        "string",
+                        "boolean"
+                    ]
                 }
             },
             "type": "object"
         },
         "owner_id": {
-            "description": ""
+            "description": "User ID to send fax to",
+            "type": "string"
         }
     },
-    "required": true,
     "type": "object"
 }

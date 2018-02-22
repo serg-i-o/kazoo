@@ -6,20 +6,15 @@
         "outbound": {
             "properties": {
                 "options": {
-                    "properties": {
-                        "default": {
-                            "delivery_mode": 2,
-                            "mandatory": true
-                        },
-                        "description": "sms options",
-                        "type": "object"
-                    }
+                    "default": {
+                        "delivery_mode": 2,
+                        "mandatory": true
+                    },
+                    "description": "sms options",
+                    "type": "object"
                 }
             }
         }
     },
-    "required": [
-        "outbound"
-    ],
     "type": "object"
 }

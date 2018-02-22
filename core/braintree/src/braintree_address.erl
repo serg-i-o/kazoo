@@ -30,10 +30,10 @@
 -spec url(ne_binary(), ne_binary()) -> string().
 
 url(CustomerId) ->
-    lists:append(["/customers/", kz_util:to_list(CustomerId), "/addresses"]).
+    lists:append(["/customers/", kz_term:to_list(CustomerId), "/addresses"]).
 
 url(CustomerId, AddressId) ->
-    lists:append(["/customers/", kz_util:to_list(CustomerId), "/addresses/", kz_util:to_list(AddressId)]).
+    lists:append(["/customers/", kz_term:to_list(CustomerId), "/addresses/", kz_term:to_list(AddressId)]).
 
 %%--------------------------------------------------------------------
 %% @public
@@ -112,22 +112,22 @@ xml_to_record(Xml) ->
     xml_to_record(Xml, "/address").
 
 xml_to_record(Xml, Base) ->
-    #bt_address{id = kz_util:get_xml_value([Base, "/id/text()"], Xml)
-               ,customer_id = kz_util:get_xml_value([Base, "/customer-id/text()"], Xml)
-               ,first_name = kz_util:get_xml_value([Base, "/first-name/text()"], Xml)
-               ,last_name = kz_util:get_xml_value([Base, "/last-name/text()"], Xml)
-               ,company = kz_util:get_xml_value([Base, "/company/text()"], Xml)
-               ,street_address = kz_util:get_xml_value([Base, "/street-address/text()"], Xml)
-               ,extended_address = kz_util:get_xml_value([Base, "/extended-address/text()"], Xml)
-               ,locality = kz_util:get_xml_value([Base, "/locality/text()"], Xml)
-               ,region = kz_util:get_xml_value([Base, "/region/text()"], Xml)
-               ,postal_code = kz_util:get_xml_value([Base, "/postal-code/text()"], Xml)
-               ,country_code_two = kz_util:get_xml_value([Base, "/country-code-alpha2/text()"], Xml)
-               ,country_code_three = kz_util:get_xml_value([Base, "/country-code-alpha3/text()"], Xml)
-               ,country_code = kz_util:get_xml_value([Base, "/country-code-numeric/text()"], Xml)
-               ,country_name = kz_util:get_xml_value([Base, "/country-name/text()"], Xml)
-               ,created_at = kz_util:get_xml_value([Base, "/created-at/text()"], Xml)
-               ,updated_at = kz_util:get_xml_value([Base, "/updated-at/text()"], Xml)
+    #bt_address{id = kz_xml:get_value([Base, "/id/text()"], Xml)
+               ,customer_id = kz_xml:get_value([Base, "/customer-id/text()"], Xml)
+               ,first_name = kz_xml:get_value([Base, "/first-name/text()"], Xml)
+               ,last_name = kz_xml:get_value([Base, "/last-name/text()"], Xml)
+               ,company = kz_xml:get_value([Base, "/company/text()"], Xml)
+               ,street_address = kz_xml:get_value([Base, "/street-address/text()"], Xml)
+               ,extended_address = kz_xml:get_value([Base, "/extended-address/text()"], Xml)
+               ,locality = kz_xml:get_value([Base, "/locality/text()"], Xml)
+               ,region = kz_xml:get_value([Base, "/region/text()"], Xml)
+               ,postal_code = kz_xml:get_value([Base, "/postal-code/text()"], Xml)
+               ,country_code_two = kz_xml:get_value([Base, "/country-code-alpha2/text()"], Xml)
+               ,country_code_three = kz_xml:get_value([Base, "/country-code-alpha3/text()"], Xml)
+               ,country_code = kz_xml:get_value([Base, "/country-code-numeric/text()"], Xml)
+               ,country_name = kz_xml:get_value([Base, "/country-name/text()"], Xml)
+               ,created_at = kz_xml:get_value([Base, "/created-at/text()"], Xml)
+               ,updated_at = kz_xml:get_value([Base, "/updated-at/text()"], Xml)
                }.
 
 %%--------------------------------------------------------------------
@@ -200,24 +200,24 @@ json_to_record(JObj) ->
 -spec record_to_json(bt_address() | 'undefined') -> api_object().
 record_to_json('undefined') -> 'undefined';
 record_to_json(#bt_address{}=Address) ->
-    Props = [{<<"id">>, Address#bt_address.id}
-            ,{<<"customer_id">>, Address#bt_address.customer_id}
-            ,{<<"first_name">>, Address#bt_address.first_name}
-            ,{<<"last_name">>, Address#bt_address.last_name}
-            ,{<<"company">>, Address#bt_address.company}
-            ,{<<"street_address">>, Address#bt_address.street_address}
-            ,{<<"extended_address">>, Address#bt_address.extended_address}
-            ,{<<"locality">>, Address#bt_address.locality}
-            ,{<<"region">>, Address#bt_address.region}
-            ,{<<"postal_code">>, Address#bt_address.postal_code}
-            ,{<<"country_code_two">>, Address#bt_address.country_code_two}
-            ,{<<"country_code_three">>, Address#bt_address.country_code_three}
-            ,{<<"country_code">>, Address#bt_address.country_code}
-            ,{<<"country_name">>, Address#bt_address.country_name}
-            ,{<<"created_at">>, Address#bt_address.created_at}
-            ,{<<"updated_at">>, Address#bt_address.updated_at}
-            ],
-    kz_json:from_list(props:filter_undefined(Props)).
+    kz_json:from_list(
+      [{<<"id">>, Address#bt_address.id}
+      ,{<<"customer_id">>, Address#bt_address.customer_id}
+      ,{<<"first_name">>, Address#bt_address.first_name}
+      ,{<<"last_name">>, Address#bt_address.last_name}
+      ,{<<"company">>, Address#bt_address.company}
+      ,{<<"street_address">>, Address#bt_address.street_address}
+      ,{<<"extended_address">>, Address#bt_address.extended_address}
+      ,{<<"locality">>, Address#bt_address.locality}
+      ,{<<"region">>, Address#bt_address.region}
+      ,{<<"postal_code">>, Address#bt_address.postal_code}
+      ,{<<"country_code_two">>, Address#bt_address.country_code_two}
+      ,{<<"country_code_three">>, Address#bt_address.country_code_three}
+      ,{<<"country_code">>, Address#bt_address.country_code}
+      ,{<<"country_name">>, Address#bt_address.country_name}
+      ,{<<"created_at">>, Address#bt_address.created_at}
+      ,{<<"updated_at">>, Address#bt_address.updated_at}
+      ]).
 
 %%--------------------------------------------------------------------
 %% @public
@@ -230,5 +230,5 @@ record_to_json(#bt_address{}=Address) ->
 create_or_get_json_id(JObj) ->
     case kz_json:get_value(<<"street_address">>, JObj) of
         'undefined' -> kz_doc:id(JObj);
-        _Address -> kz_doc:id(JObj, kz_util:rand_hex_binary(16))
+        _Address -> kz_doc:id(JObj, kz_binary:rand_hex(16))
     end.

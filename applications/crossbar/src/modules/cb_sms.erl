@@ -109,7 +109,12 @@ validate_sms(Context, Id, ?HTTP_DELETE) ->
 %%--------------------------------------------------------------------
 -spec put(cb_context:context()) -> cb_context:context().
 put(Context) ->
-    crossbar_doc:save(Context).
+    Doc = cb_context:doc(Context),
+    case kazoo_modb:save_doc(cb_context:account_db(Context), Doc) of
+        {'ok', Saved} -> crossbar_util:response(Saved, Context);
+        {'error', Error} ->
+            crossbar_doc:handle_datamgr_errors(Error, kz_doc:id(Doc), Context)
+    end.
 
 %%--------------------------------------------------------------------
 %% @public
@@ -140,7 +145,7 @@ create(Context) ->
 %%--------------------------------------------------------------------
 -spec read(ne_binary(), cb_context:context()) -> cb_context:context().
 read(?MATCH_MODB_PREFIX(Year,Month,_) = Id, Context) ->
-    Context1 = cb_context:set_account_modb(Context, kz_util:to_integer(Year), kz_util:to_integer(Month)),
+    Context1 = cb_context:set_account_modb(Context, kz_term:to_integer(Year), kz_term:to_integer(Month)),
     crossbar_doc:load(Id, Context1, ?TYPE_CHECK_OPTION(<<"sms">>));
 read(Id, Context) ->
     crossbar_doc:load(Id, Context, ?TYPE_CHECK_OPTION(<<"sms">>)).
@@ -157,9 +162,8 @@ on_successful_validation(Context) ->
     JObj = cb_context:doc(Context),
     AccountId = cb_context:account_id(Context),
     AccountDb = cb_context:account_modb(Context),
-    kazoo_modb:maybe_create(AccountDb),
     ResellerId = cb_context:reseller_id(Context),
-    Realm = kz_util:get_account_realm(AccountId),
+    Realm = kz_account:fetch_realm(AccountId),
 
     {AuthorizationType, Authorization, OwnerId} =
         case {cb_context:user_id(Context), cb_context:auth_user_id(Context)} of
@@ -221,8 +225,8 @@ on_successful_validation(Context) ->
                            ,{<<"from_user">>, FromUser}
                            ,{<<"from_realm">>, Realm}
                            ,{<<"_id">>, SmsDocId}
-                           ,{<<"pvt_created">>, kz_util:current_tstamp()}
-                           ,{<<"pvt_modified">>, kz_util:current_tstamp()}
+                           ,{<<"pvt_created">>, kz_time:current_tstamp()}
+                           ,{<<"pvt_modified">>, kz_time:current_tstamp()}
                            ])
                                          ,JObj
                         )).
@@ -236,7 +240,7 @@ get_default_caller_id(Context, 'undefined') ->
     kz_json:get_first_defined(
       [?CALLER_ID_INTERNAL, ?CALLER_ID_EXTERNAL]
                              ,JObj
-                             ,kz_util:anonymous_caller_id_number()
+                             ,kz_privacy:anonymous_caller_id_number(cb_context:account_id(Context))
      );
 get_default_caller_id(Context, OwnerId) ->
     AccountDb = cb_context:account_db(Context),
@@ -244,17 +248,17 @@ get_default_caller_id(Context, OwnerId) ->
     {'ok', JObj2} = kz_datamgr:open_cache_doc(AccountDb, OwnerId),
     kz_json:get_first_defined(
       [?CALLER_ID_INTERNAL, ?CALLER_ID_EXTERNAL]
-                             ,kz_json:merge_recursive(JObj1, JObj2)
-                             ,kz_util:anonymous_caller_id_number()
+                             ,kz_json:merge(JObj1, JObj2)
+                             ,kz_privacy:anonymous_caller_id_number(cb_context:account_id(Context))
      ).
 
 -spec create_sms_doc_id() -> ne_binary().
 create_sms_doc_id() ->
     {Year, Month, _} = erlang:date(),
-    kz_util:to_binary(
+    kz_term:to_binary(
       io_lib:format("~B~s-~s",[Year
-                              ,kz_util:pad_month(Month)
-                              ,kz_util:rand_hex_binary(16)
+                              ,kz_date:pad_month(Month)
+                              ,kz_binary:rand_hex(16)
                               ])
      ).
 
@@ -277,7 +281,7 @@ summary(Context) ->
 %%--------------------------------------------------------------------
 %% @private
 %% @doc
-%% Normalizes the resuts of a view
+%% Normalizes the results of a view
 %% @end
 %%--------------------------------------------------------------------
 -spec normalize_view_results(kz_json:object(), kz_json:objects()) -> kz_json:objects().
@@ -286,7 +290,7 @@ normalize_view_results(JObj, Acc) ->
 
 -spec normalize_view_result_value(kz_json:object()) -> kz_json:object().
 normalize_view_result_value(JObj) ->
-    Date = kz_util:rfc1036(kz_json:get_value(<<"created">>, JObj)),
+    Date = kz_time:rfc1036(kz_json:get_value(<<"created">>, JObj)),
     kz_json:set_value(<<"date">>, Date, JObj).
 
 -spec get_view_and_filter(cb_context:context()) ->
@@ -320,8 +324,8 @@ build_number(Number) ->
 -spec parse_number(ne_binary(), {api_binary(), kz_proplist()}) ->
                           {api_binary(), kz_proplist()}.
 parse_number(<<"TON=", N/binary>>, {Num, Options}) ->
-    {Num, [{<<"TON">>, kz_util:to_integer(N) } | Options]};
+    {Num, [{<<"TON">>, kz_term:to_integer(N) } | Options]};
 parse_number(<<"NPI=", N/binary>>, {Num, Options}) ->
-    {Num, [{<<"NPI">>, kz_util:to_integer(N) } | Options]};
+    {Num, [{<<"NPI">>, kz_term:to_integer(N) } | Options]};
 parse_number(N, {_, Options}) ->
     {N, Options}.

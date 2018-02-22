@@ -1,9 +1,9 @@
 -ifndef(OMNIPRESENCE_HRL).
 
 %% Typical includes needed
--include_lib("kazoo/include/kz_types.hrl").
--include_lib("kazoo/include/kz_log.hrl").
--include_lib("kazoo/include/kz_databases.hrl").
+-include_lib("kazoo_stdlib/include/kz_types.hrl").
+-include_lib("kazoo_stdlib/include/kz_log.hrl").
+-include_lib("kazoo_stdlib/include/kz_databases.hrl").
 
 -define(APP_NAME, <<"omnipresence">>).
 -define(APP_VERSION, <<"4.0.0">>).
@@ -26,15 +26,11 @@
 -define(HANGUP_TIME, 10).
 -define(OTHER_TIME, 24 * ?SECONDS_IN_HOUR).
 
--define(FAKE_CALLID(C), kz_util:to_hex_binary(crypto:hash(md5, C))).
-
--record(omnip_subscription, {
-          user                                  :: api_binary() | '_' %% user@realm.com
+-record(omnip_subscription, {user                                 :: api_binary() | '_' %% user@realm.com
                             ,from                                 :: api_binary() | <<>> | '_' %% user@realm.com
                             ,stalker                              :: api_binary() | '_' | '$2' % amqp queue to publish updates to
                             ,expires = 0                          :: non_neg_integer() | '_' | '$2'
-                            ,timestamp = kz_util:current_tstamp() :: gregorian_seconds() | '_' | '$1'
-                            ,protocol = <<"sip">>                 :: ne_binary() | '_' % protocol
+                            ,timestamp = kz_time:current_tstamp() :: gregorian_seconds() | '_' | '$1'
                             ,username                             :: api_binary() | '_'
                             ,realm                                :: api_binary() | '_'
                             ,normalized_user                      :: api_binary() | '_' | '$1'
@@ -49,12 +45,12 @@
                             ,last_reply = 0                       :: non_neg_integer() | '_'
                             ,last_body                            :: api_binary() | '_'
                             ,user_agent                            :: api_binary() | '_'
-         }).
+                            }).
 
 -type subscription() :: #omnip_subscription{}.
 -type subscriptions() :: [subscription()].
 
--record(channel, {call_id     :: api_binary()
+-record(channel, {call_id    :: api_binary()
                  ,direction  :: api_binary()
                  ,state      :: api_binary()
                  ,to         :: api_binary()

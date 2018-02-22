@@ -143,7 +143,7 @@ check_failures(Failures) ->
 
 -spec check_failure(ne_binary(), ne_binary(), pos_integer()) -> 'ok'.
 check_failure(AccountId, HookId, Count) ->
-    try kz_util:to_integer(kapps_account_config:get_global(AccountId, ?APP_NAME, ?FAILURE_COUNT_KEY, 6)) of
+    try kz_term:to_integer(kapps_account_config:get_global(AccountId, ?APP_NAME, ?FAILURE_COUNT_KEY, 6)) of
         N when N =< Count ->
             disable_hook(AccountId, HookId);
         _ -> 'ok'
@@ -187,4 +187,4 @@ send_notification(AccountId, HookId) ->
           ,{<<"Hook-ID">>, HookId}
            | kz_api:default_headers(?APP_NAME, ?APP_VERSION)
           ],
-    kz_amqp_worker:cast(API, fun kapi_notifications:publish_webhook_disabled/1).
+    kapps_notify_publisher:cast(API, fun kapi_notifications:publish_webhook_disabled/1).

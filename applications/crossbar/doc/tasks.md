@@ -1,4 +1,4 @@
-### Backgroud Jobs
+### Background Jobs
 
 Kazoo Tasks enables listing, adding, starting & removing generic background tasks.
 
@@ -6,15 +6,16 @@ Kazoo Tasks enables listing, adding, starting & removing generic background task
 
 Input data to go through as part of a background task
 
+
+
 Key | Description | Type | Default | Required
 --- | ----------- | ---- | ------- | --------
-`file_name` | Human-readable name of a task's input file | `string` |   | `false`
-`records` | List the rows of input data | `array(object)` |   | `false`
+`file_name` | Human-readable name of a task's input file | `string()` |   | `false`
+`records` | List the rows of input data | `array(object())` |   | `false`
 
 
 
-
-#### List available tasks
+#### Fetch
 
 > GET /v2/tasks
 
@@ -110,10 +111,14 @@ curl -v -X GET \
 }
 ```
 
+#### Add a new system task
+
 
 #### Add a new task
 
 > PUT /v2/accounts/{ACCOUNT_ID}/tasks
+
+Note: There are tasks that run against system resources, only for use by the superduper admin (like rate uploading), which can omit `/accounts/{ACCOUNT_ID}` from the URI. Leaving the account in the URI should have no impact.
 
 With CSV input data:
 
@@ -376,7 +381,8 @@ curl -v -X GET \
             "node": "whistle_apps@qwd",
             "start_timestamp": 63633924909,
             "status": "executing",
-            "success_count": 50
+            "success_count": 50,
+            "csvs":["in.csv"]
         }
     },
     "request_id": "{REQUEST_ID}",
@@ -470,7 +476,89 @@ curl -v -X PATCH \
 ```
 
 
-#### Retrieve a task's input CSV
+#### Stop a running task
+
+Tasks that are processing can be stopped.
+
+Note that they cannot be started again.
+
+> PATCH /v2/accounts/{ACCOUNT_ID}/tasks/{TASK_ID}/stop
+
+```shell
+curl -v -X PATCH \
+    -H "X-Auth-Token: {AUTH_TOKEN}" \
+    http://{SERVER}:8000/v2/accounts/{ACCOUNT_ID}/tasks/{TASK_ID}/stop
+```
+
+##### Success
+
+```json
+{
+    "auth_token": "{AUTH_TOKEN}",
+    "data": {
+        "_read_only": {
+            "account_id": "{ACCOUNT_ID}",
+            "action": "list_all",
+            "auth_account_id": "{AUTH_ACCOUNT_ID}",
+            "category": "number_management",
+            "created": 63669534312,
+            "end_timestamp": 63669534747,
+            "failure_count": 0,
+            "id": "{TASK_ID}",
+            "start_timestamp": 63669534746,
+            "status": "stopped",
+            "success_count": 0
+        }
+    },
+    "node": "{NODE}",
+    "page_size": 1,
+    "request_id": "{REQUEST_ID}",
+    "revision": "{REV}",
+    "status": "success",
+    "timestamp": "{TIMESTAMP}",
+    "version": "{VERSION}"
+}
+```
+
+##### Task is not running
+
+A task that was not yet started or that has already finished cannot be stopped.
+
+```json
+{
+    "auth_token": "{AUTH_TOKEN}",
+    "data": {
+        "cause": "{TASK_ID}",
+        "message": "bad identifier",
+        "reason": "task is not running"
+    },
+    "error": "404",
+    "message": "bad_identifier",
+    "node": "{NODE}",
+    "page_size": 1,
+    "request_id": "{REQUEST_ID}",
+    "status": "error",
+    "timestamp": "{TIMESTAMP}",
+    "version": "{VERSION}"
+}
+```
+
+
+
+#### Retrieve a task's CSVs
+
+When you `GET /v2/accounts/{ACCOUNT_ID}/tasks/{TASK_ID}`, the JSON will include a `"csvs":[...]" array with input and output CSVs as appropriate. Use the name(s) in the array to specify which you would like to receive.
+
+> GET /v2/accounts/{ACCOUNT_ID}/tasks/{TASK_ID}
+
+```shell
+curl -v -X GET \
+    -H "X-Auth-Token: {AUTH_TOKEN}" \
+    -H "Accept: text/csv"
+    http://{SERVER}:8000/v2/accounts/{ACCOUNT_ID}/tasks/{TASK_ID}?csv_name=in.csv
+```
+
+You can also use the old way:
 
 > GET /v2/accounts/{ACCOUNT_ID}/tasks/{TASK_ID}/input
 
@@ -500,10 +588,18 @@ Streams back the task's input in CSV format.
 }
 ```
 
+##### Retrieve a task's output CSV
 
-#### Retrieve a task's output CSV
+> GET /v2/accounts/{ACCOUNT_ID}/tasks/{TASK_ID}
 
-> GET /v2/accounts/{ACCOUNT_ID}/tasks/{TASK_ID}/output
+```shell
+curl -v -X GET \
+    -H "Accept: text/csv" \
+    -H "X-Auth-Token: {AUTH_TOKEN}" \
+    http://{SERVER}:8000/v2/accounts/{ACCOUNT_ID}/tasks/{TASK_ID}?csv_name=out.csv
+```
+
+Or the old way:
 
 ```shell
 curl -v -X GET \

@@ -9,10 +9,10 @@
 
 -export([db_classification/1
         ,db_priority/1
-        ,map_keys_to_atoms/1
         ]).
 
 -include_lib("kazoo_number_manager/include/knm_phone_number.hrl").
+-include_lib("kazoo_documents/include/kzd_ratedeck.hrl").
 -include("kz_data.hrl").
 
 %%------------------------------------------------------------------------------
@@ -20,16 +20,28 @@
 %% @doc
 %% @end
 %%------------------------------------------------------------------------------
--spec db_classification(text()) -> db_classifications().
+-spec db_classification(text()) -> db_classification().
 db_classification(Db) when not is_binary(Db) ->
-    db_classification(kz_util:to_binary(Db));
+    db_classification(kz_term:to_binary(Db));
+db_classification(<<"_users">>) -> 'external';
+db_classification(<<"_dbs">>) -> 'external';
+db_classification(<<"users">>) -> 'external';
+db_classification(<<"dbs">>) -> 'external';
+db_classification(<<"_nodes">>) -> 'external';
+db_classification(<<"nodes">>) -> 'external';
+db_classification(<<"_replicator">>) -> 'external';
+db_classification(<<"_global_changes">>) -> 'external';
 db_classification(<<"ts">>) -> 'deprecated';
 db_classification(<<"crossbar_schemas">>) -> 'deprecated';
 db_classification(<<"registrations">>) -> 'deprecated';
 db_classification(<<"crossbar%2Fsessions">>) -> 'deprecated';
 db_classification(<<"sms">>) -> 'deprecated';
+db_classification(<<"cccps">>) -> 'system';
 db_classification(<<"signups">>) -> 'system'; %% Soon to be deprecated
-db_classification(?KZ_RATES_DB) -> 'system';
+db_classification(?KZ_RATES_DB) -> 'ratedeck';
+db_classification(?MATCH_RATEDECK_DB_ENCODED(_)) -> 'ratedeck';
+db_classification(?MATCH_RATEDECK_DB_encoded(_)) -> 'ratedeck';
+db_classification(?MATCH_RATEDECK_DB_UNENCODED(_)) -> 'ratedeck';
 db_classification(?KZ_ALERTS_DB) -> 'system';
 db_classification(?KZ_OFFNET_DB) -> 'system';
 db_classification(?KZ_ANONYMOUS_CDR_DB) -> 'system';
@@ -41,6 +53,7 @@ db_classification(?KZ_OAUTH_DB) -> 'system';
 db_classification(?KZ_AUTH_DB) -> 'system';
 db_classification(?KZ_DATA_DB) -> 'system';
 db_classification(?KZ_TASKS_DB) -> 'system';
+db_classification(?KZ_PENDING_NOTIFY_DB) -> 'system';
 db_classification(?KZ_PROVISIONER_DB) -> 'system'; %% Soon to be deprecated
 db_classification(?KZ_ACCOUNTS_DB) -> 'aggregate';
 db_classification(?KZ_TOKEN_DB) -> 'aggregate';
@@ -67,9 +80,13 @@ db_classification(?MATCH_MODB_SUFFIX_RAW(_Account,_Year,_Month)) -> 'modb';%   r
 db_classification(?MATCH_ACCOUNT_UNENCODED(_AccountId)) -> 'account';
 db_classification(?MATCH_ACCOUNT_encoded(_AccountId)) -> 'account';
 db_classification(?MATCH_ACCOUNT_ENCODED(_AccountId)) -> 'account';
+db_classification(?MATCH_PROVISIONER_RAW(_AccountId)) -> 'provisioner';
+db_classification(?MATCH_PROVISIONER_ENCODED(_AccountId)) -> 'provisioner';
+db_classification(?MATCH_PROVISIONER_encoded(_AccountId)) -> 'provisioner';
 db_classification(_Database) ->
     lager:warning("unknown type for database ~s", [_Database]),
-    lager:debug("unknown database classification: ~p", [erlang:process_info(self(),current_stacktrace)]),
+    {current_stacktrace, ST} = erlang:process_info(self(),current_stacktrace),
+    kz_util:log_stacktrace(ST),
     'undefined'.
 
 %%------------------------------------------------------------------------------
@@ -79,7 +96,7 @@ db_classification(_Database) ->
 %%------------------------------------------------------------------------------
 -spec db_priority(text()) -> non_neg_integer().
 db_priority(Db) when not is_binary(Db) ->
-    db_priority(kz_util:to_binary(Db));
+    db_priority(kz_term:to_binary(Db));
 db_priority(?KZ_CONFIG_DB) -> 0;
 db_priority(?KZ_DATA_DB) -> 1;
 db_priority(?KZ_OFFNET_DB) -> 2;
@@ -94,6 +111,7 @@ db_priority(?KZ_SCHEMA_DB) -> 10;
 db_priority(?KZ_SERVICES_DB) -> 11;
 db_priority(?KZ_PORT_REQUESTS_DB) -> 12;
 db_priority(?KZ_TASKS_DB) -> 13;
+db_priority(?KZ_PENDING_NOTIFY_DB) -> 13;
 db_priority(?KZ_DEDICATED_IP_DB) -> 14;
 db_priority(?KZ_ALERTS_DB) -> 15;
 db_priority(?KZ_MEDIA_DB) -> 16;
@@ -116,18 +134,6 @@ db_priority(?MATCH_RESOURCE_SELECTORS_UNENCODED(_AccountId)) -> 23;
 db_priority(?MATCH_RESOURCE_SELECTORS_encoded(_AccountId)) -> 23;
 db_priority(?MATCH_RESOURCE_SELECTORS_ENCODED(_AccountId)) -> 23;
 db_priority(?MATCH_RESOURCE_SELECTORS_RAW(_AccountId)) -> 23;
+db_priority(?MATCH_PROVISIONER_ENCODED(_AccountId)) -> 24;
+db_priority(?MATCH_PROVISIONER_encoded(_AccountId)) -> 24;
 db_priority(_Database) -> 24.
-
-%%------------------------------------------------------------------------------
-%% @public
-%% @doc
-%% @end
-%%------------------------------------------------------------------------------
--spec map_keys_to_atoms(map()) -> map().
-map_keys_to_atoms(Map) ->
-    maps:fold(fun map_keys_to_atoms_fold/3, #{}, Map).
-
-map_keys_to_atoms_fold(K, V, Acc) when is_map(V) ->
-    Acc#{kz_util:to_atom(K, 'true') => map_keys_to_atoms(V)};
-map_keys_to_atoms_fold(K, V, Acc) ->
-    Acc#{kz_util:to_atom(K, 'true') => V}.

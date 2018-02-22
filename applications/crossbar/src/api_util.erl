@@ -15,12 +15,13 @@
         ,is_cors_request/1
         ,add_cors_headers/2
         ,allow_methods/3
+        ,path_tokens/1
         ,parse_path_tokens/2
         ,get_req_data/2
         ,get_http_verb/2
         ,get_auth_token/2
         ,get_pretty_print/2
-        ,is_authentic/2
+        ,is_authentic/2, is_early_authentic/2
         ,is_permitted/2
         ,is_known_content_type/2
         ,does_resource_exist/1
@@ -67,7 +68,9 @@
 -type pull_file_response_return() :: {pull_file_resp(), cowboy_req:req(), cb_context:context()} |
                                      halt_return().
 
--export_type([pull_file_response_return/0]).
+-export_type([pull_file_response_return/0
+             ,halt_return/0
+             ]).
 %%--------------------------------------------------------------------
 %% @private
 %% @doc
@@ -118,7 +121,7 @@ add_cors_headers(Req0, Context) ->
     {ReqMethod, Req1} = cowboy_req:header(<<"access-control-request-method">>, Req0),
 
     Methods = [?HTTP_OPTIONS | cb_context:allow_methods(Context)],
-    Allow = case kz_util:is_empty(ReqMethod)
+    Allow = case kz_term:is_empty(ReqMethod)
                 orelse lists:member(ReqMethod, Methods)
             of
                 'false' -> [ReqMethod|Methods];
@@ -140,10 +143,10 @@ add_cors_headers(Req0, Context) ->
 -spec get_cors_headers(ne_binaries()) -> kz_proplist().
 get_cors_headers(Allow) ->
     [{<<"access-control-allow-origin">>, <<"*">>}
-    ,{<<"access-control-allow-methods">>, kz_util:join_binary(Allow, <<", ">>)}
+    ,{<<"access-control-allow-methods">>, kz_binary:join(Allow, <<", ">>)}
     ,{<<"access-control-allow-headers">>, <<"Content-Type, Depth, User-Agent, X-Http-Method-Override, X-File-Size, X-Requested-With, If-Modified-Since, X-File-Name, Cache-control, X-Auth-Token, X-Kazoo-Cluster-ID, If-Match">>}
     ,{<<"access-control-expose-headers">>, <<"Content-Type, X-Auth-Token, X-Request-ID, X-Kazoo-Cluster-ID, Location, Etag, ETag">>}
-    ,{<<"access-control-max-age">>, kz_util:to_binary(?SECONDS_IN_DAY)}
+    ,{<<"access-control-max-age">>, kz_term:to_binary(?SECONDS_IN_DAY)}
     ].
 
 -spec get_req_data(cb_context:context(), cowboy_req:req()) ->
@@ -270,7 +273,11 @@ set_request_data_in_context(Context, Req, JObj, QS) ->
             {set_valid_data_in_context(Context, JObj, QS), Req};
         Errors ->
             lager:info("failed to validate json request, invalid request"),
-            ?MODULE:halt(Req, cb_context:failed(Context, Errors))
+            ?MODULE:halt(Req
+                        ,cb_context:failed(cb_context:set_resp_error_msg(Context, <<"invalid request envelope">>)
+                                          ,Errors
+                                          )
+                        )
     end.
 
 -spec set_valid_data_in_context(cb_context:context(), kz_json:object(), kz_json:object()) ->
@@ -331,17 +338,15 @@ extract_multipart(Context, {'done', Req}, _QS) ->
     {Context, Req};
 extract_multipart(Context, {'ok', Headers, Req}, QS) ->
     {Ctx, R} = get_req_data(Context, {props:get_value(<<"content-type">>, Headers), Req}, QS),
-    extract_multipart(
-      Ctx
+    extract_multipart(Ctx
                      ,cowboy_req:part(R)
                      ,QS
-     );
+                     );
 extract_multipart(Context, Req, QS) ->
-    extract_multipart(
-      Context
+    extract_multipart(Context
                      ,cowboy_req:part(Req)
                      ,QS
-     ).
+                     ).
 
 -spec extract_file(cb_context:context(), ne_binary(), cowboy_req:req()) ->
                           {cb_context:context(), cowboy_req:req()} |
@@ -379,7 +384,7 @@ extract_file_body(Context, ContentType, Req0) ->
                                           halt_return().
 handle_max_filesize_exceeded(Context, Req1) ->
     Maximum = ?MAX_UPLOAD_SIZE,
-    MaxSize = kz_util:to_binary(Maximum),
+    MaxSize = kz_term:to_binary(Maximum),
 
     lager:error("file size exceeded, max is ~p", [Maximum]),
 
@@ -428,7 +433,7 @@ uploaded_filename(Context) ->
 
 -spec default_filename() -> ne_binary().
 default_filename() ->
-    <<"uploaded_file_", (kz_util:to_binary(kz_util:current_tstamp()))/binary>>.
+    <<"uploaded_file_", (kz_term:to_binary(kz_time:current_tstamp()))/binary>>.
 
 -spec decode_base64(cb_context:context(), ne_binary(), cowboy_req:req()) ->
                            {cb_context:context(), cowboy_req:req()} |
@@ -513,7 +518,7 @@ decode_json_body(ReqBody, Req) ->
     catch
         'throw':{'invalid_json',{'error',{ErrLine, ErrMsg}}, _JSON} ->
             lager:debug("failed to decode json near ~p: ~s", [ErrLine, ErrMsg]),
-            {{'malformed', <<(kz_util:to_binary(ErrMsg))/binary, " around ", (kz_util:to_binary(ErrLine))/binary>>}, Req};
+            {{'malformed', <<(kz_term:to_binary(ErrMsg))/binary, " around ", (kz_term:to_binary(ErrLine))/binary>>}, Req};
         _E:_R ->
             lager:debug("unknown catch from json decode ~p : ~p", [_E, _R]),
             throw(_R)
@@ -540,12 +545,18 @@ normalize_envelope_keys_foldl(K, V, JObj) -> kz_json:set_value(kz_json:normalize
 %% Determines if the request envelope is valid
 %% @end
 %%--------------------------------------------------------------------
--spec is_valid_request_envelope(kz_json:object(), cb_context:context()) -> 'true' | jesse_error:error().
+-spec is_valid_request_envelope(kz_json:object(), cb_context:context()) -> 'true' | validation_errors().
 is_valid_request_envelope(Envelope, Context) ->
-    lists:member(cb_context:api_version(Context), ?NO_ENVELOPE_VERSIONS)
-        orelse validate_request_envelope(Envelope).
+    case requires_envelope(Context) of
+        'true' -> validate_request_envelope(Envelope);
+        'false' -> 'true'
+    end.
 
--spec validate_request_envelope(kz_json:object()) -> 'true' | jesse_error:error().
+-spec requires_envelope(cb_context:context()) -> boolean().
+requires_envelope(Context) ->
+    not lists:member(cb_context:api_version(Context), ?NO_ENVELOPE_VERSIONS).
+
+-spec validate_request_envelope(kz_json:object()) -> 'true' | validation_errors().
 validate_request_envelope(Envelope) ->
     case kz_json_schema:validate(?ENVELOPE_SCHEMA, Envelope) of
         {'ok', _} -> 'true';
@@ -558,7 +569,7 @@ get_http_verb(Method, Context) ->
         'undefined' -> Method;
         Verb ->
             lager:debug("found verb ~s on request, using instead of ~s", [Verb, Method]),
-            kz_util:to_upper_binary(Verb)
+            kz_term:to_upper_binary(Verb)
     end.
 
 %%--------------------------------------------------------------------
@@ -571,24 +582,47 @@ get_http_verb(Method, Context) ->
 %% @end
 %%--------------------------------------------------------------------
 
+-spec path_tokens(cb_context:context()) -> ne_binaries().
+path_tokens(Context) ->
+    Api = cb_context:api_version(Context),
+    case cb_context:path_tokens(Context) of
+        [<<>>, Api | Tokens] -> Tokens;
+        [Api | Tokens] -> Tokens
+    end.
+
 -type cb_mod_with_tokens() :: {ne_binary(), path_tokens()}.
 -type cb_mods_with_tokens() :: [cb_mod_with_tokens()].
--spec parse_path_tokens(cb_context:context(), path_tokens()) -> cb_mods_with_tokens().
+
+-spec parse_path_tokens(cb_context:context(), path_tokens()) ->
+                               cb_mods_with_tokens() |
+                               {'halt', cb_context:context()}.
 parse_path_tokens(Context, Tokens) ->
     parse_path_tokens(Context, Tokens, []).
 
 -spec parse_path_tokens(cb_context:context(), kz_json:path(), cb_mods_with_tokens()) ->
-                               cb_mods_with_tokens().
-parse_path_tokens(_, [], Events) -> Events;
-parse_path_tokens(_, [<<>>], Events) -> Events;
-parse_path_tokens(_, [<<"schemas">>=Mod|T], Events) ->
+                               cb_mods_with_tokens() |
+                               {'halt', cb_context:context()}.
+parse_path_tokens(_Context, [], Events) -> Events;
+parse_path_tokens(_Context, [<<>>], Events) -> Events;
+parse_path_tokens(_Context, [<<"schemas">>=Mod|T], Events) ->
     [{Mod, T} | Events];
-parse_path_tokens(_, [<<"braintree">>=Mod|T], Events) ->
+parse_path_tokens(_Context, [<<"braintree">>=Mod|T], Events) ->
     [{Mod, T} | Events];
-parse_path_tokens(_, [<<"system_configs">>=Mod|T], Events) ->
+parse_path_tokens(_Context, [<<"system_configs">>=Mod|T], Events) ->
     [{Mod, T} | Events];
-parse_path_tokens(_, [<<"sup">>=Mod|T], Events) ->
+parse_path_tokens(_Context, [<<"configs">>=Mod|T], Events) ->
+    [{Mod, T} | Events];
+parse_path_tokens(_Context, [<<"sup">>=Mod|T], Events) ->
     [{Mod, cb_sup:format_path_tokens(T)} | Events];
+parse_path_tokens(Context, [<<"account">>|T], Events) ->
+    case cb_context:auth_account_id(Context) of
+        'undefined' ->
+            lager:info("/account alias not available, request fails"),
+            {'halt', crossbar_util:response_401(Context)};
+        AuthAccountId ->
+            lager:info("aliasing /account to /accounts/~s", [AuthAccountId]),
+            parse_path_tokens(Context, [<<"accounts">>, AuthAccountId | T], Events)
+    end;
 parse_path_tokens(Context, [Mod|T], Events) ->
     case is_cb_module(Context, Mod) of
         'false' -> [];
@@ -599,7 +633,7 @@ parse_path_tokens(Context, [Mod|T], Events) ->
 
 -spec is_cb_module(cb_context:context(), ne_binary()) -> boolean().
 is_cb_module(Context, Elem) ->
-    try (kz_util:to_atom(<<"cb_", Elem/binary>>)):module_info('exports') of
+    try (kz_term:to_atom(<<"cb_", Elem/binary>>)):module_info('exports') of
         _ -> 'true'
     catch
         'error':'badarg' -> 'false'; %% atom didn't exist already
@@ -613,7 +647,7 @@ is_cb_module_version(Context, Elem) ->
         'true'  ->
             ApiVersion = cb_context:api_version(Context),
             ModuleName = <<"cb_", Elem/binary, "_", ApiVersion/binary>>,
-            try (kz_util:to_atom(ModuleName)):module_info('exports') of
+            try (kz_term:to_atom(ModuleName)):module_info('exports') of
                 _ -> 'true'
             catch
                 'error':'badarg' -> 'false'; %% atom didn't exist already
@@ -656,14 +690,14 @@ allow_methods_fold(Response, Acc) ->
 
 -spec uppercase_all(ne_binaries() | atoms()) -> ne_binaries().
 uppercase_all(L) when is_list(L) ->
-    [kz_util:to_upper_binary(kz_util:to_binary(I)) || I <- L].
+    [kz_term:to_upper_binary(kz_term:to_binary(I)) || I <- L].
 
 %% insert 'POST' if Verb is in Allowed; otherwise remove 'POST'.
 -spec maybe_add_post_method(ne_binary(), http_method(), http_methods()) -> http_methods().
 maybe_add_post_method(?HTTP_POST, ?HTTP_POST, Allowed) ->
     Allowed;
 maybe_add_post_method(Verb, ?HTTP_POST, Allowed) ->
-    BigVerb = kz_util:to_upper_binary(Verb),
+    BigVerb = kz_term:to_upper_binary(Verb),
     case lists:member(BigVerb, Allowed) of
         'true' -> [?HTTP_POST | Allowed];
         'false' -> lists:delete(?HTTP_POST, Allowed)
@@ -678,6 +712,24 @@ maybe_add_post_method(_, _, Allowed) ->
 %% provided a valid authentication token
 %% @end
 %%--------------------------------------------------------------------
+-spec is_early_authentic(cowboy_req:req(), cb_context:context()) ->
+                                {'true', cowboy_req:req(), cb_context:context()} |
+                                halt_return().
+is_early_authentic(Req, Context) ->
+    Event = create_event_name(Context, <<"early_authenticate">>),
+    case crossbar_bindings:succeeded(crossbar_bindings:pmap(Event, Context)) of
+        [] ->
+            {'true', Req, Context};
+        ['true'|T] ->
+            prefer_new_context(T, Req, Context, 'true');
+        [{'true', Context1}|_T] ->
+            lager:debug("one true context: ~p", [_T]),
+            {'true', Req, Context1};
+        [{'halt', Context1}|_] ->
+            lager:debug("pre-authn halted"),
+            ?MODULE:halt(Req, Context1)
+    end.
+
 -spec is_authentic(cowboy_req:req(), cb_context:context()) ->
                           {{'false', <<>>} | 'true', cowboy_req:req(), cb_context:context()} |
                           halt_return().
@@ -685,14 +737,14 @@ is_authentic(Req, Context) ->
     is_authentic(Req, Context, cb_context:req_verb(Context)).
 
 -spec is_authentic(cowboy_req:req(), cb_context:context(), http_method()) ->
-                          {{'false', <<>>} | 'true', cowboy_req:req(), cb_context:context()} |
+                          {boolean(), cowboy_req:req(), cb_context:context()} |
                           halt_return().
 is_authentic(Req, Context, ?HTTP_OPTIONS) ->
     %% all OPTIONS, they are harmless (I hope) and required for CORS preflight
     {'true', Req, Context};
 is_authentic(Req, Context0, _ReqVerb) ->
     Event = create_event_name(Context0, <<"authenticate">>),
-    case crossbar_bindings:succeeded(crossbar_bindings:map(Event, Context0)) of
+    case crossbar_bindings:succeeded(crossbar_bindings:pmap(Event, Context0)) of
         [] ->
             is_authentic(Req, Context0, _ReqVerb, cb_context:req_nouns(Context0));
         ['true'|T] ->
@@ -714,7 +766,7 @@ is_authentic(Req, Context, _ReqVerb, []) ->
 is_authentic(Req, Context, _ReqVerb, [{Mod, Params} | _ReqNouns]) ->
     Event = create_event_name(Context, <<"authenticate.", Mod/binary>>),
     Payload = [Context | Params],
-    case crossbar_bindings:succeeded(crossbar_bindings:map(Event, Payload)) of
+    case crossbar_bindings:succeeded(crossbar_bindings:pmap(Event, Payload)) of
         [] ->
             lager:debug("failed to authenticate : ~p", [Mod]),
             ?MODULE:halt(Req, cb_context:add_system_error('invalid_credentials', Context));
@@ -728,18 +780,29 @@ is_authentic(Req, Context, _ReqVerb, [{Mod, Params} | _ReqNouns]) ->
     end.
 
 -spec prefer_new_context(kz_proplist(), cowboy_req:req(), cb_context:context()) ->
-                                {{'false', <<>>} | 'true', cowboy_req:req(), cb_context:context()} |
+                                {'true', cowboy_req:req(), cb_context:context()} |
                                 halt_return().
-prefer_new_context([], Req, Context) ->
+prefer_new_context(Results, Req, Context) ->
+    prefer_new_context(Results, Req, Context, 'undefined').
+
+prefer_new_context([], Req, Context, 'false') ->
+    {'false', Req, Context};
+prefer_new_context([], Req, Context, _Return) ->
     {'true', Req, Context};
-prefer_new_context([{'true', Context1}|_], Req, _) ->
+
+prefer_new_context([{'true', Context1}|_], Req, _Context, _Return) ->
     {'true', Req, Context1};
-prefer_new_context(['true'|T], Req, Context) ->
-    prefer_new_context(T, Req, Context);
-prefer_new_context([{'halt', Context1}|_], Req, _) ->
+prefer_new_context(['true'|T], Req, Context, _Return) ->
+    prefer_new_context(T, Req, Context, 'true');
+
+prefer_new_context(['false'|T], Req, Context, 'undefined') ->
+    prefer_new_context(T, Req, Context, 'false');
+prefer_new_context(['false'|T], Req, Context, 'false') ->
+    prefer_new_context(T, Req, Context, 'false');
+
+prefer_new_context([{'halt', Context1}|_], Req, _Context, _Return) ->
     lager:debug("authn halted"),
     ?MODULE:halt(Req, Context1).
-
 
 -spec get_auth_token(cowboy_req:req(), cb_context:context()) ->
                             {cowboy_req:req(), cb_context:context()}.
@@ -750,17 +813,11 @@ get_auth_token(Req0, Context) ->
                 'undefined' -> get_authorization_token(Req1, Context);
                 Token ->
                     lager:debug("using auth token found"),
-                    {Req1, cb_context:setters(Context, [{fun cb_context:set_auth_token/2, Token}
-                                                       ,{fun cb_context:set_auth_token_type/2, 'x-auth-token'}
-                                                       ]
-                                             )}
+                    {Req1, set_auth_context(Context, Token, 'x-auth-token')}
             end;
         {Token, Req1} ->
             lager:debug("using auth token from header"),
-            {Req1, cb_context:setters(Context, [{fun cb_context:set_auth_token/2, Token}
-                                               ,{fun cb_context:set_auth_token_type/2, 'x-auth-token'}
-                                               ]
-                                     )}
+            {Req1, set_auth_context(Context, Token, 'x-auth-token')}
     end.
 
 -spec get_authorization_token(cowboy_req:req(), cb_context:context()) ->
@@ -781,14 +838,20 @@ get_authorization_token(Req0, Context) ->
             {Req1, set_auth_context(Context, Authorization)}
     end.
 
--spec set_auth_context(cb_context:context(), ne_binary() | {ne_binary(), atom()}) -> cb_context:context().
+-spec set_auth_context(cb_context:context(), ne_binary() | {ne_binary(), atom()}) ->
+                              cb_context:context().
+-spec set_auth_context(cb_context:context(), ne_binary(), atom()) ->
+                              cb_context:context().
 set_auth_context(Context, {Token, TokenType}) ->
+    set_auth_context(Context, Token, TokenType);
+set_auth_context(Context, Authorization) ->
+    set_auth_context(Context, get_authorization_token_type(Authorization)).
+
+set_auth_context(Context, Token, TokenType) ->
     cb_context:setters(Context, [{fun cb_context:set_auth_token/2, Token}
                                 ,{fun cb_context:set_auth_token_type/2, TokenType}
                                 ]
-                      );
-set_auth_context(Context, Authorization) ->
-    set_auth_context(Context, get_authorization_token_type(Authorization)).
+                      ).
 
 -spec get_authorization_token_type(ne_binary()) -> {ne_binary(), atom()}.
 get_authorization_token_type(<<"Basic ", Token/binary>>) -> {Token, 'basic'};
@@ -812,11 +875,11 @@ get_pretty_print(Req0, Context) ->
                 'undefined' -> {Req1, cb_context:set_pretty_print(Context, 'false')};
                 Value ->
                     lager:debug("using pretty print value from inside the request"),
-                    {Req1, cb_context:set_pretty_print(Context, kz_util:is_true(Value))}
+                    {Req1, cb_context:set_pretty_print(Context, kz_term:is_true(Value))}
             end;
         {Value, Req1} ->
             lager:debug("found pretty print options inside header"),
-            {Req1, cb_context:set_pretty_print(Context, kz_util:is_true(Value))}
+            {Req1, cb_context:set_pretty_print(Context, kz_term:is_true(Value))}
     end.
 
 %%--------------------------------------------------------------------
@@ -841,7 +904,7 @@ is_permitted_verb(Req, Context, ?HTTP_OPTIONS) ->
     {'true', Req, Context};
 is_permitted_verb(Req, Context0, _ReqVerb) ->
     Event = create_event_name(Context0, <<"authorize">>),
-    case crossbar_bindings:succeeded(crossbar_bindings:map(Event, Context0)) of
+    case crossbar_bindings:succeeded(crossbar_bindings:pmap(Event, Context0)) of
         [] ->
             is_permitted_nouns(Req, Context0, _ReqVerb,cb_context:req_nouns(Context0));
         ['true'|_] ->
@@ -859,7 +922,7 @@ is_permitted_verb(Req, Context0, _ReqVerb) ->
 is_permitted_verb_on_module(Req, Context0, _ReqVerb, [{Mod, Params} | _ReqNouns]) ->
     Event = create_event_name(Context0, <<"authorize.", Mod/binary>>),
     Payload = [Context0 | Params],
-    case crossbar_bindings:succeeded(crossbar_bindings:map(Event, Payload)) of
+    case crossbar_bindings:succeeded(crossbar_bindings:pmap(Event, Payload)) of
         [{'halt', Context1}|_] ->
             lager:debug("authz halted"),
             ?MODULE:halt(Req, Context1);
@@ -877,7 +940,7 @@ is_permitted_nouns(Req, Context, _ReqVerb, []) ->
 is_permitted_nouns(Req, Context0, _ReqVerb, [{Mod, Params} | _ReqNouns]) ->
     Event = create_event_name(Context0, <<"authorize.", Mod/binary>>),
     Payload = [Context0 | Params],
-    case crossbar_bindings:succeeded(crossbar_bindings:map(Event, Payload)) of
+    case crossbar_bindings:succeeded(crossbar_bindings:pmap(Event, Payload)) of
         [] ->
             lager:debug("failed to authorize : ~p", [Mod]),
             ?MODULE:halt(Req, cb_context:add_system_error('forbidden', Context0));
@@ -1076,7 +1139,7 @@ execute_request(Req, Context) ->
 
 execute_request(Req, Context, Mod, Params, Verb) ->
     Event = create_event_name(Context, [<<"execute">>
-                                       ,kz_util:to_lower_binary(Verb)
+                                       ,kz_term:to_lower_binary(Verb)
                                        ,Mod
                                        ]),
     Payload = [Context | Params],
@@ -1125,7 +1188,7 @@ finish_request(_Req, Context) ->
     [{Mod, _}|_] = cb_context:req_nouns(Context),
     Verb = cb_context:req_verb(Context),
     Event = create_event_name(Context, [<<"finish_request">>, Verb, Mod]),
-    _ = kz_util:spawn(fun crossbar_bindings:map/2, [Event, Context]),
+    _ = kz_util:spawn(fun crossbar_bindings:pmap/2, [Event, Context]),
     case kz_json:get_value(<<"billing">>, cb_context:doc(Context)) of
         'undefined' -> 'ok';
         _Else -> crossbar_services:reconcile(Context)
@@ -1171,7 +1234,7 @@ create_resp_file(Req, Context) ->
     Len = filelib:file_size(File),
     Fun = fun(Socket, Transport) ->
                   lager:debug("sending file ~s", [File]),
-                  Res = Transport:sendfile(Socket, kz_util:to_list(File)),
+                  Res = Transport:sendfile(Socket, kz_term:to_list(File)),
                   _ = file:delete(File),
                   Res
           end,
@@ -1266,16 +1329,22 @@ do_create_resp_envelope(Context) ->
                    [{<<"auth_token">>, cb_context:auth_token(Context)}
                    ,{<<"status">>, <<"success">>}
                    ,{<<"request_id">>, cb_context:req_id(Context)}
-                   ,{<<"revision">>, kz_util:to_binary(cb_context:resp_etag(Context))}
+                   ,{<<"node">>, kz_nodes:node_encoded()}
+                   ,{<<"version">>, kz_util:kazoo_version()}
+                   ,{<<"timestamp">>, kz_time:iso8601(kz_time:current_tstamp())}
+                   ,{<<"revision">>, kz_term:to_api_binary(cb_context:resp_etag(Context))}
                    ,{<<"data">>, RespData}
                    ];
                {'error', {ErrorCode, ErrorMsg, RespData}} ->
                    lager:debug("generating error ~b ~s response", [ErrorCode, ErrorMsg]),
-                   [{<<"auth_token">>, kz_util:to_binary(cb_context:auth_token(Context))}
+                   [{<<"auth_token">>, kz_term:to_binary(cb_context:auth_token(Context))}
                    ,{<<"request_id">>, cb_context:req_id(Context)}
+                   ,{<<"node">>, kz_nodes:node_encoded()}
+                   ,{<<"version">>, kz_util:kazoo_version()}
+                   ,{<<"timestamp">>, kz_time:iso8601(kz_time:current_tstamp())}
                    ,{<<"status">>, <<"error">>}
                    ,{<<"message">>, ErrorMsg}
-                   ,{<<"error">>, kz_util:to_binary(ErrorCode)}
+                   ,{<<"error">>, kz_term:to_binary(ErrorCode)}
                    ,{<<"data">>, RespData}
                    ]
            end,
@@ -1307,13 +1376,13 @@ set_resp_headers(Req0, Context) ->
 fix_header(<<"Location">> = H, Path, Req) ->
     {H, crossbar_util:get_path(Req, Path)};
 fix_header(H, V, _) ->
-    {kz_util:to_lower_binary(H), kz_util:to_binary(V)}.
+    {kz_term:to_lower_binary(H), kz_term:to_binary(V)}.
 
 -spec halt(cowboy_req:req(), cb_context:context()) ->
                   halt_return().
 halt(Req0, Context) ->
     StatusCode = cb_context:resp_error_code(Context),
-    lager:debug("halting execution here with ~p", [StatusCode]),
+    lager:info("halting execution here with status code ~p", [StatusCode]),
 
     {Content, Req1} = create_resp_content(Req0, Context),
     lager:debug("setting resp body: ~s", [Content]),
@@ -1324,13 +1393,12 @@ halt(Req0, Context) ->
 
     Req4 = cowboy_req:set_resp_header(<<"x-request-id">>, cb_context:req_id(Context), Req3),
 
-    lager:debug("setting status code: ~p", [StatusCode]),
     {'ok', Req5} = cowboy_req:reply(StatusCode, Req4),
     {'halt', Req5, cb_context:set_resp_status(Context, 'halt')}.
 
 -spec create_event_name(cb_context:context(), ne_binary() | ne_binaries()) -> ne_binary().
 create_event_name(Context, Segments) when is_list(Segments) ->
-    create_event_name(Context, kz_util:join_binary(Segments, <<".">>));
+    create_event_name(Context, kz_binary:join(Segments, <<".">>));
 create_event_name(Context, Name) ->
     ApiVersion = cb_context:api_version(Context),
     <<ApiVersion/binary, "_resource.", Name/binary>>.

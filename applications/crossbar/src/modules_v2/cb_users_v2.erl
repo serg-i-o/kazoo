@@ -180,7 +180,7 @@ process_billing(Context, [{<<"users">>, _}|_], _Verb) ->
         'true' -> Context
     catch
         'throw':{Error, Reason} ->
-            crossbar_util:response('error', kz_util:to_binary(Error), 500, Reason, Context)
+            crossbar_util:response('error', kz_term:to_binary(Error), 500, Reason, Context)
     end;
 process_billing(Context, _Nouns, _Verb) -> Context.
 
@@ -219,11 +219,8 @@ validate_user_id(UserId, Context) ->
 validate_user_id(UserId, Context, Doc) ->
     case kz_doc:is_soft_deleted(Doc) of
         'true' ->
-            cb_context:add_system_error(
-              'bad_identifier'
-                                       ,kz_json:from_list([{<<"cause">>, UserId}])
-                                       ,Context
-             );
+            Msg = kz_json:from_list([{<<"cause">>, UserId}]),
+            cb_context:add_system_error('bad_identifier', Msg, Context);
         'false'->
             cb_context:setters(Context
                               ,[{fun cb_context:set_user_id/2, UserId}
@@ -334,8 +331,8 @@ delete(Context, UserId, ?PHOTO) ->
     crossbar_doc:delete_attachment(UserId, ?PHOTO, Context).
 
 -spec patch(cb_context:context(), path_token()) -> cb_context:context().
-patch(Context, _Id) ->
-    crossbar_doc:save(Context).
+patch(Context, Id) ->
+    post(Context, Id).
 
 %%--------------------------------------------------------------------
 %% @private
@@ -347,16 +344,18 @@ patch(Context, _Id) ->
 -spec load_attachment(ne_binary(), ne_binary(), cb_context:context()) ->
                              cb_context:context().
 load_attachment(AttachmentId, Context) ->
+    Headers =
+        [{<<"Content-Disposition">>, <<"attachment; filename=", AttachmentId/binary>>}
+        ,{<<"Content-Type">>, kz_doc:attachment_content_type(cb_context:doc(Context), AttachmentId)}
+        ,{<<"Content-Length">>, kz_doc:attachment_length(cb_context:doc(Context), AttachmentId)}
+        ],
     cb_context:add_resp_headers(
       crossbar_doc:load_attachment(cb_context:doc(Context)
                                   ,AttachmentId
                                   ,?TYPE_CHECK_OPTION(kzd_user:type())
                                   ,Context
                                   )
-                               ,[{<<"Content-Disposition">>, <<"attachment; filename=", AttachmentId/binary>>}
-                                ,{<<"Content-Type">>, kz_doc:attachment_content_type(cb_context:doc(Context), AttachmentId)}
-                                ,{<<"Content-Length">>, kz_doc:attachment_length(cb_context:doc(Context), AttachmentId)}
-                                ]).
+                               ,Headers).
 
 load_attachment(UserId, AttachmentId, Context) ->
     Context1 = load_user(UserId, Context),
@@ -452,18 +451,7 @@ send_email(Context) ->
           ,{<<"Password">>, kz_json:get_value(<<"password">>, ReqData)}
            | kz_api:default_headers(?APP_NAME, ?APP_VERSION)
           ],
-    case
-        kapps_util:amqp_pool_request(
-          Req
-                                    ,fun kapi_notifications:publish_new_user/1
-                                    ,fun kapi_notifications:new_user_v/1
-         )
-    of
-        {'ok', _Resp} ->
-            lager:debug("published new user notification");
-        {'error', _E} ->
-            lager:debug("failed to publish new user notification: ~p", [_E])
-    end.
+    kapps_notify_publisher:cast(Req, fun kapi_notifications:publish_new_user/1).
 
 %%--------------------------------------------------------------------
 %% @private
@@ -474,13 +462,12 @@ send_email(Context) ->
 %%--------------------------------------------------------------------
 -spec load_user_summary(cb_context:context()) -> cb_context:context().
 load_user_summary(Context) ->
-    Context1 = crossbar_doc:load_view(
-                 ?CB_LIST
-                                     ,[]
-                                     ,Context
-                                     ,fun normalize_view_results/2
-                ),
-    fix_envelope(Context1).
+    fix_envelope(
+      crossbar_doc:load_view(?CB_LIST
+                            ,[]
+                            ,Context
+                            ,fun normalize_view_results/2
+                            )).
 
 -spec fix_envelope(cb_context:context()) -> cb_context:context().
 fix_envelope(Context) ->
@@ -516,7 +503,7 @@ prepare_username(UserId, Context) ->
     case kz_json:get_ne_value(<<"username">>, JObj) of
         'undefined' -> check_user_name(UserId, Context);
         Username ->
-            JObj1 = kz_json:set_value(<<"username">>, kz_util:to_lower_binary(Username), JObj),
+            JObj1 = kz_json:set_value(<<"username">>, kz_term:to_lower_binary(Username), JObj),
             check_user_name(UserId, cb_context:set_req_data(Context, JObj1))
     end.
 
@@ -537,14 +524,11 @@ check_user_name(UserId, Context) ->
 
 -spec non_unique_username_error(cb_context:context(), ne_binary()) -> cb_context:context().
 non_unique_username_error(Context, Username) ->
-    cb_context:add_validation_error([<<"username">>]
-                                   ,<<"unique">>
-                                   ,kz_json:from_list(
-                                      [{<<"message">>, <<"User name is not unique for this account">>}
-                                      ,{<<"cause">>, Username}
-                                      ])
-                                   ,Context
-                                   ).
+    Msg = kz_json:from_list(
+            [{<<"message">>, <<"User name is not unique for this account">>}
+            ,{<<"cause">>, Username}
+            ]),
+    cb_context:add_validation_error([<<"username">>], <<"unique">>, Msg, Context).
 
 -spec check_emergency_caller_id(api_binary(), cb_context:context()) -> cb_context:context().
 check_emergency_caller_id(UserId, Context) ->
@@ -603,7 +587,7 @@ maybe_validate_username(UserId, Context) ->
             CurrentJObj ->
                 kz_json:get_ne_value(<<"username">>, CurrentJObj, NewUsername)
         end,
-    case kz_util:is_empty(NewUsername)
+    case kz_term:is_empty(NewUsername)
         orelse CurrentUsername =:= NewUsername
         orelse username_doc_id(NewUsername, Context)
     of
@@ -642,25 +626,18 @@ manditory_rehash_creds(UserId, Username, Context) ->
 
 -spec required_password_error(cb_context:context()) -> cb_context:context().
 required_password_error(Context) ->
-    cb_context:add_validation_error(<<"password">>
-                                   ,<<"required">>
-                                   ,kz_json:from_list(
-                                      [{<<"message">>, <<"The password must be provided when updating the user name">>}]
-                                     )
-                                   ,Context
-                                   ).
+    Msg = kz_json:from_list(
+            [{<<"message">>, <<"The password must be provided when updating the user name">>}
+            ]),
+    cb_context:add_validation_error(<<"password">>, <<"required">>, Msg, Context).
 
 -spec rehash_creds(api_binary(), api_binary(), ne_binary(), cb_context:context()) ->
                           cb_context:context().
 rehash_creds(_UserId, 'undefined', _Password, Context) ->
-    cb_context:add_validation_error(
-      <<"username">>
-                                   ,<<"required">>
-                                   ,kz_json:from_list(
-                                      [{<<"message">>, <<"The user name must be provided when updating the password">>}]
-                                     )
-                                   ,Context
-     );
+    Msg = kz_json:from_list(
+            [{<<"message">>, <<"The user name must be provided when updating the password">>}
+            ]),
+    cb_context:add_validation_error(<<"username">>, <<"required">>, Msg, Context);
 rehash_creds(_UserId, Username, Password, Context) ->
     lager:debug("password set on doc, updating hashes for ~s", [Username]),
     {MD5, SHA1} = cb_modules_util:pass_hashes(Username, Password),
@@ -683,7 +660,7 @@ username_doc_id(Username, Context) ->
     username_doc_id(Username, Context, cb_context:account_db(Context)).
 username_doc_id(_, _, 'undefined') -> 'undefined';
 username_doc_id(Username, Context, _AccountDb) ->
-    Username = kz_util:to_lower_binary(Username),
+    Username = kz_term:to_lower_binary(Username),
     Context1 = crossbar_doc:load_view(?LIST_BY_USERNAME, [{'key', Username}], Context),
     case cb_context:resp_status(Context1) =:= 'success'
         andalso cb_context:doc(Context1)

@@ -174,28 +174,57 @@ code_change(_OldVsn, State, _Extra) ->
 %%%===================================================================
 %%% Internal functions
 %%%===================================================================
--spec handle_directory_lookup(ne_binary(), kz_proplist(), atom()) -> 'ok' |
-                                                                     fs_handlecall_ret().
+-spec handle_directory_lookup(ne_binary(), kz_proplist(), atom()) -> fs_handlecall_ret().
 handle_directory_lookup(Id, Props, Node) ->
     kz_util:put_callid(Id),
-    case props:get_value(<<"sip_auth_method">>, Props) of
-        <<"REGISTER">> ->
-            lager:debug("received fetch request (~s) for sip registration creds from ~s", [Id, Node]);
-        Else ->
-            lager:debug("received fetch request for ~s (~s) user creds from ~s", [Else, Id, Node])
-    end,
-    kazoo_stats:increment_counter("register-attempt"),
-    case {props:get_value(<<"Event-Name">>, Props), props:get_value(<<"action">>, Props, <<"sip_auth">>)} of
-        {<<"REQUEST_PARAMS">>, <<"sip_auth">>} ->
-            Method = props:get_value(<<"sip_auth_method">>, Props, <<"password">>),
-            lookup_user(Node, Id, Method, Props);
-        {<<"REQUEST_PARAMS">>, <<"reverse-auth-lookup">>} ->
-            lookup_user(Node, Id, <<"reverse-lookup">>, Props);
-        _Other ->
-            {'ok', Resp} = ecallmgr_fs_xml:empty_response(),
-            _ = freeswitch:fetch_reply(Node, Id, 'directory', Resp),
-            lager:debug("ignoring authn request from ~s for ~p", [Node, _Other])
+    lager:debug("received fetch request (~s) user directory from ~s", [Id, Node]),
+    case props:get_value(<<"action">>, Props, <<"sip_auth">>) of
+        <<"reverse-auth-lookup">> -> lookup_user(Node, Id, <<"reverse-lookup">>, Props);
+        <<"sip_auth">> -> maybe_sip_auth_response(Id, Props, Node);
+        _Other -> directory_not_found(Node, Id)
     end.
+
+-spec maybe_sip_auth_response(ne_binary(), kz_proplist(), atom()) -> fs_handlecall_ret().
+maybe_sip_auth_response(Id, Props, Node) ->
+    case kz_term:is_not_empty(props:get_value(<<"sip_auth_response">>, Props)) of
+        'false' -> maybe_kamailio_association(Id, Props, Node);
+        'true' ->
+            lager:debug("attempting to get device password to verify SIP auth response"),
+            lookup_user(Node, Id, <<"password">>, Props)
+    end.
+
+-spec maybe_kamailio_association(ne_binary(), kz_proplist(), atom()) -> fs_handlecall_ret().
+maybe_kamailio_association(Id, Props, Node) ->
+    case kz_term:is_not_empty(kzd_freeswitch:authorizing_id(Props))
+        andalso kz_term:is_not_empty(kzd_freeswitch:authorizing_type(Props))
+    of
+        'true' -> kamailio_association(Id, Props, Node);
+        'false' -> directory_not_found(Node, Id)
+    end.
+
+-spec kamailio_association(ne_binary(), kz_proplist(), atom()) -> fs_handlecall_ret().
+kamailio_association(Id, Props, Node) ->
+    Password = kz_binary:rand_hex(12),
+    Realm = props:get_value(<<"domain">>, Props),
+    Username = props:get_value(<<"user">>, Props, props:get_value(<<"Auth-User">>, Props)),
+    CCVs = [{Key, Value} || {<<"X-ecallmgr_", Key/binary>>, Value} <- Props],
+    JObj = kz_json:from_list_recursive([{<<"Auth-Method">>, <<"password">>}
+                                       ,{<<"Auth-Password">>, Password}
+                                       ,{<<"Domain-Name">>, Realm}
+                                       ,{<<"User-ID">>, Username}
+                                       ,{<<"Custom-Channel-Vars">>, CCVs}
+                                       ,{<<"Expires">>, 0}
+                                       ]),
+    lager:debug("building authn resp for ~s@~s from kamailio headers", [Username, Realm]),
+    {'ok', Xml} = ecallmgr_fs_xml:authn_resp_xml(JObj),
+    lager:debug("sending authn XML to ~w: ~s", [Node, Xml]),
+    freeswitch:fetch_reply(Node, Id, 'directory', iolist_to_binary(Xml)).
+
+-spec directory_not_found(atom(), ne_binary()) -> fs_handlecall_ret().
+directory_not_found(Node, Id) ->
+    {'ok', Xml} = ecallmgr_fs_xml:not_found(),
+    lager:debug("sending authn not found XML to ~w", [Node]),
+    freeswitch:fetch_reply(Node, Id, 'directory', iolist_to_binary(Xml)).
 
 -spec lookup_user(atom(), ne_binary(), ne_binary(), kz_proplist()) -> fs_handlecall_ret().
 lookup_user(Node, Id, Method,  Props) ->
@@ -227,7 +256,7 @@ get_auth_realm(Props) ->
                 orelse kz_network_utils:is_ipv6(Realm)
             of
                 'true' -> get_auth_uri_realm(Props);
-                'false' -> kz_util:to_lower_binary(Realm)
+                'false' -> kz_term:to_lower_binary(Realm)
             end
     end.
 
@@ -235,7 +264,7 @@ get_auth_realm(Props) ->
 get_auth_uri_realm(Props) ->
     AuthURI = props:get_value(<<"sip_auth_uri">>, Props, <<>>),
     case binary:split(AuthURI, <<"@">>) of
-        [_, Realm] -> kz_util:to_lower_binary(Realm);
+        [_, Realm] -> kz_term:to_lower_binary(Realm);
         _Else ->
             props:get_first_defined([<<"Auth-Realm">>
                                     ,<<"sip_request_host">>
@@ -255,6 +284,7 @@ handle_lookup_resp(<<"reverse-lookup">>, Realm, Username, {'ok', JObj}) ->
 handle_lookup_resp(_, Realm, Username, {'ok', JObj}) ->
     Props = [{<<"Domain-Name">>, Realm}
             ,{<<"User-ID">>, Username}
+            ,{<<"Expires">>, 0}
             ],
     lager:debug("building authn resp for ~s@~s", [Username, Realm]),
     ecallmgr_fs_xml:authn_resp_xml(kz_json:set_values(Props, JObj));
@@ -289,7 +319,7 @@ query_registrar(Realm, Username, Node, Id, Method, Props) ->
           ,{<<"Auth-Response">>, props:get_value(<<"sip_auth_response">>, Props)}
           ,{<<"Custom-SIP-Headers">>, kz_json:from_list(ecallmgr_util:custom_sip_headers(Props))}
           ,{<<"User-Agent">>, props:get_value(<<"sip_user_agent">>, Props)}
-          ,{<<"Media-Server">>, kz_util:to_binary(Node)}
+          ,{<<"Media-Server">>, kz_term:to_binary(Node)}
           ,{<<"Call-ID">>, props:get_value(<<"sip_call_id">>, Props, Id)}
            | kz_api:default_headers(?APP_NAME, ?APP_VERSION)
           ],

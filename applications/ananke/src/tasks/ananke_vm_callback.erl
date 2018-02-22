@@ -66,7 +66,7 @@ handle_req(JObj, Props) ->
         UserId ->
             lager:debug("voicemail owner is ~p", [UserId]),
             {'ok', UserJObj} = kz_datamgr:open_cache_doc(AccountDb, UserId),
-            {'ok', AccountJObj} = kz_datamgr:open_cache_doc(?KZ_ACCOUNTS_DB, AccountId),
+            {'ok', AccountJObj} = kz_account:fetch(AccountId),
 
             OptionsPath = [<<"notify">>, <<"callback">>],
             VMBoxNotifyJObj = kz_json:get_value(OptionsPath, VMBoxJObj),
@@ -79,7 +79,7 @@ handle_req(JObj, Props) ->
             VMNumber = get_voicemail_number(AccountDb, Mailbox),
             Number = get_first_defined([{<<"number">>, VMBoxNotifyJObj}
                                        ,{<<"number">>, UserNotifyJObj}]),
-            IsDisabled = kz_util:is_true(
+            IsDisabled = kz_term:is_true(
                            get_first_defined([{<<"disabled">>, VMBoxNotifyJObj}
                                              ,{<<"disabled">>, UserNotifyJObj}])),
 
@@ -219,7 +219,7 @@ build_originate_req(#args{callback_number = CallbackNumber
 get_first_defined(Props) ->
     get_first_defined(Props, 'undefined').
 
--spec get_first_defined([{ne_binary(), kz_json:object()}], any()) -> binary() | any().
+-spec get_first_defined([{ne_binary(), kz_json:object()}], Default) -> binary() | Default.
 get_first_defined([], Default) -> Default;
 get_first_defined([{Keys, JObj} | Rest], Default) ->
     case kz_json:get_value(Keys, JObj) of
@@ -249,44 +249,47 @@ get_schedule_from_attempts_interval(Attempts, Interval)
     lists:duplicate(Attempts, Interval);
 get_schedule_from_attempts_interval(_Attempts, _Interval) -> [].
 
--spec get_interval(kz_json:object(), kz_json:object(), kz_json:object()) -> integer().
+-spec get_interval(kz_json:object(), kz_json:object(), kz_json:object()) -> pos_integer().
 get_interval(VMBoxJObj, UserJObj, AccountJObj) ->
-    DefaultInterval = kapps_config:get_binary(?CONFIG_CAT
-                                             ,[<<"voicemail">>, <<"notify">>, <<"callback">>, <<"interval_s">>]
-                                             ,5*60
-                                             ),
-    kz_util:to_integer(
-      get_first_defined([{<<"interval_s">>, VMBoxJObj}
-                        ,{<<"interval_s">>, UserJObj}
-                        ,{<<"interval_s">>, AccountJObj}
-                        ]
-                       ,DefaultInterval
-                       )).
+    case get_first_defined([{<<"interval_s">>, VMBoxJObj}
+                           ,{<<"interval_s">>, UserJObj}
+                           ,{<<"interval_s">>, AccountJObj}
+                           ])
+    of
+        undefined ->
+            kapps_config:get_integer(?CONFIG_CAT
+                                    ,[<<"voicemail">>, <<"notify">>, <<"callback">>, <<"interval_s">>]
+                                    ,5 * ?SECONDS_IN_MINUTE
+                                    );
+        Interval -> kz_term:to_integer(Interval)
+    end.
 
--spec get_attempts(kz_json:object(), kz_json:object(), kz_json:object()) -> integer().
+-spec get_attempts(kz_json:object(), kz_json:object(), kz_json:object()) -> pos_integer().
 get_attempts(VMBoxJObj, UserJObj, AccountJObj) ->
-    DefaultTries = kapps_config:get_binary(?CONFIG_CAT
-                                          ,[<<"voicemail">>, <<"notify">>, <<"callback">>, <<"attempts">>]
-                                          ,5
-                                          ),
-    kz_util:to_integer(
-      get_first_defined([{<<"attempts">>, VMBoxJObj}
-                        ,{<<"attempts">>, UserJObj}
-                        ,{<<"attempts">>, AccountJObj}
-                        ]
-                       ,DefaultTries
-                       )).
+    case get_first_defined([{<<"attempts">>, VMBoxJObj}
+                           ,{<<"attempts">>, UserJObj}
+                           ,{<<"attempts">>, AccountJObj}
+                           ])
+    of
+        undefined ->
+            kapps_config:get_integer(?CONFIG_CAT
+                                    ,[<<"voicemail">>, <<"notify">>, <<"callback">>, <<"attempts">>]
+                                    ,5
+                                    );
+        Tries -> kz_term:to_integer(Tries)
+    end.
 
--spec get_callback_timeout(kz_json:object(), kz_json:object(), kz_json:object()) -> integer().
+-spec get_callback_timeout(kz_json:object(), kz_json:object(), kz_json:object()) -> pos_integer().
 get_callback_timeout(VMBoxJObj, UserJObj, AccountJObj) ->
-    DefaultCallTimeout = kapps_config:get_binary(?CONFIG_CAT
-                                                ,[<<"voicemail">>, <<"notify">>, <<"callback">>, <<"timeout_s">>]
-                                                ,20
-                                                ),
-    kz_util:to_integer(
-      get_first_defined([{<<"timeout_s">>, VMBoxJObj}
-                        ,{<<"timeout_s">>, UserJObj}
-                        ,{<<"timeout_s">>, AccountJObj}
-                        ]
-                       ,DefaultCallTimeout
-                       )).
+    case get_first_defined([{<<"timeout_s">>, VMBoxJObj}
+                           ,{<<"timeout_s">>, UserJObj}
+                           ,{<<"timeout_s">>, AccountJObj}
+                           ])
+    of
+        undefined ->
+            kapps_config:get_integer(?CONFIG_CAT
+                                    ,[<<"voicemail">>, <<"notify">>, <<"callback">>, <<"timeout_s">>]
+                                    ,20
+                                    );
+        CallTimeout -> kz_term:to_integer(CallTimeout)
+    end.

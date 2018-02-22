@@ -20,7 +20,7 @@
 -define(LOOPBACK_KEY, <<"ignore_loopback_bowout">>).
 -define(IGNORE_LOOPBACK(AccountId),
         case AccountId of
-            'undefined' -> kapps_config:get(?CONFIG_CAT, ?LOOPBACK_KEY, 'true');
+            'undefined' -> kapps_config:get_is_true(?CONFIG_CAT, ?LOOPBACK_KEY, 'true');
             _ -> kapps_account_config:get_global(AccountId, ?CONFIG_CAT, ?LOOPBACK_KEY, 'true')
         end).
 
@@ -50,14 +50,14 @@ maybe_ignore_cdr(Fun, {JObj, Acc}) ->
 
 -spec maybe_ignore_app(kz_json:object()) -> {boolean(), binary()}.
 maybe_ignore_app(JObj) ->
-    AppName = kz_util:to_binary(kz_call_event:application_name(JObj)),
+    AppName = kz_term:to_binary(kz_call_event:application_name(JObj)),
     {lists:member(AppName, ?IGNORED_APP)
     ,<<"ignoring cdr request from ", AppName/binary>>
     }.
 
 -spec maybe_ignore_loopback(kz_json:object()) -> {boolean(), binary()}.
 maybe_ignore_loopback(JObj) ->
-    {kz_util:is_true(?IGNORE_LOOPBACK(kz_call_event:account_id(JObj)))
+    {kz_term:is_true(?IGNORE_LOOPBACK(kz_call_event:account_id(JObj)))
      andalso kz_json:is_true(<<"Channel-Is-Loopback">>, JObj)
      andalso kz_json:is_true(<<"Channel-Loopback-Bowout">>, JObj)
      andalso kz_json:is_true(<<"Channel-Loopback-Bowout-Execute">>, JObj)
@@ -123,7 +123,7 @@ update_ccvs(_, _, JObj) ->
 -spec update_ccvs_foldl(kz_json:path(), kz_json:json_term(), {kz_json:object(), kz_json:object()}) ->
                                {kz_json:object(), kz_json:object()}.
 update_ccvs_foldl(Key, Value,  {JObj, CCVs}=Acc) ->
-    case kz_json:is_private_key(Key) of
+    case kz_doc:is_private_key(Key) of
         'false' -> Acc;
         'true' ->
             {kz_json:set_value(Key, Value, JObj)
@@ -136,7 +136,7 @@ set_doc_id(_, Timestamp, JObj) ->
     CallId = kz_call_event:call_id(JObj),
     %% we should consider this because there is a lost channel in case of
     %% nightmare transfers
-    %%    CallId = kz_util:rand_hex_binary(16),
+    %%    CallId = kz_binary:rand_hex(16),
     DocId = cdr_util:get_cdr_doc_id(Timestamp, CallId),
     kz_doc:set_id(JObj, DocId).
 
@@ -176,7 +176,7 @@ maybe_leak_ccv(JObj, Key, {GetFun, Default}) ->
 set_interaction(_AccountId, _Timestamp, JObj) ->
     Interaction = kz_call_event:custom_channel_var(JObj, <<?CALL_INTERACTION_ID>>, ?CALL_INTERACTION_DEFAULT),
     <<Time:11/binary, "-", Key/binary>> = Interaction,
-    Timestamp = kz_util:to_integer(Time),
+    Timestamp = kz_term:to_integer(Time),
     CallId = kz_call_event:call_id(JObj),
     DocId = cdr_util:get_cdr_doc_id(Timestamp, CallId),
 
@@ -191,7 +191,7 @@ set_interaction(_AccountId, _Timestamp, JObj) ->
 save_cdr(_, _, JObj) ->
     CDRDb = kz_doc:account_db(JObj),
     case cdr_util:save_cdr(CDRDb, kz_json:normalize_jobj(JObj)) of
-        {'error', 'max_retries'} ->
+        {'error', 'max_save_retries'} ->
             lager:error("write failed to ~s, too many retries", [CDRDb]);
         'ok' -> 'ok'
     end.

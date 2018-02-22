@@ -1,13 +1,16 @@
 {
-    "$schema": "http://json-schema.org/draft-03/schema#",
+    "$schema": "http://json-schema.org/draft-04/schema#",
     "_id": "callflows.play",
     "description": "Validator for the play callflow's data object",
     "properties": {
         "answer": {
-            "description": "",
+            "description": "Whether to answer an unanswered call",
             "type": "boolean"
+        },
+        "id": {
+            "description": "Media ID or URL of the media to play",
+            "type": "string"
         }
     },
-    "required": true,
     "type": "object"
 }

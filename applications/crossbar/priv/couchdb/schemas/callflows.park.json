@@ -1,34 +1,53 @@
 {
-    "$schema": "http://json-schema.org/draft-03/schema#",
+    "$schema": "http://json-schema.org/draft-04/schema#",
     "_id": "callflows.park",
     "description": "Validator for the park callflow's data object",
     "properties": {
         "action": {
             "default": "park",
-            "description": "",
+            "description": "Action to take for the caller",
+            "enum": [
+                "park",
+                "retrieve",
+                "auto"
+            ],
             "type": "string"
         },
+        "custom_presence_id": {
+            "default": false,
+            "description": "use configured presence_id and fallback to request",
+            "type": "boolean"
+        },
         "default_callback_timeout": {
-            "description": "",
+            "description": "How long, in seconds, to wait before calling back the parker",
             "type": "integer"
         },
         "default_presence_type": {
-            "description": "",
+            "description": "Type of presence to update",
+            "enum": [
+                "early",
+                "terminated",
+                "confirmed"
+            ],
             "type": "string"
         },
         "default_ringback_timeout": {
-            "description": "",
+            "description": "How long, in milliseconds, before ringing back",
             "type": "integer"
         },
+        "presence_id": {
+            "description": "use this presence_id",
+            "type": "string"
+        },
         "slot": {
-            "description": ""
+            "description": "Static slot number to use",
+            "type": "string"
         },
         "slots": {
             "default": {},
-            "description": "",
+            "description": "Statically define slots and their configuration",
             "type": "object"
         }
     },
-    "required": true,
     "type": "object"
 }

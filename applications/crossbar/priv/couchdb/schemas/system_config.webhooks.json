@@ -3,6 +3,11 @@
     "_id": "system_config.webhooks",
     "description": "Schema for webhooks system_config",
     "properties": {
+        "attempt_failure_count": {
+            "default": 6,
+            "description": "webhooks attempt failure count",
+            "type": "integer"
+        },
         "attempt_failure_expiry_ms": {
             "default": 60000,
             "description": "webhooks attempt failure expiry in milliseconds",
@@ -25,11 +30,11 @@
         },
         "object_types": {
             "description": "webhooks object types",
+            "items": {
+                "type": "string"
+            },
             "type": "array"
         }
     },
-    "required": [
-        "object_types"
-    ],
     "type": "object"
 }

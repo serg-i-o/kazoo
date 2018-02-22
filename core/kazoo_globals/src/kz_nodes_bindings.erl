@@ -5,8 +5,8 @@
         ,request/1
         ]).
 
--include_lib("kazoo/include/kz_types.hrl").
--include_lib("kazoo/include/kz_log.hrl").
+-include_lib("kazoo_stdlib/include/kz_types.hrl").
+-include_lib("kazoo_stdlib/include/kz_log.hrl").
 
 -define(DEFAULT_MODULE, 'kz_nodes').
 -define(DEFAULT_FUNCTION, 'request').
@@ -59,7 +59,7 @@ unbind(App, Module, Function)
     end.
 
 routing_key(App) ->
-    <<"kz_nodes.request.", (kz_util:to_binary(App))/binary>>.
+    <<"kz_nodes.request.", (kz_term:to_binary(App))/binary>>.
 
 -spec request(atom()) -> kazoo_bindings:fold_results().
 request(App) when is_atom(App) ->

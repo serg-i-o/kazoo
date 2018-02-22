@@ -89,21 +89,9 @@ curl -v -X GET \
 
 ##### Schema
 
-Key | Description | Type | Default | Required
---- | ----------- | ---- | ------- | --------
-`action` | What to execute on the channel | `string('transfer', 'hangup', 'callflow', 'intercept')` | | `true`
-`action.transfer` | Transfers the `{UUID}` leg to the `target` extension/DID and places the other leg on hold | | |
-`target` | The extension/DID to transfer the `{UUID}` to | string() | |
-`takeback_dtmf` | DTMF to cancel the transfer | `string("0".."9","*","#")` | |
-`moh` | `media_id` for Music on Hold while transferring | `string()` | |
-`ringback` | ringback to play to the transferor | `string()` | |
-`action.callflow` | Executes a callflow ID on the `{UUID}` | | |
-`id` | Callflow ID to execute | `string()` | |
-`action.hangup` | Hangup the `{UUID}` | | |
-`action.intercept` | Intercept `{UUID}` to `target` and hangup the other leg| | |
-`target_type` | Type of `target` | `string('device', 'user')` | | `true`
-`target_id` | Id of device to which current channel will be bridged | `string()` | | `true`
-`unbridged_only` | Intercept only unbridged channel | `boolean()` | `true` | 
+
+
+#### Fetch
 
 > POST /v2/accounts/{ACCOUNT_ID}/channels/{UUID}
 
@@ -136,6 +124,6 @@ It also allows full metaflows and not only single actions, ie, the `children` no
 curl -v -X PUT \
     -H "Content-Type: application/json" \
     -H "X-Auth-Token: {AUTH_TOKEN}" \
-    -d '{"data": {"action": "metaflow", "data": { "module", "hangup" }}' \
+    -d '{"data": {"action": "metaflow", "data": { "module": "hangup" }}}' \
     http://{SERVER}:8000/v2/accounts/{ACCOUNT_ID}/channels/{UUID}
 ```

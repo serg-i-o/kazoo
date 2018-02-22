@@ -22,16 +22,17 @@
 -export([faxbox_jobs/1, faxbox_jobs/2]).
 -export([pending_jobs/0, active_jobs/0]).
 -export([load_smtp_attachment/2]).
+-export([versions_in_use/0]).
 
--define(DEFAULT_MIGRATE_OPTIONS, []).
--define(OVERRIDE_DOCS, ['override_existing_document']).
+-define(DEFAULT_MIGRATE_OPTIONS, [{'allow_old_modb_creation', 'true'}]).
+-define(OVERRIDE_DOCS, ['override_existing_document' | ?DEFAULT_MIGRATE_OPTIONS]).
 -define(DEFAULT_BATCH_SIZE, 100).
 
 -spec migrate() -> 'ok'.
 migrate() ->
     Accounts = kapps_util:get_all_accounts(),
     Total = length(Accounts),
-    lists:foldr(fun(A, C) -> migrate_faxes_fold(A, C, Total,?DEFAULT_MIGRATE_OPTIONS) end, 1, Accounts),
+    lists:foldr(fun(A, C) -> migrate_faxes_fold(A, C, Total, ?DEFAULT_MIGRATE_OPTIONS) end, 1, Accounts),
     migrate_outbound_faxes(),
     'ok'.
 
@@ -60,10 +61,6 @@ migrate([Account|Accounts], Options) when is_list(Options) ->
 migrate(Account, Options) when is_list(Options) ->
     migrate_faxes(Account, Options).
 
-%% ====================================================================
-%% Internal functions
-%% ====================================================================
-
 migrate_faxes_fold(AccountDb, Current, Total, Options) ->
     io:format("migrating faxes in database (~p/~p) '~s'~n", [Current, Total, AccountDb]),
     _ = migrate_faxes(AccountDb, Options),
@@ -71,7 +68,7 @@ migrate_faxes_fold(AccountDb, Current, Total, Options) ->
 
 -spec migrate_faxes(atom() | string() | binary(),  kz_proplist()) -> 'ok'.
 migrate_faxes(Account, Options) when not is_binary(Account) ->
-    migrate_faxes(kz_util:to_binary(Account), Options);
+    migrate_faxes(kz_term:to_binary(Account), Options);
 migrate_faxes(Account, Options) ->
     migrate_private_media(Account),
     recover_private_media(Account),
@@ -179,18 +176,17 @@ maybe_migrate_fax_to_modb(AccountDb, JObj, Options) ->
     end.
 
 migrate_fax_to_modb(AccountDb, DocId, JObj, Options) ->
-    Timestamp = kz_doc:created(JObj, kz_util:current_tstamp()),
+    Timestamp = kz_doc:created(JObj, kz_time:current_tstamp()),
     {{Year, Month, _}, _} = calendar:gregorian_seconds_to_datetime(Timestamp),
     AccountMODb = kazoo_modb:get_modb(AccountDb, Year, Month),
     FaxMODb = kz_util:format_account_modb(AccountMODb, 'encoded'),
-    FaxId = <<(kz_util:to_binary(Year))/binary
-              ,(kz_util:pad_month(Month))/binary
+    FaxId = <<(kz_term:to_binary(Year))/binary
+              ,(kz_date:pad_month(Month))/binary
               ,"-"
               ,DocId/binary
             >>,
     io:format("moving doc ~s/~s to ~s/~s~n",[AccountDb, DocId, AccountMODb, FaxId]),
-    kazoo_modb:maybe_create(AccountMODb),
-    case kz_datamgr:move_doc(AccountDb, DocId, FaxMODb, FaxId, Options) of
+    case kazoo_modb:move_doc(AccountDb, DocId, FaxMODb, FaxId, Options) of
         {'ok', _JObj} -> io:format("document ~s moved to ~s~n",[DocId, FaxId]);
         {'error', Error} -> io:format("error ~p moving document ~s to ~s~n",[Error, DocId, FaxId])
     end.
@@ -222,7 +218,7 @@ account_jobs(AccountId, State) ->
         {'ok', Jobs} ->
             F = fun (JObj) ->
                         io:format(FormatString, [kz_json:get_value([<<"value">>, <<"id">>], JObj)
-                                                ,kz_util:format_datetime(
+                                                ,kz_time:format_datetime(
                                                    kz_json:get_value([<<"value">>, <<"modified">>], JObj))
                                                 ,kz_json:get_value([<<"value">>, <<"status">>], JObj)
                                                 ,kz_json:get_value([<<"value">>, <<"account_id">>], JObj)
@@ -256,7 +252,7 @@ faxbox_jobs(FaxboxId, State) ->
         {'ok', Jobs} ->
             F = fun(JObj) ->
                         io:format(FormatString, [kz_json:get_value([<<"value">>, <<"id">>], JObj)
-                                                ,kz_util:format_datetime(
+                                                ,kz_time:format_datetime(
                                                    kz_json:get_value([<<"value">>, <<"modified">>], JObj))
                                                 ,kz_json:get_value([<<"value">>, <<"status">>], JObj)
                                                 ,kz_json:get_value([<<"value">>, <<"account_id">>], JObj)
@@ -281,7 +277,7 @@ pending_jobs() ->
     _ = case kz_datamgr:get_results(?KZ_FAXES_DB, <<"faxes/jobs">>) of
             {'ok', Jobs} ->
                 [io:format(FormatString, [kz_json:get_value([<<"value">>, <<"id">>], JObj)
-                                         ,kz_util:format_datetime(
+                                         ,kz_time:format_datetime(
                                             kz_json:get_value([<<"value">>, <<"modified">>], JObj))
                                          ,kz_json:get_value([<<"value">>, <<"account_id">>], JObj)
                                          ,kz_json:get_value([<<"value">>, <<"faxbox_id">>], JObj, <<"(none)">>)
@@ -305,7 +301,7 @@ active_jobs() ->
             {'ok', Jobs} ->
                 [io:format(FormatString, [kz_json:get_value([<<"value">>, <<"node">>], JObj)
                                          ,kz_json:get_value([<<"value">>, <<"id">>], JObj)
-                                         ,kz_util:format_datetime(
+                                         ,kz_time:format_datetime(
                                             kz_json:get_value([<<"value">>, <<"modified">>], JObj))
                                          ,kz_json:get_value([<<"value">>, <<"account_id">>], JObj)
                                          ,kz_json:get_value([<<"value">>, <<"faxbox_id">>], JObj, <<"(none)">>)
@@ -345,7 +341,7 @@ update_job(JobID, State, JObj) ->
             Opts = [{'rev', kz_doc:revision(JObj)}],
             kz_datamgr:save_doc(?KZ_FAXES_DB
                                ,kz_json:set_values([{<<"pvt_job_status">>, State}
-                                                   ,{<<"pvt_modified">>, kz_util:current_tstamp()}
+                                                   ,{<<"pvt_modified">>, kz_time:current_tstamp()}
                                                    ]
                                                   ,JObj
                                                   )
@@ -360,7 +356,7 @@ migrate_outbound_faxes() ->
 
 -spec migrate_outbound_faxes(ne_binary() | integer() | kz_proplist()) -> 'ok'.
 migrate_outbound_faxes(Number) when is_binary(Number) ->
-    migrate_outbound_faxes(kz_util:to_integer(Number));
+    migrate_outbound_faxes(kz_term:to_integer(Number));
 migrate_outbound_faxes(Number) when is_integer(Number) ->
     io:format("start migrating outbound faxes with batch size ~p~n", [Number]),
     migrate_outbound_faxes([{'limit', Number}]);
@@ -404,17 +400,15 @@ maybe_migrate_outbound_fax(_Type, _JObj) -> 'ok'.
 -spec migrate_outbound_fax(kz_json:object()) -> 'ok'.
 migrate_outbound_fax(JObj) ->
     FromId = kz_doc:id(JObj),
-    {Year, Month, _D} = kz_util:to_date(kz_doc:created(JObj)),
+    {Year, Month, _D} = kz_term:to_date(kz_doc:created(JObj)),
     FromDB = kz_doc:account_db(JObj),
     AccountId = kz_doc:account_id(JObj),
     AccountMODb = kazoo_modb:get_modb(AccountId, Year, Month),
 
-    kazoo_modb:maybe_create(AccountMODb),
-
     ToDB = kz_util:format_account_modb(AccountMODb, 'encoded'),
-    ToId = ?MATCH_MODB_PREFIX(kz_util:to_binary(Year), kz_util:pad_month(Month),FromId),
+    ToId = ?MATCH_MODB_PREFIX(kz_term:to_binary(Year), kz_date:pad_month(Month),FromId),
 
-    case kz_datamgr:move_doc(FromDB, FromId, ToDB, ToId, ['override_existing_document']) of
+    case kazoo_modb:move_doc(FromDB, FromId, ToDB, ToId, ?OVERRIDE_DOCS) of
         {'ok', _} -> io:format("document ~s/~s moved to ~s/~s~n", [FromDB, FromId, ToDB, ToId]);
         {'error', _E} -> io:format("error ~p moving document ~s/~s to ~s/~s~n", [_E, FromDB, FromId, ToDB, ToId])
     end.
@@ -444,4 +438,60 @@ load_smtp_attachment(DocId, Filename, FileContents) ->
                 {'error', E} -> io:format("error attaching ~s to docid ~s : ~p~n", [Filename, DocId, E])
             end;
         {'error', E} -> io:format("error opening docid ~s for attaching ~s : ~p~n", [DocId, Filename, E])
+    end.
+
+-spec versions_in_use() -> no_return.
+versions_in_use() ->
+    AllCmds =
+        [?CONVERT_IMAGE_COMMAND
+        ,?CONVERT_OO_COMMAND
+        ,?CONVERT_PDF_COMMAND
+        ],
+    Executables = find_commands(AllCmds),
+    lists:foreach(fun print_cmd_version/1, Executables),
+    no_return.
+
+print_cmd_version(Exe) ->
+    Options = [exit_status
+              ,use_stdio
+              ,stderr_to_stdout
+              ,{args, ["--version"]}
+              ],
+    Port = open_port({spawn_executable, Exe}, Options),
+    listen_to_port(Port, Exe).
+
+listen_to_port(Port, Exe) ->
+    receive
+        {Port, {data, Str0}} ->
+            [Str|_] = string:tokens(Str0, "\n"),
+            io:format("* ~s:\n\t~s\n", [Exe, Str]),
+            lager:debug("version for ~s: ~s", [Exe, Str]);
+        {Port, {exit_status, 0}} -> ok;
+        {Port, {exit_status, _}} -> no_executable(Exe)
+    end.
+
+find_commands(Cmds) ->
+    Commands =
+        lists:usort(
+          [binary_to_list(hd(binary:split(Cmd, <<$\s>>)))
+           || Cmd <- Cmds
+          ]),
+    lists:usort(
+      [Exe
+       || Cmd <- Commands,
+          Exe <- [cmd_to_executable(Cmd)],
+          Exe =/= false
+      ]).
+
+no_executable(Exe) ->
+    io:format("* ~s:\n\tERROR! missing executable\n", [Exe]),
+    lager:error("missing executable: ~s", [Exe]).
+
+cmd_to_executable("/"++_=Exe) -> Exe;
+cmd_to_executable(Cmd) ->
+    case os:find_executable(Cmd) of
+        false ->
+            no_executable(Cmd),
+            false;
+        Exe -> Exe
     end.

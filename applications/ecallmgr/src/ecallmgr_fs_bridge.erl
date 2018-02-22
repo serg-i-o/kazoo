@@ -17,10 +17,11 @@
 -include("ecallmgr.hrl").
 
 -define(BYPASS_MEDIA_AFTER_BRIDGE, ecallmgr_config:get_boolean(<<"use_bypass_media_after_bridge">>, 'false')).
+-define(CHANNEL_ACTIONS_KEY, [<<"Custom-Channel-Vars">>, <<"Channel-Actions">>]).
 
 -spec call_command(atom(), ne_binary(), kz_json:object()) -> {'error', binary()} | {binary(), kz_proplist()}.
 call_command(Node, UUID, JObj) ->
-    Endpoints = kz_json:get_ne_value(<<"Endpoints">>, JObj, []),
+    Endpoints = kz_json:get_list_value(<<"Endpoints">>, JObj, []),
     case kapi_dialplan:bridge_v(JObj) of
         'false' -> {'error', <<"bridge failed to execute as JObj did not validate">>};
         'true' when Endpoints =:= [] -> {'error', <<"bridge request had no endpoints">>};
@@ -35,8 +36,9 @@ call_command(Node, UUID, JObj) ->
             {'ok', Channel} = ecallmgr_fs_channel:fetch(UUID, 'record'),
 
             _ = handle_ringback(Node, UUID, JObj),
-            _ = maybe_early_media(Node, UUID, JObj),
+            _ = maybe_early_media(Node, UUID, JObj, Endpoints),
             _ = maybe_b_leg_events(Node, UUID, JObj),
+            BridgeJObj = add_endpoints_channel_actions(Node, UUID, JObj),
 
             Routines = [fun handle_hold_media/5
                        ,fun handle_secure_rtp/5
@@ -49,7 +51,7 @@ call_command(Node, UUID, JObj) ->
                        ],
             lager:debug("creating bridge dialplan"),
             XferExt = lists:foldr(fun(F, DP) ->
-                                          F(DP, Node, UUID, Channel, JObj)
+                                          F(DP, Node, UUID, Channel, BridgeJObj)
                                   end
                                  ,[], Routines),
             {<<"xferext">>, XferExt}
@@ -92,17 +94,16 @@ handle_ringback(Node, UUID, JObj) ->
             ecallmgr_fs_command:set(Node, UUID, [{<<"ringback">>, Stream}])
     end.
 
--spec maybe_early_media(atom(), ne_binary(), kz_json:object()) -> ecallmgr_util:send_cmd_ret().
-maybe_early_media(Node, UUID, JObj) ->
-    Endpoints = kz_json:get_ne_value(<<"Endpoints">>, JObj, []),
+-spec maybe_early_media(atom(), ne_binary(), kz_json:object(), kz_json:objects()) -> ecallmgr_util:send_cmd_ret().
+maybe_early_media(Node, UUID, JObj, Endpoints) ->
     Separator = ecallmgr_util:get_dial_separator(JObj, Endpoints),
-    maybe_early_media(Node, UUID, JObj, Separator).
+    maybe_early_media_separator(Node, UUID, JObj, Separator).
 
--spec maybe_early_media(atom(), ne_binary(), kz_json:object(), ne_binary()) -> ecallmgr_util:send_cmd_ret().
-maybe_early_media(Node, UUID, _JObj, ?SEPARATOR_SIMULTANEOUS) ->
+-spec maybe_early_media_separator(atom(), ne_binary(), kz_json:object(), ne_binary()) -> ecallmgr_util:send_cmd_ret().
+maybe_early_media_separator(Node, UUID, _JObj, ?SEPARATOR_SIMULTANEOUS) ->
     lager:debug("bridge is simultaneous to multiple endpoints, starting local ringing"),
     ecallmgr_util:send_cmd(Node, UUID, <<"ring_ready">>, "");
-maybe_early_media(_Node, _UUID, _, _) -> 'ok'.
+maybe_early_media_separator(_Node, _UUID, _, _) -> 'ok'.
 
 -spec handle_hold_media(kz_proplist(), atom(), ne_binary(), channel(), kz_json:object()) -> kz_proplist().
 handle_hold_media(DP, _Node, UUID, _Channel, JObj) ->
@@ -143,7 +144,7 @@ maybe_handle_bypass_media(DP, Node, UUID, Channel, JObj) ->
 
 -spec handle_bypass_media(kz_proplist(), atom(), ne_binary(), channel(), kz_json:object()) -> kz_proplist().
 handle_bypass_media(DP, _Node, _UUID, #channel{profile=ChannelProfile}, JObj) ->
-    BridgeProfile = kz_util:to_binary(kz_json:get_value(<<"SIP-Interface">>, JObj, ?DEFAULT_FS_PROFILE)),
+    BridgeProfile = kz_term:to_binary(kz_json:get_value(<<"SIP-Interface">>, JObj, ?DEFAULT_FS_PROFILE)),
     case kz_json:get_value(<<"Media">>, JObj) of
         <<"process">> ->
             lager:debug("bridge will process media through host switch"),
@@ -157,33 +158,41 @@ handle_bypass_media(DP, _Node, _UUID, #channel{profile=ChannelProfile}, JObj) ->
     end.
 
 -spec maybe_bypass_endpoint_media(kz_json:objects(), ne_binary(), ne_binary(), kz_proplist()) -> kz_proplist().
-maybe_bypass_endpoint_media([Endpoint], BridgeProfile, ChannelProfile, DP) ->
-    EndpointProfile = kz_json:get_value(<<"SIP-Interface">>, Endpoint, BridgeProfile),
-    case kz_json:is_true(<<"Bypass-Media">>, Endpoint)
-        andalso EndpointProfile =:= ChannelProfile of
+maybe_bypass_endpoint_media(Endpoints, BridgeProfile, ChannelProfile, DP) ->
+    ShouldBypass = lists:all(fun(Endpoint) ->
+                                     bypass_endpoint_media_enabled(Endpoint
+                                                                  ,BridgeProfile
+                                                                  ,ChannelProfile
+                                                                  )
+                             end
+                            ,Endpoints
+                            ),
+    case ShouldBypass of
         'true' -> [{"application", "set bypass_media=true"}|DP];
         'false' -> DP
-    end;
-maybe_bypass_endpoint_media(_, _, _, DP) ->
-    DP.
+    end.
+
+-spec bypass_endpoint_media_enabled(kz_json:object(), ne_binary(), ne_binary()) -> boolean().
+bypass_endpoint_media_enabled(Endpoint, BridgeProfile, ChannelProfile) ->
+    EndpointProfile = kz_json:get_ne_binary_value(<<"SIP-Interface">>, Endpoint, BridgeProfile),
+    kz_json:is_true(<<"Bypass-Media">>, Endpoint)
+        andalso EndpointProfile =:= ChannelProfile.
 
 -spec handle_ccvs(kz_proplist(), atom(), ne_binary(), channel(), kz_json:object()) -> kz_proplist().
 handle_ccvs(DP, Node, UUID, _Channel, JObj) ->
     CCVs = kz_json:get_value(<<"Custom-Channel-Vars">>, JObj),
     case kz_json:is_json_object(CCVs) of
+        'false' -> DP;
         'true' ->
             Args = ecallmgr_util:process_fs_kv(Node, UUID, kz_json:to_proplist(CCVs), 'set'),
             AppArgs = ecallmgr_util:fs_args_to_binary(Args),
-            [{"application", <<"kz_multiset ", AppArgs/binary>>}
-            ] ++ DP;
-        _ ->
-            DP
+            [{"application", <<"kz_multiset ", AppArgs/binary>>}] ++ DP
     end.
 
 -spec handle_loopback_key(boolean(), ne_binary(), kz_json:object()) -> kz_proplist().
 handle_loopback_key('false', _Key, _JObj) -> [];
 handle_loopback_key('true', Key, JObj) ->
-    V = kz_util:to_binary(kz_json:is_false(Key, JObj, 'false')),
+    V = kz_term:to_binary(kz_json:is_false(Key, JObj, 'false')),
     K = ecallmgr_util:get_fs_key(Key),
     [{"application", <<"export ", K/binary, "=", V/binary>>}].
 
@@ -223,8 +232,8 @@ pre_exec(DP, _Node, _UUID, _Channel, _JObj) ->
 -spec create_command(kz_proplist(), atom(), ne_binary(), channel(), kz_json:object()) -> kz_proplist().
 create_command(DP, _Node, _UUID, #channel{profile=ChannelProfile}, JObj) ->
     BypassAfterBridge = ?BYPASS_MEDIA_AFTER_BRIDGE,
-    BridgeProfile = kz_util:to_binary(kz_json:get_value(<<"SIP-Interface">>, JObj, ?DEFAULT_FS_PROFILE)),
-    EPs = kz_json:get_ne_value(<<"Endpoints">>, JObj, []),
+    BridgeProfile = kz_term:to_binary(kz_json:get_value(<<"SIP-Interface">>, JObj, ?DEFAULT_FS_PROFILE)),
+    EPs = kz_json:get_list_value(<<"Endpoints">>, JObj, []),
     Endpoints = maybe_bypass_after_bridge(BypassAfterBridge, BridgeProfile, ChannelProfile, EPs),
     BridgeCmd = list_to_binary(["bridge "
                                ,build_channels_vars(Endpoints, JObj)
@@ -274,3 +283,72 @@ post_exec(DP, _Node, _UUID, _Channel, _JObj) ->
 maybe_b_leg_events(Node, UUID, JObj) ->
     Events = kz_json:get_value(<<"B-Leg-Events">>, JObj, []),
     ecallmgr_call_events:listen_for_other_leg(Node, UUID, Events).
+
+-spec add_endpoints_channel_actions(atom(), ne_binary(), kz_json:object()) -> kz_json:object().
+add_endpoints_channel_actions(Node, UUID, JObj) ->
+    Endpoints = kz_json:get_list_value(<<"Endpoints">>, JObj, []),
+    kz_json:set_value(<<"Endpoints">>, build_endpoints_actions(Node, UUID, Endpoints), JObj).
+
+-spec build_endpoints_actions(atom(), ne_binary(), kz_json:objects()) -> kz_json:objects().
+build_endpoints_actions(Node, UUID, Endpoints) ->
+    Fun = fun(Endpoint) -> build_endpoint_actions(Node, UUID, Endpoint) end,
+    lists:map(Fun, Endpoints).
+
+-spec build_endpoint_actions(atom(), ne_binary(), kz_json:object()) -> kz_json:object().
+build_endpoint_actions(Node, UUID, Endpoint) ->
+    JObj = kz_json:get_json_value(<<"Endpoint-Actions">>, Endpoint, kz_json:new()),
+    Fun = fun(K, V, Acc)-> build_endpoint_actions(Node, UUID, K, V, Acc) end,
+    case kz_json:foldl(Fun, [], JObj) of
+        [] -> Endpoint;
+        Actions ->
+            Var = kz_binary:join(Actions,<<?BRIDGE_CHANNEL_VAR_SEPARATOR>>),
+            kz_json:set_value(?CHANNEL_ACTIONS_KEY, Var, Endpoint)
+    end.
+
+-type ep_actions() :: ne_binaries().
+
+-spec build_endpoint_actions(atom(), ne_binary(), ne_binary(), kz_json:object(), ep_actions()) ->
+                                    ep_actions().
+build_endpoint_actions(Node, UUID, K, V, Acc) ->
+    Fun = fun(K1, V1, Acc1)-> build_endpoint_action(Node, UUID, K1, V1, Acc1) end,
+    DP = kz_json:foldr(Fun, [], V),
+    Acc ++ build_endpoint_action_dp(K, DP).
+
+-spec build_endpoint_action(atom(), ne_binary(), ne_binary(), kz_json:object(), fs_apps()) ->
+                                   fs_apps().
+build_endpoint_action(Node, UUID, _K, V, Acc) ->
+    lager:debug("building dialplan action for ~s", [_K]),
+    DP = ecallmgr_call_command:fetch_dialplan(Node, UUID, V, self()),
+    Acc ++ DP.
+
+-spec build_endpoint_action_dp(ne_binary(), fs_apps()) -> ep_actions().
+build_endpoint_action_dp(K, DP) ->
+    build_endpoint_action_dp(endpoint_action_cmd(K), DP, 1, []).
+
+-spec build_endpoint_action_dp(ne_binary(), fs_apps(), pos_integer(), ep_actions()) -> ep_actions().
+build_endpoint_action_dp(_K, [], _N, Acc) ->
+    lists:reverse(Acc);
+build_endpoint_action_dp(K, [{App, Args} | DP], N, Acc) ->
+    DPApp = ecallmgr_util:dialplan_application(App),
+    DPArgs = kz_term:to_list(Args),
+    Seq = kz_term:to_list(N),
+    Var = list_to_binary([K, "_", Seq, "=", DPApp, " ", DPArgs, ""]),
+    build_endpoint_action_dp(K, DP, N + 1, [Var | Acc]).
+
+-spec endpoint_action_cmd(ne_binary()) -> ne_binary().
+endpoint_action_cmd(Event) ->
+    case lists:keyfind(Event, 1, ?DP_EVENT_VARS) of
+        'false' -> normalize_event_action_key(Event);
+        {_, Prefix} -> Prefix
+    end.
+
+-spec normalize_event_action_key(ne_binary()) -> ne_binary().
+normalize_event_action_key(Key) when is_binary(Key) ->
+    << <<(normalize_event_action_char(B))>> || <<B>> <= Key>>.
+
+-spec normalize_event_action_char(char()) -> char().
+normalize_event_action_char($-) -> $_;
+normalize_event_action_char(C) when is_integer(C), $A =< C, C =< $Z -> C + 32;
+normalize_event_action_char(C) when is_integer(C), 16#C0 =< C, C =< 16#D6 -> C + 32; % from string:to_lower
+normalize_event_action_char(C) when is_integer(C), 16#D8 =< C, C =< 16#DE -> C + 32; % so we only loop once
+normalize_event_action_char(C) -> C.

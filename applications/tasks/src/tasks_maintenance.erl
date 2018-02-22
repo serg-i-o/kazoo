@@ -1,5 +1,5 @@
 %%%-------------------------------------------------------------------
-%%% @Copyright (C) 2013-2016, 2600Hz
+%%% @Copyright (C) 2016-2017, 2600Hz
 %%% @doc
 %%%
 %%% @end
@@ -12,7 +12,7 @@
 -export([tasks/0, tasks/1]).
 -export([add/5, add/4]).
 -export([task/1, task_input/1, task_output/1]).
--export([start/1]).
+-export([start/1, restart/1]).
 -export([remove/1]).
 
 -export([start_cleanup_pass/0
@@ -95,16 +95,23 @@ task(TaskId) ->
 
 -spec task_input(text()) -> 'no_return'.
 task_input(TaskId) ->
-    attachment(TaskId, ?KZ_TASKS_ATTACHMENT_NAME_IN).
+    attachment(TaskId, ?KZ_TASKS_ANAME_IN).
 
 -spec task_output(text()) -> 'no_return'.
 task_output(TaskId) ->
-    attachment(TaskId, ?KZ_TASKS_ATTACHMENT_NAME_OUT).
+    attachment(TaskId, ?KZ_TASKS_ANAME_OUT).
 
 -spec start(text()) -> 'no_return'.
 start(TaskId) ->
     case kz_tasks_scheduler:start(TaskId) of
         {'ok', StartedTask} -> print_json(StartedTask);
+        {'error', Reason} -> print_error(Reason)
+    end.
+
+-spec restart(text()) -> 'no_return'.
+restart(TaskId) ->
+    case kz_tasks_scheduler:restart(TaskId) of
+        {'ok', RestartedTask} -> print_json(RestartedTask);
         {'error', Reason} -> print_error(Reason)
     end.
 
@@ -141,7 +148,7 @@ print_error(Reason) ->
     io:format("ERROR: ~p\n", [Reason]),
     'no_return'.
 
--spec attachment(kz_tasks:task_id(), ne_binary()) -> 'no_return'.
+-spec attachment(kz_tasks:id(), ne_binary()) -> no_return.
 attachment(TaskId, AName) ->
     case kz_tasks:read(TaskId) of
         {'ok', _JObj} ->
@@ -162,7 +169,7 @@ new_task(AuthAccountId, AccountId, Category, Action, TotalRows, CSVBin, CSVName)
             TaskId = kz_json:get_value([<<"_read_only">>, <<"id">>], TaskJObj),
             case kz_datamgr:put_attachment(?KZ_TASKS_DB
                                           ,TaskId
-                                          ,?KZ_TASKS_ATTACHMENT_NAME_IN
+                                          ,?KZ_TASKS_ANAME_IN
                                           ,CSVBin
                                           ,[{'content_type', <<"text/csv">>}]
                                           )

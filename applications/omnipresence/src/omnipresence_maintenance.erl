@@ -14,8 +14,13 @@
         ,count_current_subscriptions/0
         ,subscribe/2
         ,send_mwi_update/3
+        ,reset_zone/0, reset_zone/1
+        ,reset_account/1
         ,reset_subscription/1, reset_subscription/2
         ,reset_subscriber/1, reset_subscriber/2
+        ,reset_realm/1
+        ,reset_server/1
+        ,reset_cluster/0
         ]).
 
 -spec count_current_subscriptions() -> 'no_return'.
@@ -38,20 +43,20 @@ current_subscriptions() ->
 current_subscriptions(Realm) ->
     print_subscriptions(
       omnip_subscriptions:subscriptions_to_json(
-        omnip_subscriptions:search_for_subscriptions('_', kz_util:to_binary(Realm))
+        omnip_subscriptions:search_for_subscriptions('_', kz_term:to_binary(Realm))
        )).
 
 current_subscriptions(Realm, User) ->
     print_subscriptions(
       omnip_subscriptions:subscriptions_to_json(
         omnip_subscriptions:search_for_subscriptions(
-          '_', kz_util:to_binary(Realm), kz_util:to_binary(User)
+          '_', kz_term:to_binary(Realm), kz_term:to_binary(User)
          ))).
 
 print_subscriptions([]) ->
     io:format("No subscriptions have been found~n");
 print_subscriptions(Ss) ->
-    Now = kz_util:current_tstamp(),
+    Now = kz_time:current_tstamp(),
     io:format(?SUBSCRIPTION_FORMAT_STR
              ,[<<"Username@Realm">>, <<"From">>, <<"Expires">>, <<"Event">>]
              ),
@@ -65,7 +70,7 @@ print_subscription(JObj, Now) ->
     io:format(?SUBSCRIPTION_FORMAT_STR
              ,[[kz_json:get_value(<<"username">>, JObj), "@", kz_json:get_value(<<"realm">>, JObj)]
               ,kz_json:get_value(<<"from">>, JObj)
-              ,kz_util:to_binary(ExpiresIn)
+              ,kz_term:to_binary(ExpiresIn)
               ,kz_json:get_value(<<"event">>, JObj)
               ]).
 
@@ -94,18 +99,17 @@ subscribe(Realm, User) ->
 
 -spec send_mwi_update(ne_binary(), ne_binary() | integer(), ne_binary() | integer() ) -> 'ok'.
 send_mwi_update(User, New, Saved) when is_binary(New) ->
-    send_mwi_update(User, kz_util:to_integer(New), Saved);
+    send_mwi_update(User, kz_term:to_integer(New), Saved);
 send_mwi_update(User, New, Saved) when is_binary(Saved) ->
-    send_mwi_update(User, New, kz_util:to_integer(Saved));
+    send_mwi_update(User, New, kz_term:to_integer(Saved));
 send_mwi_update(User, New, Saved) ->
     Command = [{<<"Messages-New">>, New}
               ,{<<"Messages-Saved">>, Saved}
-              ,{<<"Call-ID">>, kz_util:rand_hex_binary(16) }
+              ,{<<"Call-ID">>, kz_binary:rand_hex(16) }
               ,{<<"To">>, User}
                | kz_api:default_headers(?APP_NAME, ?APP_VERSION)
               ],
-    kapps_util:amqp_pool_send(Command, fun kapi_presence:publish_mwi_update/1),
-    'ok'.
+    kz_amqp_worker:cast(Command, fun kapi_presence:publish_mwi_update/1).
 
 -spec reset_subscription(ne_binary()) -> any().
 reset_subscription(User) ->
@@ -114,11 +118,12 @@ reset_subscription(User) ->
 
 -spec reset_subscription(ne_binary(), ne_binary()) -> any().
 reset_subscription(User, Realm) ->
-    JObj = kz_json:from_list(
-             [{<<"Realm">>, Realm}
-             ,{<<"Username">>, User}
-             ]),
-    omnip_subscriptions:reset(JObj).
+    API = [{<<"Realm">>, Realm}
+          ,{<<"Username">>, User}
+          ,{<<"Msg-ID">>, kz_binary:rand_hex(16)}
+           | kz_api:default_headers(?APP_NAME, ?APP_VERSION)
+          ],
+    kz_amqp_worker:cast(API, fun kapi_presence:publish_reset/1).
 
 -spec reset_subscriber(ne_binary()) -> any().
 reset_subscriber(User) ->
@@ -132,3 +137,30 @@ reset_subscriber(User) ->
 -spec reset_subscriber(ne_binary(), ne_binary()) -> any().
 reset_subscriber(User, Realm) ->
     reset_subscriber(<<User/binary, "@", Realm/binary>>).
+
+-spec reset_account(ne_binary()) -> any().
+reset_account(AccountId) ->
+    case kz_account:fetch(AccountId) of
+        {'ok', JObj} -> reset_realm(kz_account:realm(JObj));
+        {'error', _} = Error -> Error
+    end.
+
+-spec reset_realm(ne_binary()) -> any().
+reset_realm(Realm) ->
+    reset_subscription(<<"*">>, Realm).
+
+-spec reset_zone() -> any().
+reset_zone() ->
+    reset_zone(kz_term:to_binary(kz_config:zone())).
+
+-spec reset_zone(ne_binary()) -> any().
+reset_zone(Zone) ->
+    reset_subscription(Zone, <<"*">>).
+
+-spec reset_server(ne_binary()) -> any().
+reset_server(Server) ->
+    reset_subscription(Server, <<"*">>).
+
+-spec reset_cluster() -> any().
+reset_cluster() ->
+    reset_subscription(<<"*">>, <<"*">>).

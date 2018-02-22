@@ -11,7 +11,7 @@
 -behaviour(supervisor).
 
 -include("ecallmgr.hrl").
--include_lib("kazoo/include/kz_databases.hrl").
+-include_lib("kazoo_stdlib/include/kz_databases.hrl").
 
 -define(SERVER, ?MODULE).
 
@@ -37,7 +37,7 @@
                   ,?CACHE(?ECALLMGR_INTERACTION_CACHE)
                   ,?SUPER('ecallmgr_originate_sup')
                   ,?WORKER('ecallmgr_registrar')
-                  ,?WORKER('ecallmgr_balance_crawler_fsm')
+                  ,?WORKER('ecallmgr_balance_crawler_statem')
                   ]).
 
 %% ===================================================================

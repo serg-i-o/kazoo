@@ -1,15 +1,16 @@
-### Shared_auth
+### Shared Authentication
 
-#### About Shared_auth
+#### About Shared Authentication
 
 #### Schema
 
 Provides a local auth-token via a shared auth-token
 
+
+
 Key | Description | Type | Default | Required
 --- | ----------- | ---- | ------- | --------
 `shared_auth` | The shared token | `string(64)` |   | `true`
-
 
 
 

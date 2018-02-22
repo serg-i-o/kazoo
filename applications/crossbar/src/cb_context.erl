@@ -76,6 +76,7 @@
         ,path_tokens/1
         ,magic_pathed/1, set_magic_pathed/2
         ,should_paginate/1, set_should_paginate/2
+        ,should_soft_delete/1
 
         ,req_json/1, set_req_json/2
         ,resp_error_code/1, set_resp_error_code/2
@@ -109,6 +110,14 @@
 -include("crossbar.hrl").
 
 -define(KEY_ACCEPT_CHARGES, <<"accept_charges">>).
+
+-define(SHOULD_ENSURE_SCHEMA_IS_VALID
+       ,kapps_config:get_is_true(?CONFIG_CAT, <<"ensure_valid_schema">>, true)
+       ).
+
+-define(SHOULD_FAIL_ON_INVALID_DATA
+       ,kapps_config:get_is_true(?CONFIG_CAT, <<"schema_strict_validation">>, false)
+       ).
 
 -type context() :: #cb_context{}.
 -type setter_fun_1() :: fun((context()) -> context()).
@@ -149,7 +158,7 @@ req_value(#cb_context{req_data=ReqData
 
 -spec accepting_charges(context()) -> boolean().
 accepting_charges(Context) ->
-    kz_util:is_true(req_value(Context, ?KEY_ACCEPT_CHARGES, 'false')).
+    kz_term:is_true(req_value(Context, ?KEY_ACCEPT_CHARGES, 'false')).
 
 -spec set_accepting_charges(context()) -> context().
 set_accepting_charges(#cb_context{req_json = ReqJObj} = Context) ->
@@ -157,24 +166,24 @@ set_accepting_charges(#cb_context{req_json = ReqJObj} = Context) ->
     set_req_json(Context, NewReqJObj).
 
 %% Accessors
--spec account_id(context()) -> api_binary().
--spec account_name(context()) -> api_binary().
--spec account_db(context()) -> api_binary().
--spec user_id(context()) -> api_binary().
--spec device_id(context()) -> api_binary().
--spec reseller_id(context()) -> api_binary().
--spec account_modb(context()) -> api_binary().
--spec account_modb(context(), kz_now() | kz_timeout()) -> api_binary().
--spec account_modb(context(), kz_year(), kz_month()) -> api_binary().
--spec account_realm(context()) -> api_binary().
+-spec account_id(context()) -> api_ne_binary().
+-spec account_name(context()) -> api_ne_binary().
+-spec account_db(context()) -> api_ne_binary().
+-spec user_id(context()) -> api_ne_binary().
+-spec device_id(context()) -> api_ne_binary().
+-spec reseller_id(context()) -> api_ne_binary().
+-spec account_modb(context()) -> api_ne_binary().
+-spec account_modb(context(), kz_now() | kz_timeout()) -> api_ne_binary().
+-spec account_modb(context(), kz_year(), kz_month()) -> api_ne_binary().
+-spec account_realm(context()) -> api_ne_binary().
 -spec account_doc(context()) -> api_object().
--spec profile_id(context()) -> api_binary().
+-spec profile_id(context()) -> api_ne_binary().
 -spec is_authenticated(context()) -> boolean().
 -spec auth_token_type(context()) -> 'x-auth-token' | 'basic' | 'oauth' | 'unknown'.
 -spec auth_token(context()) -> api_ne_binary().
 -spec auth_doc(context()) -> api_object().
--spec auth_account_id(context()) -> api_binary().
--spec auth_user_id(context()) -> api_binary().
+-spec auth_account_id(context()) -> api_ne_binary().
+-spec auth_user_id(context()) -> api_ne_binary().
 -spec req_verb(context()) -> http_method().
 -spec req_data(context()) -> kz_json:json_term().
 -spec req_files(context()) -> req_files().
@@ -184,7 +193,7 @@ set_accepting_charges(#cb_context{req_json = ReqJObj} = Context) ->
 -spec query_string(context()) -> kz_json:object().
 -spec req_param(context(), ne_binary()) -> kz_json:api_json_term().
 -spec req_param(context(), ne_binary(), Default) -> kz_json:json_term() | Default.
--spec client_ip(context()) -> ne_binary().
+-spec client_ip(context()) -> api_ne_binary().
 -spec req_id(context()) -> ne_binary().
 -spec auth_account_doc(context()) -> api_object().
 -spec doc(context()) -> api_object() | kz_json:objects().
@@ -231,9 +240,14 @@ account_modb(Context, Year, Month) ->
 account_realm(Context) ->
     kz_account:realm(account_doc(Context)).
 
-account_doc(#cb_context{account_id='undefined'}) -> 'undefined';
-account_doc(Context) ->
-    crossbar_util:get_account_doc(account_id(Context)).
+account_doc(#cb_context{account_id = undefined}) -> undefined;
+account_doc(#cb_context{account_id = AccountId}) ->
+    case kz_account:fetch(AccountId) of
+        {ok, AccountJObj} -> AccountJObj;
+        {error, _R} ->
+            lager:warning("error fetching account doc for ~p: ~p", [AccountId,_R]),
+            undefined
+    end.
 
 is_authenticated(#cb_context{auth_doc='undefined'}) -> 'false';
 is_authenticated(#cb_context{}) -> 'true'.
@@ -248,40 +262,52 @@ is_authenticated(#cb_context{}) -> 'true'.
 is_superduper_admin('undefined') -> 'false';
 is_superduper_admin(AccountId=?NE_BINARY) ->
     lager:debug("checking for superduper admin: ~s", [AccountId]),
-    case kz_account:fetch(AccountId) of
-        {'ok', JObj} ->
-            case kz_account:is_superduper_admin(JObj) of
-                'true' ->
-                    lager:debug("the requestor is a superduper admin"),
-                    'true';
-                'false' ->
-                    lager:debug("the requestor is not a superduper admin"),
-                    'false'
-            end;
-        {'error', _E} ->
-            lager:debug("not authorizing, error during lookup: ~p", [_E]),
+    case kz_util:is_system_admin(AccountId) of
+        'true' ->
+            lager:debug("the requestor is a superduper admin"),
+            'true';
+        'false' ->
+            lager:debug("the requestor is not a superduper admin"),
             'false'
     end;
 is_superduper_admin(Context) ->
     is_superduper_admin(auth_account_id(Context)).
 
 -spec is_account_admin(context()) -> boolean().
-is_account_admin(#cb_context{auth_doc=Doc}) ->
-    kzd_user:priv_level(Doc) =:= <<"admin">>.
+is_account_admin(Context) ->
+    AuthAccountId = auth_account_id(Context),
+    AuthUserId = auth_user_id(Context),
+    lager:debug("checking if user ~s is account admin of ~s", [AuthAccountId, AuthUserId]),
+    case kzd_user:is_account_admin(AuthAccountId, AuthUserId) of
+        'true' ->
+            lager:debug("the requestor is an account admin"),
+            'true';
+        'false' ->
+            lager:debug("the requestor is an superduper admin"),
+            'false'
+    end.
 
 auth_token_type(#cb_context{auth_token_type=AuthTokenType}) -> AuthTokenType.
 auth_token(#cb_context{auth_token=AuthToken}) -> AuthToken.
 auth_doc(#cb_context{auth_doc=AuthDoc}) -> AuthDoc.
 auth_account_id(#cb_context{auth_account_id=AuthBy}) -> AuthBy.
-auth_account_doc(Context) ->
-    case auth_account_id(Context) of
-        'undefined' -> 'undefined';
-        AccountId ->
-            crossbar_util:get_account_doc(AccountId)
+
+auth_account_doc(#cb_context{auth_account_id = undefined}) -> undefined;
+auth_account_doc(#cb_context{auth_account_id = AccountId}) ->
+    case kz_account:fetch(AccountId) of
+        {ok, AuthAccountJObj} -> AuthAccountJObj;
+        {error, _R} ->
+            lager:warning("error fetching auth account doc for ~p: ~p", [AccountId,_R]),
+            undefined
     end.
 
 auth_user_id(#cb_context{auth_doc='undefined'}) -> 'undefined';
-auth_user_id(#cb_context{auth_doc=JObj}) -> kz_json:get_value(<<"owner_id">>, JObj).
+auth_user_id(#cb_context{auth_doc=JObj}) ->
+    case kz_doc:type(JObj) of
+        <<"user">> -> kz_doc:id(JObj);
+        _ -> kz_json:get_value(<<"owner_id">>, JObj)
+    end.
+
 req_verb(#cb_context{req_verb=ReqVerb}) -> ReqVerb.
 req_data(#cb_context{req_data=ReqData}) -> ReqData.
 req_files(#cb_context{req_files=ReqFiles}) -> ReqFiles.
@@ -318,7 +344,9 @@ path_token(Token) ->
 
 -spec path_tokens(context()) -> ne_binaries().
 path_tokens(#cb_context{raw_path=Path}) ->
-    [ path_token(Token) || Token <- binary:split(Path, <<"/">>, ['global', 'trim'])].
+    [path_token(kz_util:uri_decode(Token))
+     || Token <- binary:split(Path, <<"/">>, ['global', 'trim'])
+    ].
 
 -spec magic_pathed(context()) -> boolean().
 magic_pathed(#cb_context{magic_pathed=MP}) -> MP.
@@ -329,14 +357,16 @@ should_paginate(#cb_context{api_version=?VERSION_1}) ->
     'false';
 should_paginate(#cb_context{should_paginate='undefined'}=Context) ->
     case req_value(Context, <<"paginate">>) of
-        'undefined' ->
-            lager:debug("checking if request has query-string filter"),
-            not crossbar_doc:has_qs_filter(Context);
+        'undefined' -> 'true';
         ShouldPaginate ->
             lager:debug("request has paginate flag: ~s", [ShouldPaginate]),
-            kz_util:is_true(ShouldPaginate)
+            kz_term:is_true(ShouldPaginate)
     end;
 should_paginate(#cb_context{should_paginate=Should}) -> Should.
+
+-spec should_soft_delete(context()) -> boolean().
+should_soft_delete(#cb_context{}=Context) ->
+    kz_term:is_true(req_value(Context, <<"should_soft_delete">>, ?SOFT_DELETE)).
 
 req_json(#cb_context{req_json=RJ}) -> RJ.
 content_types_accepted(#cb_context{content_types_accepted=CTAs}) -> CTAs.
@@ -377,7 +407,7 @@ setters_fold(F, C) when is_function(F, 1) -> F(C).
 -spec set_query_string(context(), kz_json:object()) -> context().
 -spec set_req_id(context(), ne_binary()) -> context().
 -spec set_doc(context(), kz_json:api_json_term() | kz_json:objects()) -> context().
--spec set_load_merge_bypass(context(), api_binary()) -> context().
+-spec set_load_merge_bypass(context(), api_ne_binary()) -> context().
 -spec set_start(context(), kz_now()) -> context().
 -spec set_resp_file(context(), api_binary()) -> context().
 -spec set_resp_data(context(), resp_data()) -> context().
@@ -495,9 +525,9 @@ set_languages_provided(#cb_context{}=Context, LP) ->
 set_encodings_provided(#cb_context{}=Context, EP) ->
     Context#cb_context{encodings_provided=EP}.
 set_magic_pathed(#cb_context{}=Context, MP) ->
-    Context#cb_context{magic_pathed=kz_util:is_true(MP)}.
+    Context#cb_context{magic_pathed=kz_term:is_true(MP)}.
 set_should_paginate(#cb_context{}=Context, SP) ->
-    Context#cb_context{should_paginate=kz_util:is_true(SP)}.
+    Context#cb_context{should_paginate=kz_term:is_true(SP)}.
 
 set_resp_error_code(#cb_context{}=Context, Code) ->
     Context#cb_context{resp_error_code=Code}.
@@ -518,7 +548,7 @@ add_resp_header(#cb_context{resp_headers=RespHeaders}=Context, K, V) ->
 
 -spec add_resp_header_fold({ne_binary(), any()}, kz_proplist()) -> kz_proplist().
 add_resp_header_fold({K, V}, Hs) ->
-    props:set_value(kz_util:to_lower_binary(K), V, Hs).
+    props:set_value(kz_term:to_lower_binary(K), V, Hs).
 
 set_validation_errors(#cb_context{}=Context, Errors) ->
     Context#cb_context{validation_errors=Errors}.
@@ -630,7 +660,7 @@ fetch(#cb_context{storage=Storage}, Key, Default) ->
 %% the process dictionary, where the logger expects it.
 %% @end
 %%--------------------------------------------------------------------
--spec put_reqid(context()) -> api_binary().
+-spec put_reqid(context()) -> api_ne_binary().
 put_reqid(#cb_context{req_id=ReqId}) ->
     kz_util:put_callid(ReqId).
 
@@ -644,7 +674,7 @@ put_reqid(#cb_context{req_id=ReqId}) ->
 has_errors(#cb_context{validation_errors=JObj
                       ,resp_status='success'
                       }) ->
-    not kz_util:is_empty(JObj);
+    not kz_term:is_empty(JObj);
 has_errors(#cb_context{}) -> 'true'.
 
 %%--------------------------------------------------------------------
@@ -676,12 +706,12 @@ response(#cb_context{resp_error_code=Code
                     ,resp_data=DataJObj
                     ,validation_errors=ValidationJObj
                     }) ->
-    ErrorCode = try kz_util:to_integer(Code) catch _:_ -> 500 end,
-    ErrorMsg = case kz_util:is_empty(Msg) of
-                   'false' -> kz_util:to_binary(Msg);
+    ErrorCode = try kz_term:to_integer(Code) catch _:_ -> 500 end,
+    ErrorMsg = case kz_term:is_empty(Msg) of
+                   'false' -> kz_term:to_binary(Msg);
                    'true' -> <<"generic_error">>
                end,
-    ErrorData = case {kz_util:is_empty(ValidationJObj), kz_util:is_empty(DataJObj)} of
+    ErrorData = case {kz_term:is_empty(ValidationJObj), kz_term:is_empty(DataJObj)} of
                     {'false', _} -> ValidationJObj;
                     {_, _} -> DataJObj
                 end,
@@ -701,111 +731,113 @@ response(#cb_context{resp_error_code=Code
                                    context().
 -spec validate_request_data(ne_binary() | api_object(), context(), after_fun(), after_fun()) ->
                                    context().
-validate_request_data('undefined', Context) ->
-    passed(Context);
-validate_request_data(Schema=?NE_BINARY, Context) ->
-    DefaultStrict = kapps_config:get_is_true(?CONFIG_CAT, <<"ensure_valid_schema">>, 'true'),
-    Strict = fetch(Context, 'ensure_valid_schema', DefaultStrict),
-    case find_schema(Schema) of
-        'undefined' when Strict ->
-            Msg = <<"schema ", Schema/binary, " not found.">>,
-            system_error(Context, Msg);
+-spec validate_request_data(ne_binary() | api_object(), context(), after_fun(), after_fun(), boolean()) ->
+                                   context().
+validate_request_data(SchemaId, Context) ->
+    validate_request_data(SchemaId, Context, 'undefined').
+validate_request_data(SchemaId, Context, OnSuccess) ->
+    validate_request_data(SchemaId, Context, OnSuccess, 'undefined').
+validate_request_data(SchemaId, Context, OnSuccess, OnFailure) ->
+    SchemaRequired = fetch(Context, 'ensure_valid_schema', ?SHOULD_ENSURE_SCHEMA_IS_VALID),
+    validate_request_data(SchemaId, Context, OnSuccess, OnFailure, SchemaRequired).
+validate_request_data('undefined', Context, OnSuccess, _OnFailure, 'false') ->
+    lager:error("schema id or schema JSON not defined, continuing anyway"),
+    validate_passed(Context, OnSuccess);
+validate_request_data('undefined', Context, _OnSuccess, _OnFailure, 'true') ->
+    Msg = <<"schema id or schema JSON not defined.">>,
+    lager:error("~s", [Msg]),
+    system_error(Context, Msg);
+validate_request_data(?NE_BINARY=SchemaId, Context, OnSuccess, OnFailure, SchemaRequired) ->
+    case find_schema(SchemaId) of
+        'undefined' when SchemaRequired ->
+            lager:error("schema ~s not found", [SchemaId]),
+            system_error(Context, <<"schema ", SchemaId/binary, " not found.">>);
         'undefined' ->
-            passed(set_doc(Context, req_data(Context)));
+            lager:error("schema ~s not found, continuing anyway", [SchemaId]),
+            validate_passed(Context, OnSuccess);
         SchemaJObj ->
-            validate_request_data(SchemaJObj, Context)
+            validate_request_data(SchemaJObj, Context, OnSuccess, OnFailure, SchemaRequired)
     end;
-validate_request_data(SchemaJObj, Context) ->
-    Strict = kapps_config:get_is_true(?CONFIG_CAT, <<"schema_strict_validation">>, 'false'),
-    try kz_json_schema:validate(SchemaJObj
-                               ,kz_json:public_fields(req_data(Context))
-                               )
-    of
-        {'ok', JObj} ->
-            passed(
-              set_doc(Context, kz_json_schema:add_defaults(JObj, SchemaJObj))
-             );
+validate_request_data(SchemaJObj, Context, OnSuccess, OnFailure, _SchemaRequired) ->
+    Strict = fetch(Context, 'schema_strict_validation', ?SHOULD_FAIL_ON_INVALID_DATA),
+    try kz_json_schema:validate(SchemaJObj, kz_doc:public_fields(req_data(Context))) of
+        {'ok', JObj} -> validate_passed(set_req_data(Context, JObj), OnSuccess);
         {'error', Errors} when Strict ->
-            lager:debug("request data did not validate against ~s: ~p", [kz_doc:id(SchemaJObj)
-                                                                        ,Errors
-                                                                        ]),
-            failed(Context, Errors);
+            validate_failed(SchemaJObj, Context, Errors, OnFailure);
         {'error', Errors} ->
-            maybe_fix_js_types(Context, SchemaJObj, Errors)
+            maybe_fix_js_types(SchemaJObj, Context, OnSuccess, OnFailure, Errors)
     catch
         'error':'function_clause' ->
             ST = erlang:get_stacktrace(),
             lager:debug("function clause failure"),
             kz_util:log_stacktrace(ST),
-            Context#cb_context{resp_status='fatal'
-                              ,resp_error_code=500
-                              ,resp_data=kz_json:new()
-                              ,resp_error_msg= <<"validation failed to run on the server">>
+            Context#cb_context{resp_status = 'fatal'
+                              ,resp_error_code = 500
+                              ,resp_data = kz_json:new()
+                              ,resp_error_msg = <<"validation failed to run on the server">>
                               }
     end.
 
-validate_request_data(Schema, Context, OnSuccess) ->
-    validate_request_data(Schema, Context, OnSuccess, 'undefined').
-
-validate_request_data(Schema, Context, OnSuccess, OnFailure) ->
-    case validate_request_data(Schema, Context) of
-        #cb_context{resp_status='success'}=C1 when is_function(OnSuccess) ->
-            OnSuccess(C1);
-        #cb_context{}=C2 when is_function(OnFailure) ->
-            OnFailure(C2);
-        Else -> Else
+-spec validate_failed(kz_json:object(), context(), validation_errors(), after_fun()) -> context().
+validate_failed(SchemaJObj, Context, Errors, OnFailure) ->
+    lager:debug("validation failed ~s: ~p", [kz_doc:id(SchemaJObj), Errors]),
+    Context1 = failed(Context, Errors),
+    case is_function(OnFailure, 1) of
+        'true' -> OnFailure(Context1);
+        'false' -> Context1
     end.
 
--spec failed(context(), [jesse_error:error_reason()]) -> context().
-failed(Context, Errors) ->
-    Context1 = setters(Context
-                      ,[{fun set_resp_error_code/2, 400}
-                       ,{fun set_resp_status/2, 'error'}
-                       ]
-                      ),
-    lists:foldl(fun failed_error/2
-               ,Context1
-               ,Errors
-               ).
+-spec validate_passed(context(), after_fun()) -> context().
+validate_passed(Context, OnSuccess) ->
+    Context1 = passed(copy_req_data_to_doc(Context)),
+    case is_function(OnSuccess, 1) of
+        'true' -> OnSuccess(Context1);
+        'false' -> Context1
+    end.
 
--spec failed_error(jesse_error:error_reason(), context()) -> context().
+-spec copy_req_data_to_doc(context()) -> context().
+copy_req_data_to_doc(Context) ->
+    NewDoc = case doc(Context) of
+                 'undefined' -> req_data(Context);
+                 Doc -> kz_json:merge_jobjs(kz_doc:private_fields(Doc), req_data(Context))
+             end,
+    set_doc(Context, NewDoc).
+
+-spec failed(context(), validation_errors()) -> context().
+failed(Context, Errors) ->
+    Context1 = setters(Context, [{fun set_resp_error_code/2, 400}
+                                ,{fun set_resp_status/2, 'error'}
+                                ,{fun set_resp_error_msg/2, <<"validation failed">>}
+                                ]),
+    lists:foldl(fun failed_error/2, Context1, Errors).
+
+-spec failed_error(validation_error(), context()) -> context().
 failed_error(Error, Context) ->
-    {ErrorCode, ErrorMessage, ErrorJObj} =
-        kz_json_schema:error_to_jobj(Error
-                                    ,props:filter_undefined(
-                                       [{'version', api_version(Context)}
-                                       ,{'error_code', resp_error_code(Context)}
-                                       ,{'error_message', resp_error_msg(Context)}
-                                       ]
-                                      )
-                                    ),
+    Props = props:filter_undefined([{'version', api_version(Context)}
+                                   ,{'error_code', resp_error_code(Context)}
+                                   ,{'error_message', resp_error_msg(Context)}
+                                   ]),
+    {ErrorCode, ErrorMessage, ErrorJObj} = kz_json_schema:error_to_jobj(Error, Props),
     JObj = validation_errors(Context),
-    Context#cb_context{validation_errors=kz_json:merge_jobjs(ErrorJObj, JObj)
-                      ,resp_status='error'
-                      ,resp_error_code=ErrorCode
-                      ,resp_data=kz_json:new()
-                      ,resp_error_msg=ErrorMessage
+    Context#cb_context{validation_errors = kz_json:merge_jobjs(ErrorJObj, JObj)
+                      ,resp_error_code = ErrorCode
+                      ,resp_data = kz_json:new()
+                      ,resp_error_msg = ErrorMessage
                       }.
 
 -spec passed(context()) -> context().
--spec passed(context(), crossbar_status()) -> context().
-passed(#cb_context{resp_status='error'}=Context) ->
-    passed(Context, 'error');
 passed(Context) ->
-    passed(Context, 'success').
-
-passed(#cb_context{req_data=Data}=Context, Status) ->
-    case kz_doc:id(Data) of
-        'undefined' ->
-            Context#cb_context{resp_status = Status};
-        Id ->
-            Context#cb_context{resp_status = Status
-                              ,doc = kz_doc:set_id(doc(Context), Id)
-                              }
+    Context1 = case error =:= resp_status(Context) of
+                   true -> Context;
+                   false -> set_resp_status(Context, success)
+               end,
+    case kz_doc:id(req_data(Context1)) of
+        'undefined' -> Context1;
+        Id -> set_doc(Context1, kz_doc:set_id(doc(Context1), Id))
     end.
 
 -spec find_schema(ne_binary()) -> api_object().
-find_schema(<<_/binary>> = Schema) ->
+find_schema(Schema=?NE_BINARY) ->
     case kz_json_schema:load(Schema) of
         {'ok', SchemaJObj} -> SchemaJObj;
         {'error', _E} ->
@@ -865,7 +897,7 @@ add_system_error('not_found', Context) ->
 add_system_error('disabled', Context) ->
     build_system_error(400, 'disabled', <<"entity disabled">>, Context);
 add_system_error(Error, Context) ->
-    build_system_error(500, Error, kz_util:to_binary(Error), Context).
+    build_system_error(500, Error, kz_term:to_binary(Error), Context).
 
 add_system_error(Error, <<_/binary>>=Message, Context) ->
     JObj = kz_json:from_list([{<<"message">>, Message}]),
@@ -881,7 +913,7 @@ add_system_error('not_found', JObj, Context) ->
 add_system_error('invalid_bulk_type'=Error, JObj, Context) ->
     %% TODO: JObj is expected to have a type key!!
     Type = kz_json:get_value(<<"type">>, JObj),
-    Message = <<"bulk operations do not support documents of type ", (kz_util:to_binary(Type))/binary>>,
+    Message = <<"bulk operations do not support documents of type ", (kz_term:to_binary(Type))/binary>>,
     J = kz_json:set_value(<<"message">>, Message, JObj),
     build_system_error(400, Error, J, Context);
 add_system_error('forbidden'=Error, JObj, Context) ->
@@ -924,7 +956,7 @@ build_system_error(Code, Error, JObj, Context) ->
     Context#cb_context{resp_status='error'
                       ,resp_error_code=Code
                       ,resp_data=Message
-                      ,resp_error_msg=kz_util:to_binary(Error)
+                      ,resp_error_msg=kz_term:to_binary(Error)
                       }.
 
 %%--------------------------------------------------------------------
@@ -963,23 +995,20 @@ maybe_update_error_message(_Old, <<"init failed">>) -> <<"validation error">>;
 maybe_update_error_message(Msg, Msg) -> Msg;
 maybe_update_error_message(_Old, New) -> New.
 
--spec maybe_fix_js_types(context(), kz_json:object(), [jesse_error:error_reason()]) -> context().
-maybe_fix_js_types(Context, SchemaJObj, Errors) ->
+-spec maybe_fix_js_types(kz_json:object(), context(), after_fun(), after_fun(), validation_errors()) -> context().
+maybe_fix_js_types(SchemaJObj, Context, OnSuccess, OnFailure, Errors) ->
     JObj = req_data(Context),
     case lists:foldl(fun maybe_fix_js_type/2, JObj, Errors) of
-        JObj ->
-            lager:debug("request data did not validate against ~s: ~p"
-                       ,[kz_doc:id(SchemaJObj), Errors]),
-            failed(Context, Errors);
+        JObj -> validate_failed(SchemaJObj, Context, Errors, OnFailure);
         NewJObj ->
-            validate_request_data(SchemaJObj, set_req_data(Context, NewJObj))
+            validate_request_data(SchemaJObj, set_req_data(Context, NewJObj), OnSuccess, OnFailure)
     end.
 
--spec maybe_fix_js_type(jesse_error:error_reason(), kz_json:object()) ->
-                               kz_json:object().
+-spec maybe_fix_js_type(validation_error(), kz_json:object()) -> kz_json:object().
 maybe_fix_js_type({'data_invalid', SchemaJObj, 'wrong_type', Value, Key}, JObj) ->
     case kz_json:get_value(<<"type">>, SchemaJObj) of
         <<"integer">> -> maybe_fix_js_integer(Key, Value, JObj);
+        <<"boolean">> -> maybe_fix_js_boolean(Key, Value, JObj);
         _Type -> JObj
     end;
 maybe_fix_js_type(_, JObj) -> JObj.
@@ -987,47 +1016,58 @@ maybe_fix_js_type(_, JObj) -> JObj.
 -spec maybe_fix_js_integer(kz_json:path(), kz_json:json_term(), kz_json:object()) ->
                                   kz_json:object().
 maybe_fix_js_integer(Key, Value, JObj) ->
-    try kz_util:to_integer(Value) of
+    try kz_term:to_integer(Value) of
         V -> kz_json:set_value(maybe_fix_index(Key), V, JObj)
     catch
         _E:_R ->
-            lager:debug("error converting value to integer ~p : ~p : ~p"
-                       ,[Value, _E, _R]
-                       ),
+            lager:debug("error converting ~p to integer ~p: ~p", [Value, _E, _R]),
+            JObj
+    end.
+
+-spec maybe_fix_js_boolean(kz_json:path(), kz_json:json_term(), kz_json:object()) ->
+                                  kz_json:object().
+maybe_fix_js_boolean(Key, Value, JObj) ->
+    try kz_term:to_boolean(Value) of
+        V -> kz_json:set_value(maybe_fix_index(Key), V, JObj)
+    catch
+        _E:_R ->
+            lager:debug("error converting ~p to boolean ~p: ~p", [Value, _E, _R]),
             JObj
     end.
 
 -spec maybe_fix_index(kz_json:path() | kz_json:path()) -> kz_json:path() | kz_json:path().
 maybe_fix_index(Keys)
   when is_list(Keys) ->
-    lists:map(fun(K) when is_integer(K) ->
-                      K + 1;
-                 (K) -> K
-              end, Keys);
+    [case is_integer(K) of
+         true -> K + 1;
+         false -> K
+     end
+     || K <- Keys
+    ];
 maybe_fix_index(Key) ->
     Key.
 
--spec system_error_props(context()) -> kz_proplist().
-system_error_props(Context) ->
-    Extract = [{fun account_id/1, <<"account_id">>}
-              ,{fun account_name/1, <<"account_name">>}
-              ,{fun auth_account_id/1, <<"auth_account_id">>}
-              ,{fun(C) -> kz_json:from_list(req_headers(C)) end, <<"req_headers">>}
-              ,{fun req_json/1, <<"req_json">>}
-              ,{fun req_data/1, <<"req_data">>}
-              ,{fun query_string/1, <<"query_json">>}
-              ,{fun req_id/1, <<"req_id">>}
-              ],
-    Fun = fun({Fun, K}, KVs) -> [{K, Fun(Context)} | KVs] end,
-    Props = lists:foldl(Fun, [], Extract),
-    props:filter_undefined(Props).
+-spec system_properties(context()) -> kz_json:object().
+system_properties(Context) ->
+    kz_json:from_list(
+      [{Key, Fun(Context)}
+       || {Fun, Key} <- [{fun req_id/1, <<"req_id">>}
+                        ,{fun query_string/1, <<"query_json">>}
+                        ,{fun req_data/1, <<"req_data">>}
+                        ,{fun req_json/1, <<"req_json">>}
+                        ,{fun(C) -> kz_json:from_list(req_headers(C)) end, <<"req_headers">>}
+                        ,{fun auth_account_id/1, <<"auth_account_id">>}
+                        ,{fun account_name/1, <<"account_name">>}
+                        ,{fun account_id/1, <<"account_id">>}
+                        ]
+      ]).
 
 -spec system_error(context(), ne_binary()) -> context().
 system_error(Context, Error) ->
     Notify = props:filter_undefined(
-               [{<<"Subject">>, <<"api error - ", Error/binary>>}
+               [{<<"Subject">>, <<"System Alert: API Error - ", Error/binary>>}
                ,{<<"Message">>, Error}
-               ,{<<"Details">>, kz_json:from_list(system_error_props(Context))}
+               ,{<<"Details">>, system_properties(Context)}
                ,{<<"Account-ID">>, auth_account_id(Context)}
                 | kz_api:default_headers(?APP_NAME, ?APP_VERSION)
                ]),

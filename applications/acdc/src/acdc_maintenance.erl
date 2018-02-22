@@ -35,7 +35,7 @@
 
 -spec logout_agents(ne_binary()) -> 'ok'.
 logout_agents(AccountId) ->
-    io:format("Sending notices to logout agents for ~s~n", [AccountId]),
+    ?PRINT("Sending notices to logout agents for ~s", [AccountId]),
     AccountDb = kz_util:format_account_id(AccountId, 'encoded'),
     {'ok', AgentView} = kz_datamgr:get_all_results(AccountDb, <<"agents/crossbar_listing">>),
     _ = [logout_agent(AccountId, kz_doc:id(Agent)) || Agent <- AgentView],
@@ -74,7 +74,7 @@ log_current_status(A, N) ->
     TS = kz_json:get_integer_value(<<"timestamp">>, A),
     io:format("~4b | ~35s | ~12s | ~20s |~n", [N, kz_json:get_value(<<"agent_id">>, A)
                                               ,kz_json:get_value(<<"status">>, A)
-                                              ,kz_util:pretty_print_datetime(TS)
+                                              ,kz_time:pretty_print_datetime(TS)
                                               ]).
 
 -spec current_queues(ne_binary()) -> 'ok'.
@@ -92,7 +92,7 @@ log_current_queues(Agents) ->
 log_current_queue(AgentSup) ->
     AgentL = acdc_agent_sup:listener(AgentSup),
     io:format(" ~35s | ~s~n", [acdc_agent_listener:id(AgentL)
-                              ,kz_util:join_binary(acdc_agent_listener:queues(AgentL))
+                              ,kz_binary:join(acdc_agent_listener:queues(AgentL))
                               ]).
 
 -spec current_agents(ne_binary()) -> 'ok'.
@@ -110,7 +110,7 @@ log_current_agent(QueueSup) ->
     QueueM = acdc_queue_sup:manager(QueueSup),
     {_AccountId, QueueId} = acdc_queue_manager:config(QueueM),
     io:format(" ~35s | ~s~n", [QueueId
-                              ,kz_util:join_binary(acdc_queue_manager:current_agents(QueueM))
+                              ,kz_binary:join(acdc_queue_manager:current_agents(QueueM))
                               ]).
 
 -spec current_calls(ne_binary()) -> 'ok'.
@@ -194,15 +194,20 @@ refresh() ->
 -spec refresh_account(ne_binary()) -> 'ok'.
 refresh_account(Acct) ->
     MoDB = acdc_stats_util:db_name(Acct),
-    refresh_account(MoDB, kz_datamgr:db_create(MoDB)),
+    refresh_account(MoDB, kazoo_modb:maybe_create(MoDB)),
     lager:debug("refreshed: ~s", [MoDB]).
 
 refresh_account(MoDB, 'true') ->
     lager:debug("created ~s", [MoDB]),
     kz_datamgr:revise_views_from_folder(MoDB, 'acdc');
 refresh_account(MoDB, 'false') ->
-    lager:debug("exists ~s", [MoDB]),
-    kz_datamgr:revise_views_from_folder(MoDB, 'acdc').
+    case kz_datamgr:db_exists(MoDB) of
+        'true' ->
+            lager:debug("exists ~s", [MoDB]),
+            kz_datamgr:revise_views_from_folder(MoDB, 'acdc');
+        'false' ->
+            lager:debug("modb ~s was not created", [MoDB])
+    end.
 
 -spec migrate() -> 'ok'.
 migrate() ->
@@ -219,7 +224,7 @@ migrate_to_acdc_db() ->
 -spec maybe_remove_acdc_account(ne_binary()) -> 'ok'.
 maybe_remove_acdc_account(<<"_design/", _/binary>>) -> 'ok';
 maybe_remove_acdc_account(AccountId) ->
-    case kz_datamgr:open_cache_doc(?KZ_ACCOUNTS_DB, AccountId) of
+    case kz_account:fetch(AccountId) of
         {'ok', _} -> 'ok';
         {'error', 'not_found'} ->
             {'ok', JObj} = kz_datamgr:open_cache_doc(?KZ_ACDC_DB, AccountId),
@@ -320,7 +325,7 @@ queue_summary(AcctId, QueueId) ->
 -spec show_queues_summary([{pid(), {ne_binary(), ne_binary()}}]) -> 'ok'.
 show_queues_summary([]) -> 'ok';
 show_queues_summary([{P, {AcctId, QueueId}}|Qs]) ->
-    lager:info("  Supervisor: ~p Acct: ~s Queue: ~s~n", [P, AcctId, QueueId]),
+    ?PRINT("  Supervisor: ~p Acct: ~s Queue: ~s~n", [P, AcctId, QueueId]),
     show_queues_summary(Qs).
 
 -spec queues_detail() -> 'ok'.
@@ -456,14 +461,14 @@ agent_logout(AcctId, AgentId) ->
 -spec agent_pause(ne_binary(), ne_binary()) -> 'ok'.
 -spec agent_pause(ne_binary(), ne_binary(), pos_integer()) -> 'ok'.
 agent_pause(AcctId, AgentId) ->
-    Timeout = kapps_config:get(?CONFIG_CAT, <<"default_agent_pause_timeout">>, 600),
+    Timeout = kapps_config:get_integer(?CONFIG_CAT, <<"default_agent_pause_timeout">>, 600),
     agent_pause(AcctId, AgentId, Timeout).
 agent_pause(AcctId, AgentId, Timeout) ->
     kz_util:put_callid(?MODULE),
     Update = props:filter_undefined(
                [{<<"Account-ID">>, AcctId}
                ,{<<"Agent-ID">>, AgentId}
-               ,{<<"Timeout">>, kz_util:to_integer(Timeout)}
+               ,{<<"Timeout">>, kz_term:to_integer(Timeout)}
                 | kz_api:default_headers(?APP_NAME, ?APP_VERSION)
                ]),
     kapps_util:amqp_pool_send(Update, fun kapi_acdc_agent:publish_pause/1),

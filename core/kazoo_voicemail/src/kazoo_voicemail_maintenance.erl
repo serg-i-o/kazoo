@@ -110,7 +110,8 @@ recover_missing_metadata(MODb) ->
             recover_missing_metadata(MODb, JObjs);
         {'error', 'not_found'} ->
             ?LOG("  adding view ~s", [?VIEW_MISSING_METADATA]),
-            kapps_maintenance:refresh(MODb),
+            _ = kapi_maintenance:refresh_database(MODb),
+            _ = kapi_maintenance:refresh_views(MODb),
             recover_missing_metadata(MODb);
         {'error', 'timeout'} ->
             timer:sleep(1000),
@@ -127,7 +128,7 @@ recover_missing_metadata(MODb, JObjs) ->
 
 -spec maybe_rebuild_message_metadata(kz_json:object()) -> kz_json:object().
 maybe_rebuild_message_metadata(JObj) ->
-    case kz_json:get_keys(<<"_attachments">>, JObj) of
+    case kz_doc:attachment_names(JObj) of
         [AttachmentName|_] -> rebuild_message_metadata(JObj, AttachmentName);
         _Else ->
             ?LOG("  ~s missing attachment, skipping", [kz_json:get_value(<<"_id">>, JObj)]),
@@ -138,13 +139,14 @@ maybe_rebuild_message_metadata(JObj) ->
 rebuild_message_metadata(JObj, AttachmentName) ->
     MediaId = kz_json:get_value(<<"_id">>, JObj),
     ?LOG("  rebuilding metadata for ~s", [MediaId]),
-    Length = kz_json:get_value([<<"_attachments">>, AttachmentName, <<"length">>], JObj, 0),
-    CIDNumber = kz_util:anonymous_caller_id_number(),
+    Length = kz_doc:attachment_length(JObj, AttachmentName, 0),
+    AccountId = kz_doc:account_id(JObj),
+    CIDNumber = kz_privacy:anonymous_caller_id_number(AccountId),
     CIDName = <<"Recovered Voicemail Message">>,
-    Timestamp = kz_json:get_value(<<"pvt_created">>, JObj, kz_util:current_tstamp()),
+    Timestamp = kz_doc:created(JObj, kz_time:current_tstamp()),
     Routines = [{fun kapps_call:set_to/2, <<CIDNumber/binary, "@nodomain">>}
                ,{fun kapps_call:set_from/2, <<CIDNumber/binary, "@nodomain">>}
-               ,{fun kapps_call:set_call_id/2, kz_util:rand_hex_binary(12)}
+               ,{fun kapps_call:set_call_id/2, kz_binary:rand_hex(12)}
                ,{fun kapps_call:set_caller_id_number/2, CIDNumber}
                ,{fun kapps_call:set_caller_id_name/2, CIDName}
                ],
@@ -167,13 +169,12 @@ renotify(Account, MessageId) ->
             Call = rebuild_kapps_call(JObj, AccountId),
             BoxId = kzd_box_message:source_id(JObj),
             Metadata = kzd_box_message:metadata(JObj),
-            Length = kz_json:get_value(<<"length">>, Metadata, 0),
+            Length = kz_json:get_integer_value(<<"length">>, Metadata, 0),
             Props = [{<<"Transcribe-Voicemail">>, 'false'}],
-            log_renotify_result(
-              MessageId
+            log_renotify_result(MessageId
                                ,BoxId
                                ,kvm_util:publish_saved_notify(MessageId, BoxId, Call, Length, Props)
-             )
+                               )
     end.
 
 -spec log_renotify_result(ne_binary(), ne_binary(), kz_amqp_worker:request_return()) -> 'ok'.
@@ -217,10 +218,18 @@ rebuild_kapps_call(JObj, AccountId) ->
     Metadata = kzd_box_message:metadata(JObj),
     To = kz_json:get_value(<<"to">>, Metadata, <<"unknown@nodomain">>),
     CCVs = [{<<"Account-ID">>, AccountId}],
-    Props = [{<<"Call-ID">>, kz_json:get_value(<<"call_id">>, Metadata, kz_util:rand_hex_binary(12))}
+    Props = [{<<"Call-ID">>, kz_json:get_value(<<"call_id">>, Metadata, kz_binary:rand_hex(12))}
             ,{<<"From">>, kz_json:get_value(<<"from">>, Metadata, <<"unknown@nodomain">>)}
-            ,{<<"Caller-ID-Name">>, kz_json:get_value(<<"caller_id_name">>, Metadata, kz_util:anonymous_caller_id_name())}
-            ,{<<"Caller-ID-Number">>, kz_json:get_value(<<"caller_id_number">>, Metadata, kz_util:anonymous_caller_id_number())}
+            ,{<<"Caller-ID-Name">>, kz_json:get_value(<<"caller_id_name">>
+                                                     ,Metadata
+                                                     ,kz_privacy:anonymous_caller_id_name(AccountId)
+                                                     )
+             }
+            ,{<<"Caller-ID-Number">>, kz_json:get_value(<<"caller_id_number">>
+                                                       ,Metadata
+                                                       ,kz_privacy:anonymous_caller_id_number(AccountId)
+                                                       )
+             }
             ,{<<"Custom-Channel-Vars">>, kz_json:from_list(CCVs)}
             ,{<<"Custom-SIP-Headers">>, kz_json:new()}
             ,{<<"Request">>, To}

@@ -9,7 +9,7 @@
 -module(kzd_domains_test).
 
 -include_lib("eunit/include/eunit.hrl").
--include_lib("kazoo/include/kz_databases.hrl").
+-include_lib("kazoo_stdlib/include/kz_databases.hrl").
 
 -define(DOMAIN, <<"2600hz.com">>).
 
@@ -56,14 +56,12 @@ domains_test_() ->
                }).
 
 init() ->
-    CrossbarDir = code:lib_dir('crossbar'),
-
-    DomainsSchema = load(CrossbarDir, ?DOMAINS_SCHEMA),
-    DomainHostsSchema = load(CrossbarDir, ?HOSTS_SCHEMA),
+    DomainsSchema = crossbar_load(?DOMAINS_SCHEMA),
+    DomainHostsSchema = crossbar_load(?HOSTS_SCHEMA),
 
     LoaderFun = fun A(?DOMAINS_SCHEMA) -> DomainsSchema;
                     A(?HOSTS_SCHEMA) -> DomainHostsSchema;
-                    A(X) when not is_binary(X) -> A(kz_util:to_binary(X));
+                    A(X) when not is_binary(X) -> A(kz_term:to_binary(X));
                     A(X) -> io:format("error: schema ~p not found", [X]),
                             'undefined'
                 end,
@@ -73,13 +71,9 @@ init() ->
           ,loader_fun=LoaderFun
           }.
 
-load(AppPath, Filename) ->
-    SchemaPath = filename:join([AppPath, "priv", "couchdb", "schemas"
-                               ,<<Filename/binary, ".json">>
-                               ]),
-    {'ok', SchemaFile} = file:read_file(SchemaPath),
-
-    kz_json:decode(SchemaFile).
+crossbar_load(Filename) ->
+    File = <<Filename/binary,".json">>,
+    kz_json:load_fixture_from_file(crossbar, "couchdb/schemas", File).
 
 stop(_) -> 'ok'.
 
@@ -146,6 +140,12 @@ fail_cname(#state{domains=DomainsSchema
     [{"Validate badly formed host fails domains validation"
      ,?_assertMatch({'error'
                     ,[{'data_invalid'
+                      ,_
+                      ,'no_extra_properties_allowed'
+                      ,_
+                      ,_
+                      }
+                     ,{'data_invalid'
                       ,_
                       ,'no_extra_properties_allowed'
                       ,_

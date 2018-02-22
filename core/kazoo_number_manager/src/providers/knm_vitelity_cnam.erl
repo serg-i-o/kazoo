@@ -45,6 +45,7 @@ save(Number, _State) ->
 %%--------------------------------------------------------------------
 -spec delete(knm_number:knm_number()) -> knm_number:knm_number().
 delete(Number) ->
+    _ = remove_inbound_cnam(Number),
     knm_services:deactivate_features(Number
                                     ,[?FEATURE_CNAM_INBOUND
                                      ,?FEATURE_CNAM_OUTBOUND
@@ -132,7 +133,8 @@ outbound_cnam_options(DID, NewCNAM) ->
 %%--------------------------------------------------------------------
 -spec process_outbound_xml_resp(knm_number:knm_number(), ne_binary(), text()) ->
                                        knm_number:knm_number().
-process_outbound_xml_resp(Number, FeatureData, XML) ->
+process_outbound_xml_resp(Number, FeatureData, XML_binary) ->
+    XML = unicode:characters_to_list(XML_binary),
     try xmerl_scan:string(XML) of
         {#xmlElement{name='content'
                     ,content=Children
@@ -197,7 +199,10 @@ handle_inbound_cnam(Number) ->
 handle_inbound_cnam(Number, 'true') ->
     Doc = knm_phone_number:doc(knm_number:phone_number(Number)),
     case kz_json:is_true([?FEATURE_CNAM, ?CNAM_INBOUND_LOOKUP], Doc) of
-        'false' -> knm_services:deactivate_feature(Number, ?FEATURE_CNAM_INBOUND);
+        false ->
+            knm_services:deactivate_features(Number, [?FEATURE_CNAM_INBOUND
+                                                     ,?CNAM_INBOUND_LOOKUP
+                                                     ]);
         'true' ->
             FeatureData = kz_json:from_list([{?CNAM_INBOUND_LOOKUP, true}]),
             knm_services:activate_feature(Number, {?FEATURE_CNAM_INBOUND, FeatureData})
@@ -215,8 +220,7 @@ handle_inbound_cnam(Number, 'false') ->
 %%
 %% @end
 %%--------------------------------------------------------------------
--spec remove_inbound_cnam(knm_number:knm_number()) ->
-                                 knm_number:knm_number().
+-spec remove_inbound_cnam(knm_number:knm_number()) -> knm_number:knm_number().
 remove_inbound_cnam(Number) ->
     DID = knm_phone_number:number(knm_number:phone_number(Number)),
     _ = knm_vitelity_util:query_vitelity(
@@ -224,7 +228,9 @@ remove_inbound_cnam(Number) ->
             remove_inbound_options(DID)
            )
          ),
-    knm_services:deactivate_feature(Number, ?FEATURE_CNAM_INBOUND).
+    knm_services:deactivate_features(Number, [?FEATURE_CNAM_INBOUND
+                                             ,?CNAM_INBOUND_LOOKUP
+                                             ]).
 
 %%--------------------------------------------------------------------
 %% @private
@@ -331,9 +337,9 @@ publish_cnam_update(Number) ->
     Notify = [{<<"Account-ID">>, knm_phone_number:assigned_to(PhoneNumber)}
              ,{<<"Number-State">>, knm_phone_number:state(PhoneNumber)}
              ,{<<"Local-Number">>, knm_phone_number:module_name(PhoneNumber) =:= ?CARRIER_LOCAL}
-             ,{<<"Number">>, knm_phone_number:number(PhoneNumber)}
+             ,{<<"Number">>, knm_util:pretty_print(knm_phone_number:number(PhoneNumber))}
              ,{<<"Acquired-For">>, knm_phone_number:auth_by(PhoneNumber)}
              ,{<<"Cnam">>, case Feature of 'undefined' -> kz_json:new(); _ -> Feature end}
               | kz_api:default_headers(?APP_VERSION, ?APP_NAME)
              ],
-    kapi_notifications:publish_cnam_request(Notify).
+    kapps_notify_publisher:cast(Notify, fun kapi_notifications:publish_cnam_request/1).

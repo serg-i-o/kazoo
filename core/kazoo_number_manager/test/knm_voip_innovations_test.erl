@@ -1,5 +1,5 @@
 %%%-------------------------------------------------------------------
-%%% @copyright (C) 2017, 2600Hz
+%%% @copyright (C) 2016-2017, 2600Hz
 %%% @doc
 %%% @end
 %%% @contributors
@@ -16,7 +16,11 @@ api_test_() ->
               ,{'query_id', <<"QID">>}
               ],
     {setup
-    ,fun () -> {'ok', Pid} = knm_search:start_link(), Pid end
+    ,fun () -> case knm_search:start_link() of
+                   {'ok', Pid} -> Pid;
+                   {'error', {'already_started', Pid}} -> Pid
+               end
+     end
     ,fun gen_server:stop/1
     ,fun (_ReturnOfSetup) ->
              [find_numbers(Options)
@@ -52,18 +56,19 @@ matcher(Prefix) ->
     end.
 
 acquire_number_test_() ->
-    N = <<"+14352154006">>,
-    PhoneNumber = knm_phone_number:set_number(knm_phone_number:new(), N),
-    Number = knm_number:set_phone_number(knm_number:new(), PhoneNumber),
-    Result = knm_voip_innovations:acquire_number(Number),
-    [{"Verify number is still one inputed"
-     ,?_assertEqual(N, knm_phone_number:number(knm_number:phone_number(Result)))
+    Num = <<"+14352154006">>,
+    PN = knm_phone_number:from_number(Num),
+    N = knm_number:set_phone_number(knm_number:new(), PN),
+    Result = knm_voip_innovations:acquire_number(N),
+    [?_assert(knm_phone_number:is_dirty(PN))
+    ,{"Verify number is still one inputed"
+     ,?_assertEqual(Num, knm_phone_number:number(knm_number:phone_number(Result)))
      }
     ].
 
 disconnect_number_test_() ->
     N = <<"+14352154974">>,
-    PhoneNumber = knm_phone_number:set_number(knm_phone_number:new(), N),
+    PhoneNumber = knm_phone_number:from_number(N),
     Number = knm_number:set_phone_number(knm_number:new(), PhoneNumber),
     Msg = <<"Number currently available">>,
     [{"Verify cannot release number not detained"

@@ -45,7 +45,7 @@ handle(Data, Call) ->
     Table = fields_to_check(),
 
     case cf_util:check_value_of_fields(Table, 'false', Data, Call)
-        andalso maybe_correct_target(Target, kz_json:get_value(<<"group_id">>, Data), Call)
+        andalso maybe_correct_target(Target, kz_json:get_ne_binary_value(<<"group_id">>, Data), Call)
     of
         'true' ->
             Flow = kz_json:from_list([{<<"data">>, build_data(Target, Call)}
@@ -81,7 +81,10 @@ build_data({'ok', TargetId, _TargetType}, Call) ->
 -spec build_flow_data(kapps_call:call(), kz_proplist(), api_binary()) -> kz_json:object().
 build_flow_data(Call, Data) ->
     build_flow_data(Call, Data, kapps_call:authorizing_type(Call)).
-build_flow_data(Call, Data, <<"device">>) ->
+
+build_flow_data(Call, Data, AuthorizingType)
+  when AuthorizingType =:= <<"device">>;
+       AuthorizingType =:= <<"mobile">> ->
     kz_json:from_list([{<<"approved_device_id">>, kapps_call:authorizing_id(Call)}
                        | Data
                       ]);
@@ -123,12 +126,12 @@ find_group_members(GroupId, Call) ->
 -spec lookup_endpoint(kz_json:object(), api_binary()) -> target().
 lookup_endpoint('undefined') -> 'error';
 lookup_endpoint(Flow) ->
-    lookup_endpoint(Flow, kz_json:get_value(<<"module">>, Flow)).
+    lookup_endpoint(Flow, kz_json:get_ne_binary_value(<<"module">>, Flow)).
 
 lookup_endpoint(Flow, <<"device">> = TargetType) ->
-    {'ok', kz_json:get_value([<<"data">>, <<"id">>], Flow), TargetType};
+    {'ok', kz_json:get_ne_binary_value([<<"data">>, <<"id">>], Flow), TargetType};
 lookup_endpoint(Flow, <<"user">> = TargetType) ->
-    {'ok', kz_json:get_value([<<"data">>, <<"id">>], Flow), TargetType};
+    {'ok', kz_json:get_ne_binary_value([<<"data">>, <<"id">>], Flow), TargetType};
 lookup_endpoint(Flow, _TargetType) ->
-    Child = kz_json:get_value([<<"children">>, <<"_">>], Flow),
+    Child = kz_json:get_json_value([<<"children">>, <<"_">>], Flow),
     lookup_endpoint(Child).

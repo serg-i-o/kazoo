@@ -78,7 +78,7 @@
 -define(QUEUE_OPTIONS, []).
 -define(CONSUME_OPTIONS, [{'no_local', 'true'}]).
 
--define(HEARTBEAT, crypto:rand_uniform(5 * ?MILLISECONDS_IN_SECOND, 15 * ?MILLISECONDS_IN_SECOND)).
+-define(HEARTBEAT, rand:uniform(5 * ?MILLISECONDS_IN_SECOND, 15 * ?MILLISECONDS_IN_SECOND)).
 -define(EXPIRE_PERIOD, 1 * ?MILLISECONDS_IN_SECOND).
 -define(FUDGE_FACTOR, 1.25).
 
@@ -379,7 +379,7 @@ handle_info(_Info, State) ->
 %%--------------------------------------------------------------------
 -spec handle_event(kz_json:object(), kz_proplist()) -> gen_listener:handle_event_return().
 handle_event(JObj, State) ->
-    case kz_api:node(JObj) =:= kz_util:to_binary(node()) of
+    case kz_api:node(JObj) =:= kz_term:to_binary(node()) of
         'true' -> 'ignore';
         'false' ->
             {'reply', [{'state', State}
@@ -422,7 +422,7 @@ get_zone(JObj, State) ->
     case kz_json:get_first_defined([<<"Zone">>, <<"AMQP-Broker-Zone">>], JObj) of
         'undefined' ->
             get_zone_from_broker(JObj, State);
-        Zone -> kz_util:to_atom(Zone, 'true')
+        Zone -> kz_term:to_atom(Zone, 'true')
     end.
 
 -spec get_zone_from_broker(kz_json:object(), globals_state()) -> atom().
@@ -434,7 +434,7 @@ get_zone_from_broker(JObj, #state{zones=Zones
         Broker ->
             case props:get_value(Broker, Zones) of
                 'undefined' -> LocalZone;
-                Zone -> kz_util:to_atom(Zone, 'true')
+                Zone -> kz_term:to_atom(Zone, 'true')
             end
     end.
 
@@ -633,10 +633,16 @@ amqp_query(Name, From) ->
         {_, []} ->
             lager:debug("cluster didn't know ~p", [Name]),
             gen_listener:reply(From, 'undefined');
-        {_, [JObj]} ->
-            lager:debug("cluster knew ~p: ~p", [Name, JObj]),
-            Pid = gen_listener:call(?SERVER, {'register_remote', JObj}),
-            gen_listener:reply(From, Pid)
+        {_, [_ | _] = JObjs} ->
+            case lists:filter(fun(J)-> kapi_globals:state(J) /= 'none' end, JObjs) of
+                [] ->
+                    lager:debug("cluster didn't know ~p", [Name]),
+                    gen_listener:reply(From, 'undefined');
+                [JObj | _] ->
+                    lager:debug("cluster knew ~p: ~p", [Name, JObj]),
+                    Pid = gen_listener:call(?SERVER, {'register_remote', JObj}),
+                    gen_listener:reply(From, Pid)
+            end
     end.
 
 -spec handle_amqp_call(kz_json:object(), kz_proplist()) -> 'ok'.
@@ -698,7 +704,7 @@ maybe_handle_local_send(JObj, Global, 'true', 'true') ->
 -spec handle_amqp_query(kz_json:object(), kz_proplist()) -> 'ok'.
 handle_amqp_query(JObj, _Props) ->
     case where(kapi_globals:name(JObj)) of
-        'undefined' -> 'ok';
+        'undefined' -> amqp_query_empty_reply(JObj);
         Global ->
             maybe_handle_local_query(JObj
                                     ,Global
@@ -707,11 +713,24 @@ handle_amqp_query(JObj, _Props) ->
                                     )
     end.
 
-maybe_handle_local_query(_JObj, _Global, 'false', _SameNode) -> 'ok';
-maybe_handle_local_query(_JObj, _Global, 'true', 'false') -> 'ok';
+maybe_handle_local_query(JObj, _Global, 'false', _SameNode) ->
+    amqp_query_empty_reply(JObj);
+maybe_handle_local_query(JObj, _Global, 'true', 'false') ->
+    amqp_query_empty_reply(JObj);
 maybe_handle_local_query(JObj, Global, 'true', 'true') ->
     advertise_register(Global),
     amqp_query_reply(JObj, Global).
+
+-spec amqp_query_empty_reply(kz_json:object()) -> 'ok'.
+amqp_query_empty_reply(JObj) ->
+    Payload = [{<<"Name">>, kapi_globals:name(JObj)}
+              ,{<<"State">>, 'none'}
+              ,{?KEY_MSG_ID, kz_api:msg_id(JObj)}
+               | kz_api:default_headers(?APP_NAME, ?APP_VERSION)
+              ],
+    ServerId = kz_api:server_id(JObj),
+    Publisher = fun(P) -> kapi_globals:publish_query_resp(ServerId, P) end,
+    kz_amqp_worker:cast(Payload, Publisher).
 
 -spec amqp_query_reply(kz_json:object(), kz_global:global()) -> 'ok'.
 amqp_query_reply(JObj, Global) ->
@@ -911,4 +930,10 @@ amqp_call_scope_fun(Count) ->
 
 -spec is_ready() -> boolean().
 is_ready() ->
-    gen_listener:call(?MODULE, 'is_ready').
+    try
+        gen_listener:call(?MODULE, 'is_ready')
+    catch
+        _T:_E -> lager:info("globals is_ready returned ~p : ~p", [_T,_E]),
+                 false
+    end.
+

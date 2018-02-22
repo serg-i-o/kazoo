@@ -24,31 +24,16 @@
 -define(DEFAULT_CONVERTER_B, <<"regex">>).
 -define(DEFAULT_CONVERTERS, [?DEFAULT_CONVERTER_B]).
 
--ifdef(TEST).
--define(DEFAULT_CONVERTER, ?DEFAULT_CONVERTER_B).
--define(RECONCILE_REGEX, ?DEFAULT_RECONCILE_REGEX).
--else.
--define(DEFAULT_CONVERTER,
-        kapps_config:get(?KNM_CONFIG_CAT, <<"converter">>, ?DEFAULT_CONVERTER_B)).
--define(RECONCILE_REGEX,
-        kapps_config:get_binary(?KNM_CONFIG_CAT, ?KEY_RECONCILE_REGEX, ?DEFAULT_RECONCILE_REGEX)).
--endif.
-
--define(ACCOUNT_RECONCILE_REGEX,
-        kapps_account_config:get_global(AccountId, ?KNM_CONFIG_CAT, ?KEY_RECONCILE_REGEX, ?DEFAULT_RECONCILE_REGEX)).
-
--define(CONVERTER_MOD, kz_util:to_atom(<<"knm_converter_", (?DEFAULT_CONVERTER)/binary>>, 'true')).
-
 -define(DEFAULT_RECONCILE_REGEX, <<"^\\+?1?\\d{10}$|^\\+[2-9]\\d{7,}$|^011\\d*$|^00\\d*\$">>).
 -define(KEY_RECONCILE_REGEX, <<"reconcile_regex">>).
 
 -define(CLASSIFIER_TOLLFREE_US,
-        kz_json:from_list([{<<"regex">>, <<"^\\+1((?:800|888|877|866|855)\\d{7})\$">>}
+        kz_json:from_list([{<<"regex">>, <<"^\\+1((?:800|88\\d|877|866|855|844|833|822)\\d{7})\$">>}
                           ,{<<"friendly_name">>, <<"US TollFree">>}
                           ,{<<"pretty_print">>, <<"SS(###) ### - ####">>}
                           ])).
 
--define(CLASSIFIER_TOLLFREE,
+-define(CLASSIFIER_TOLL_US,
         kz_json:from_list([{<<"regex">>, <<"^\\+1(900\\d{7})\$">>}
                           ,{<<"friendly_name">>, <<"US Toll">>}
                           ,{<<"pretty_print">>, <<"SS(###) ### - ####">>}
@@ -84,34 +69,64 @@
 
 -define(DEFAULT_CLASSIFIERS,
         kz_json:from_list([{<<"tollfree_us">>, ?CLASSIFIER_TOLLFREE_US}
-                          ,{<<"toll_us">>, ?CLASSIFIER_TOLLFREE}
+                          ,{<<"toll_us">>, ?CLASSIFIER_TOLL_US}
                           ,{<<"emergency">>, ?CLASSIFIER_EMERGENCY}
                           ,{<<"caribbean">>, ?CLASSIFIER_CARIBBEAN}
                           ,{<<"did_us">>, ?CLASSIFIER_DID_US}
                           ,{<<"international">>, ?CLASSIFIER_INTERNATIONAL}
                           ,{<<"unknown">>, ?CLASSIFIER_UNKNOWN}
                           ])).
--define(CLASSIFIERS, kapps_config:get(?KNM_CONFIG_CAT, <<"classifiers">>, ?DEFAULT_CLASSIFIERS)).
+
+-define(DEFAULT_CONVERTER
+       ,kapps_config:get_ne_binary(?KNM_CONFIG_CAT, <<"converter">>, ?DEFAULT_CONVERTER_B)
+       ).
+-define(RECONCILE_REGEX
+       ,kapps_config:get_ne_binary(?KNM_CONFIG_CAT, ?KEY_RECONCILE_REGEX, ?DEFAULT_RECONCILE_REGEX)
+       ).
+
+-define(CLASSIFIERS
+       ,kapps_config:get_json(?KNM_CONFIG_CAT, <<"classifiers">>, ?DEFAULT_CLASSIFIERS)
+       ).
+
+-define(RECONCILE_REGEX(AccountId)
+       ,kapps_account_config:get_global(AccountId, ?KNM_CONFIG_CAT, ?KEY_RECONCILE_REGEX, ?DEFAULT_RECONCILE_REGEX)
+       ).
+
+-define(CONVERTER_MOD, kz_term:to_atom(<<"knm_converter_", (?DEFAULT_CONVERTER)/binary>>, 'true')).
 
 %%--------------------------------------------------------------------
 %% @public
 %% @doc
 %% @end
 %%--------------------------------------------------------------------
--spec normalize(ne_binary()) ->
-                       ne_binary().
-normalize(?NE_BINARY = Num) ->
-    (?CONVERTER_MOD):normalize(Num).
+-spec normalize(ne_binary()) -> ne_binary();
+               (ne_binaries()) -> ne_binaries().
+normalize(Num=?NE_BINARY) ->
+    (?CONVERTER_MOD):normalize(Num);
+normalize(Nums)
+  when is_list(Nums) ->
+    [normalize(Num) || Num <- Nums].
 
--spec normalize(ne_binary(), api_binary()) ->
-                       ne_binary().
-normalize(?NE_BINARY = Num, AccountId) ->
-    (?CONVERTER_MOD):normalize(Num, AccountId).
+-spec normalize(ne_binary(), api_ne_binary()) -> ne_binary();
+               (ne_binaries(), api_ne_binary()) -> ne_binaries().
+normalize(Num=?NE_BINARY, undefined) ->
+    normalize(Num);
+normalize(Num=?NE_BINARY, AccountId) ->
+    (?CONVERTER_MOD):normalize(Num, AccountId);
+normalize(Nums, undefined)
+  when is_list(Nums) ->
+    normalize(Nums);
+normalize(Nums, AccountId)
+  when is_list(Nums) ->
+    [normalize(Num, AccountId) || Num <- Nums].
 
--spec normalize(ne_binary(), api_binary(), kz_json:object()) ->
-                       ne_binary().
-normalize(?NE_BINARY = Num, AccountId, DialPlan) ->
-    (?CONVERTER_MOD):normalize(Num, AccountId, DialPlan).
+-spec normalize(ne_binary(), ne_binary(), kz_json:object()) -> ne_binary();
+               (ne_binaries(), ne_binary(), kz_json:object()) -> ne_binaries().
+normalize(Num=?NE_BINARY, ?MATCH_ACCOUNT_RAW(AccountId), DialPlan) ->
+    (?CONVERTER_MOD):normalize(Num, AccountId, DialPlan);
+normalize(Nums, ?MATCH_ACCOUNT_RAW(AccountId), DialPlan)
+  when is_list(Nums) ->
+    [normalize(Num, AccountId, DialPlan) || Num <- Nums].
 
 %%--------------------------------------------------------------------
 %% @public
@@ -191,7 +206,7 @@ is_reconcilable(Number) ->
 -spec is_reconcilable(ne_binary(), ne_binary()) -> boolean().
 is_reconcilable(Number, AccountId) ->
     Num = normalize(Number, AccountId),
-    is_reconcilable_by_regex(Num, ?ACCOUNT_RECONCILE_REGEX).
+    is_reconcilable_by_regex(Num, ?RECONCILE_REGEX(AccountId)).
 
 is_reconcilable_by_regex(Num, Regex) ->
     case re:run(Num, Regex) of
@@ -230,7 +245,7 @@ available_classifiers() ->
 %%--------------------------------------------------------------------
 -spec available_converters() -> ne_binaries().
 available_converters() ->
-    kapps_config:get(?KNM_CONFIG_CAT, <<"converters">>, ?DEFAULT_CONVERTERS).
+    kapps_config:get_ne_binaries(?KNM_CONFIG_CAT, <<"converters">>, ?DEFAULT_CONVERTERS).
 
 %%--------------------------------------------------------------------
 %% @public
@@ -259,7 +274,7 @@ classify_number(Num, [{Classification, Classifier}|Classifiers]) ->
         'nomatch' -> classify_number(Num, Classifiers);
         _ ->
             lager:debug("number '~s' is classified as ~s", [Num, Classification]),
-            kz_util:to_binary(Classification)
+            kz_term:to_binary(Classification)
     end.
 
 %%--------------------------------------------------------------------

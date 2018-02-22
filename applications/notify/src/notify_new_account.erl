@@ -40,12 +40,16 @@ init() ->
 %% process the AMQP requests
 %% @end
 %%--------------------------------------------------------------------
--spec handle_req(kz_json:object(), proplist()) -> 'ok'.
+-spec handle_req(kz_json:object(), kz_proplist()) -> 'ok'.
 handle_req(JObj, _Props) ->
     'true' = kapi_notifications:new_account_v(JObj),
     kz_util:put_callid(JObj),
 
     lager:debug("a new account has been created, sending email notification"),
+
+    RespQ = kz_api:server_id(JObj),
+    MsgId = kz_api:msg_id(JObj),
+    notify_util:send_update(RespQ, MsgId, <<"pending">>),
 
     AccountDb = case {kz_json:get_value(<<"Account-DB">>, JObj), kz_json:get_value(<<"Account-ID">>, JObj)} of
                     {'undefined', 'undefined'} -> 'undefined';
@@ -71,11 +75,12 @@ handle_req(JObj, _Props) ->
     CustomSubjectTemplate = kz_json:get_value([<<"notifications">>, <<"new_account">>, <<"email_subject_template">>], Account),
     {'ok', Subject} = notify_util:render_template(CustomSubjectTemplate, ?DEFAULT_SUBJ_TMPL, Props),
 
-    To = kz_json:get_value(<<"email">>, Admin, kapps_config:get(?MOD_CONFIG_CAT, <<"default_to">>, <<"">>)),
+    To = kz_json:get_value(<<"email">>, Admin, kapps_config:get_ne_binary_or_ne_binaries(?MOD_CONFIG_CAT, <<"default_to">>)),
     RepEmail = notify_util:get_rep_email(Account),
 
-    _ = build_and_send_email(TxtBody, HTMLBody, Subject, To, Props),
-    build_and_send_email(TxtBody, HTMLBody, Subject, RepEmail, Props).
+    SendResult0 = build_and_send_email(TxtBody, HTMLBody, Subject, To, Props),
+    SendResult1 = build_and_send_email(TxtBody, HTMLBody, Subject, RepEmail, Props),
+    notify_util:maybe_send_update(lists:flatten([SendResult0, SendResult1]), RespQ, MsgId).
 
 %%--------------------------------------------------------------------
 %% @private
@@ -110,10 +115,9 @@ create_template_props(Event, Admin, Account, AllDocs) ->
 %%
 %% @end
 %%--------------------------------------------------------------------
--spec build_and_send_email(iolist(), iolist(), iolist(), api_binary() | ne_binaries(), kz_proplist()) ->
-                                  'ok' | {'error', any()}.
+-spec build_and_send_email(iolist(), iolist(), iolist(), api_binary() | ne_binaries(), kz_proplist()) -> send_email_return().
 build_and_send_email(TxtBody, HTMLBody, Subject, To, Props) when is_list(To) ->
-    _ = [build_and_send_email(TxtBody, HTMLBody, Subject, T, Props) || T <- To];
+    [build_and_send_email(TxtBody, HTMLBody, Subject, T, Props) || T <- To];
 build_and_send_email(TxtBody, HTMLBody, Subject, To, Props) ->
     Service = props:get_value(<<"service">>, Props),
     From = props:get_value(<<"send_from">>, Service),
@@ -175,7 +179,7 @@ find_admin([]) -> kz_json:new();
 find_admin([Doc|Docs]) ->
     JObj = kz_json:get_value(<<"doc">>, Doc),
     case kz_doc:type(JObj) =:= <<"user">>
-        andalso kz_json:get_value(<<"priv_level">>, JObj) =:= <<"admin">>
+        andalso kzd_user:is_account_admin(JObj)
     of
         'true' -> JObj;
         'false' -> find_admin(Docs)

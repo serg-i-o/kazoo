@@ -37,7 +37,7 @@
 
 -include("bt.hrl").
 
--type changes() :: [{atom(), proplist(), [proplist()]}].
+-type changes() :: [{atom(), kz_proplist(), [kz_proplist()]}].
 -type subscription() :: #bt_subscription{}.
 -type subscriptions() :: [subscription()].
 
@@ -59,13 +59,13 @@ url() ->
     "/subscriptions/".
 
 url(SubscriptionId) ->
-    lists:append(["/subscriptions/", kz_util:to_list(SubscriptionId)]).
+    lists:append(["/subscriptions/", kz_term:to_list(SubscriptionId)]).
 
 url(SubscriptionId, Options) ->
     lists:append(["/subscriptions/"
-                 ,kz_util:to_list(SubscriptionId)
+                 ,kz_term:to_list(SubscriptionId)
                  ,"/"
-                 ,kz_util:to_list(Options)
+                 ,kz_term:to_list(Options)
                  ]).
 
 %%--------------------------------------------------------------------
@@ -90,7 +90,7 @@ new(SubscriptionId, PlanId, PaymentToken) ->
 %% @private
 -spec new_subscription_id() -> ne_binary().
 new_subscription_id() ->
-    kz_util:rand_hex_binary(16).
+    kz_binary:rand_hex(16).
 
 %%--------------------------------------------------------------------
 %% @public
@@ -149,12 +149,12 @@ update_addon_amount(#bt_subscription{add_ons=AddOns}=Subscription, AddOnId, Amou
             case lists:keyfind(AddOnId, #bt_addon.inherited_from, AddOns) of
                 'false' -> braintree_util:error_not_found(<<"Add-On">>);
                 #bt_addon{}=AddOn ->
-                    AddOn1 = AddOn#bt_addon{amount=kz_util:to_binary(Amount)},
+                    AddOn1 = AddOn#bt_addon{amount=kz_term:to_binary(Amount)},
                     Subscription#bt_subscription{add_ons=lists:keyreplace(AddOnId, #bt_addon.inherited_from, AddOns, AddOn1)}
             end;
         #bt_addon{}=AddOn ->
             AddOn1 = AddOn#bt_addon{existing_id=AddOnId
-                                   ,amount=kz_util:to_binary(Amount)
+                                   ,amount=kz_term:to_binary(Amount)
                                    },
             Subscription#bt_subscription{add_ons=lists:keyreplace(AddOnId, #bt_addon.id, AddOns, AddOn1)}
     end.
@@ -189,12 +189,12 @@ update_discount_amount(#bt_subscription{discounts=Discounts}=Subscription, Disco
             case lists:keyfind(DiscountId, #bt_discount.inherited_from, Discounts) of
                 'false' -> braintree_util:error_not_found(<<"Discount">>);
                 #bt_discount{}=Discount ->
-                    Discount1 = Discount#bt_discount{amount=kz_util:to_binary(Amount)},
+                    Discount1 = Discount#bt_discount{amount=kz_term:to_binary(Amount)},
                     Subscription#bt_subscription{discounts=lists:keyreplace(DiscountId, #bt_discount.inherited_from, Discounts, Discount1)}
             end;
         #bt_discount{}=Discount ->
             Discount1 = Discount#bt_discount{existing_id=DiscountId
-                                            ,amount=kz_util:to_binary(Amount)
+                                            ,amount=kz_term:to_binary(Amount)
                                             },
             Subscription#bt_subscription{discounts=lists:keyreplace(DiscountId, #bt_discount.id, Discounts, Discount1)}
     end.
@@ -307,7 +307,7 @@ reset_discounts(#bt_subscription{discounts=Discounts}=Subscription) ->
 -spec update_addon_quantity(subscription() | ne_binary(), ne_binary(), integer() | api_binary()) ->
                                    subscription().
 update_addon_quantity(Subscription, AddOnId, Quantity) when not is_integer(Quantity) ->
-    update_addon_quantity(Subscription, AddOnId, kz_util:to_integer(Quantity));
+    update_addon_quantity(Subscription, AddOnId, kz_term:to_integer(Quantity));
 update_addon_quantity(<<_/binary>> = SubscriptionId, AddOnId, Quantity) ->
     Subscription = find(SubscriptionId),
     update_addon_quantity(Subscription, AddOnId, Quantity);
@@ -347,11 +347,11 @@ increment_addon_quantity(#bt_subscription{add_ons=AddOns}=Subscription, AddOnId)
                     AddOn = #bt_addon{inherited_from=AddOnId, quantity=1},
                     Subscription#bt_subscription{add_ons=[AddOn|AddOns]};
                 #bt_addon{quantity=Quantity}=AddOn ->
-                    AddOn1 = AddOn#bt_addon{quantity=kz_util:to_integer(Quantity) + 1},
+                    AddOn1 = AddOn#bt_addon{quantity=kz_term:to_integer(Quantity) + 1},
                     Subscription#bt_subscription{add_ons=lists:keyreplace(AddOnId, #bt_addon.inherited_from, AddOns, AddOn1)}
             end;
         #bt_addon{quantity=Quantity}=AddOn ->
-            AddOn1 = AddOn#bt_addon{existing_id=AddOnId, quantity=kz_util:to_integer(Quantity) + 1},
+            AddOn1 = AddOn#bt_addon{existing_id=AddOnId, quantity=kz_term:to_integer(Quantity) + 1},
             Subscription#bt_subscription{add_ons=lists:keyreplace(AddOnId, #bt_addon.id, AddOns, AddOn1)}
     end;
 increment_addon_quantity(SubscriptionId, AddOnId) ->
@@ -366,7 +366,7 @@ increment_addon_quantity(SubscriptionId, AddOnId) ->
 %%--------------------------------------------------------------------
 -spec update_discount_quantity(subscription() | ne_binary(), ne_binary(), api_integer()) -> subscription().
 update_discount_quantity(Subscription, DiscountId, Quantity) when not is_integer(Quantity) ->
-    update_discount_quantity(Subscription, DiscountId, kz_util:to_integer(Quantity));
+    update_discount_quantity(Subscription, DiscountId, kz_term:to_integer(Quantity));
 update_discount_quantity(#bt_subscription{discounts=Discounts}=Subscription, DiscountId, Quantity) ->
     case lists:keyfind(DiscountId, #bt_discount.id, Discounts) of
         'false' ->
@@ -401,11 +401,11 @@ increment_discount_quantity(#bt_subscription{discounts=Discounts}=Subscription, 
                     Discount = #bt_discount{inherited_from=DiscountId, quantity=1},
                     Subscription#bt_subscription{discounts=[Discount|Discounts]};
                 #bt_discount{quantity=Quantity}=Discount ->
-                    Discount1 = Discount#bt_discount{quantity=kz_util:to_integer(Quantity) + 1},
+                    Discount1 = Discount#bt_discount{quantity=kz_term:to_integer(Quantity) + 1},
                     Subscription#bt_subscription{discounts=lists:keyreplace(DiscountId, #bt_discount.inherited_from, Discounts, Discount1)}
             end;
         #bt_discount{quantity=Quantity}=Discount ->
-            Discount1 = Discount#bt_discount{existing_id=DiscountId, quantity=kz_util:to_integer(Quantity) + 1},
+            Discount1 = Discount#bt_discount{existing_id=DiscountId, quantity=kz_term:to_integer(Quantity) + 1},
             Subscription#bt_subscription{discounts=lists:keyreplace(DiscountId, #bt_discount.id, Discounts, Discount1)}
     end;
 increment_discount_quantity(SubscriptionId, DiscountId) ->
@@ -470,35 +470,36 @@ xml_to_record(Xml) ->
 xml_to_record(Xml, Base) ->
     AddOnsPath = lists:flatten([Base, "/add-ons/add-on"]),
     DiscountsPath = lists:flatten([Base, "/discounts/discount"]),
-    #bt_subscription{id = kz_util:get_xml_value([Base, "/id/text()"], Xml)
-                    ,balance = kz_util:get_xml_value([Base, "/balance/text()"], Xml)
-                    ,billing_dom = kz_util:get_xml_value([Base, "/billing-day-of-month/text()"], Xml)
-                    ,billing_first_date = kz_util:get_xml_value([Base, "/first-billing-date/text()"], Xml)
-                    ,billing_end_date = kz_util:get_xml_value([Base, "/billing-period-end-date/text()"], Xml)
-                    ,billing_start_date = kz_util:get_xml_value([Base, "/billing-period-start-date/text()"], Xml)
-                    ,billing_cycle = kz_util:get_xml_value([Base, "/current-billing-cycle/text()"], Xml)
-                    ,number_of_cycles = kz_util:get_xml_value([Base, "/number-of-billing-cycles/text()"], Xml)
-                    ,days_past_due = kz_util:get_xml_value([Base, "/days-past-due/text()"], Xml)
-                    ,failure_count = kz_util:get_xml_value([Base, "/failure-count/text()"], Xml)
-                    ,merchant_account_id = kz_util:get_xml_value([Base, "/merchant-account-id/text()"], Xml)
-                    ,never_expires = kz_util:is_true(kz_util:get_xml_value([Base, "/never-expires/text()"], Xml))
-                    ,next_bill_amount = kz_util:get_xml_value([Base, "/next-bill-amount/text()"], Xml)
-                    ,next_cycle_amount = kz_util:get_xml_value([Base, "/next-billing-period-amount/text()"], Xml)
-                    ,next_bill_date = kz_util:get_xml_value([Base, "/next-billing-date/text()"], Xml)
-                    ,paid_through_date = kz_util:get_xml_value([Base, "/paid-through-date/text()"], Xml)
-                    ,payment_token = kz_util:get_xml_value([Base, "/payment-method-token/text()"], Xml)
-                    ,plan_id = kz_util:get_xml_value([Base, "/plan-id/text()"], Xml)
-                    ,price = kz_util:get_xml_value([Base, "/price/text()"], Xml)
-                    ,status = kz_util:get_xml_value([Base, "/status/text()"], Xml)
-                    ,trial_duration = kz_util:get_xml_value([Base, "/trial-duration/text()"], Xml)
-                    ,trial_duration_unit = kz_util:get_xml_value([Base, "/trial-duration-unit/text()"], Xml)
-                    ,trial_period = kz_util:get_xml_value([Base, "/trial-period/text()"], Xml)
+    #bt_subscription{id = kz_xml:get_value([Base, "/id/text()"], Xml)
+                    ,balance = kz_xml:get_value([Base, "/balance/text()"], Xml)
+                    ,billing_dom = kz_xml:get_value([Base, "/billing-day-of-month/text()"], Xml)
+                    ,billing_first_date = kz_xml:get_value([Base, "/first-billing-date/text()"], Xml)
+                    ,billing_end_date = kz_xml:get_value([Base, "/billing-period-end-date/text()"], Xml)
+                    ,billing_start_date = kz_xml:get_value([Base, "/billing-period-start-date/text()"], Xml)
+                    ,billing_cycle = kz_xml:get_value([Base, "/current-billing-cycle/text()"], Xml)
+                    ,number_of_cycles = kz_xml:get_value([Base, "/number-of-billing-cycles/text()"], Xml)
+                    ,days_past_due = kz_xml:get_value([Base, "/days-past-due/text()"], Xml)
+                    ,failure_count = kz_xml:get_value([Base, "/failure-count/text()"], Xml)
+                    ,merchant_account_id = kz_xml:get_value([Base, "/merchant-account-id/text()"], Xml)
+                    ,never_expires = kz_term:is_true(kz_xml:get_value([Base, "/never-expires/text()"], Xml))
+                    ,next_bill_amount = kz_xml:get_value([Base, "/next-bill-amount/text()"], Xml)
+                    ,next_cycle_amount = kz_xml:get_value([Base, "/next-billing-period-amount/text()"], Xml)
+                    ,next_bill_date = kz_xml:get_value([Base, "/next-billing-date/text()"], Xml)
+                    ,paid_through_date = kz_xml:get_value([Base, "/paid-through-date/text()"], Xml)
+                    ,payment_token = kz_xml:get_value([Base, "/payment-method-token/text()"], Xml)
+                    ,plan_id = kz_xml:get_value([Base, "/plan-id/text()"], Xml)
+                    ,price = kz_xml:get_value([Base, "/price/text()"], Xml)
+                    ,status = kz_xml:get_value([Base, "/status/text()"], Xml)
+                    ,trial_duration = kz_xml:get_value([Base, "/trial-duration/text()"], Xml)
+                    ,trial_duration_unit = kz_xml:get_value([Base, "/trial-duration-unit/text()"], Xml)
+                    ,trial_period = kz_xml:get_value([Base, "/trial-period/text()"], Xml)
                     ,add_ons = [braintree_addon:xml_to_record(Addon)
                                 || Addon <- xmerl_xpath:string(AddOnsPath, Xml)
                                ]
                     ,discounts = [braintree_discount:xml_to_record(Discount)
                                   || Discount <- xmerl_xpath:string(DiscountsPath, Xml)
                                  ]
+                    ,descriptor = braintree_descriptor:xml_to_record(Xml)
                     }.
 
 
@@ -508,8 +509,8 @@ xml_to_record(Xml, Base) ->
 %% Contert the given XML to a subscription record
 %% @end
 %%--------------------------------------------------------------------
--spec record_to_xml(subscription()) -> proplist() | bt_xml().
--spec record_to_xml(subscription(), boolean()) -> proplist() | bt_xml().
+-spec record_to_xml(subscription()) -> kz_proplist() | bt_xml().
+-spec record_to_xml(subscription(), boolean()) -> kz_proplist() | bt_xml().
 
 record_to_xml(Subscription) ->
     record_to_xml(Subscription, 'false').
@@ -525,6 +526,7 @@ record_to_xml(#bt_subscription{}=Subscription, ToString) ->
             ,{'price', Subscription#bt_subscription.price}
             ,{'add-ons', create_addon_changes(Subscription#bt_subscription.add_ons)}
             ,{'discounts', create_discount_changes(Subscription#bt_subscription.discounts)}
+            ,{'descriptor', braintree_descriptor:record_to_xml(Subscription#bt_subscription.descriptor)}
             ],
     Conditionals = [fun(#bt_subscription{do_not_inherit=Value}, P) ->
                             update_options('do-not-inherit-add-ons-or-discounts', Value, P)
@@ -565,38 +567,38 @@ record_to_xml(#bt_subscription{}=Subscription, ToString) ->
 %%--------------------------------------------------------------------
 -spec record_to_json(subscription()) -> kz_json:object().
 record_to_json(Subscription) ->
-    Props = [{<<"id">>, Subscription#bt_subscription.id}
-            ,{<<"balance">>, Subscription#bt_subscription.balance}
-            ,{<<"billing_dom">>, Subscription#bt_subscription.billing_dom}
-            ,{<<"billing_first_date">>, Subscription#bt_subscription.billing_first_date}
-            ,{<<"billing_end_date">>, Subscription#bt_subscription.billing_end_date}
-            ,{<<"billing_start_date">>, Subscription#bt_subscription.billing_start_date}
-            ,{<<"billing_cycle">>, Subscription#bt_subscription.billing_cycle}
-            ,{<<"number_of_cycles">>, Subscription#bt_subscription.number_of_cycles}
-            ,{<<"days_past_due">>, Subscription#bt_subscription.days_past_due}
-            ,{<<"failure_count">>, Subscription#bt_subscription.failure_count}
-            ,{<<"merchant_account_id">>, Subscription#bt_subscription.merchant_account_id}
-            ,{<<"never_expires">>, Subscription#bt_subscription.never_expires}
-            ,{<<"next_bill_amount">>, Subscription#bt_subscription.next_bill_amount}
-            ,{<<"next_cycle_amount">>, Subscription#bt_subscription.next_cycle_amount}
-            ,{<<"next_bill_date">>, Subscription#bt_subscription.next_bill_date}
-            ,{<<"paid_through_date">>, Subscription#bt_subscription.paid_through_date}
-            ,{<<"payment_token">>, Subscription#bt_subscription.payment_token}
-            ,{<<"plan_id">>, Subscription#bt_subscription.plan_id}
-            ,{<<"price">>, Subscription#bt_subscription.price}
-            ,{<<"status">>, Subscription#bt_subscription.status}
-            ,{<<"trial_duration">>, Subscription#bt_subscription.trial_duration}
-            ,{<<"trial_duration_unit">>, Subscription#bt_subscription.trial_duration_unit}
-            ,{<<"trial_period">>, Subscription#bt_subscription.trial_period}
-            ,{<<"descriptor">>, Subscription#bt_subscription.descriptor}
-            ,{<<"do_not_inherit">>, Subscription#bt_subscription.do_not_inherit}
-            ,{<<"start_immediately">>, Subscription#bt_subscription.start_immediately}
-            ,{<<"prorate_charges">>, Subscription#bt_subscription.prorate_charges}
-            ,{<<"revert_on_prorate_fail">>, Subscription#bt_subscription.revert_on_prorate_fail}
-            ,{<<"replace_add_ons">>, Subscription#bt_subscription.replace_add_ons}
-            ,{<<"create">>, Subscription#bt_subscription.create}
-            ],
-    kz_json:from_list(props:filter_undefined(Props)).
+    kz_json:from_list(
+      [{<<"id">>, Subscription#bt_subscription.id}
+      ,{<<"balance">>, Subscription#bt_subscription.balance}
+      ,{<<"billing_dom">>, Subscription#bt_subscription.billing_dom}
+      ,{<<"billing_first_date">>, Subscription#bt_subscription.billing_first_date}
+      ,{<<"billing_end_date">>, Subscription#bt_subscription.billing_end_date}
+      ,{<<"billing_start_date">>, Subscription#bt_subscription.billing_start_date}
+      ,{<<"billing_cycle">>, Subscription#bt_subscription.billing_cycle}
+      ,{<<"number_of_cycles">>, Subscription#bt_subscription.number_of_cycles}
+      ,{<<"days_past_due">>, Subscription#bt_subscription.days_past_due}
+      ,{<<"failure_count">>, Subscription#bt_subscription.failure_count}
+      ,{<<"merchant_account_id">>, Subscription#bt_subscription.merchant_account_id}
+      ,{<<"never_expires">>, Subscription#bt_subscription.never_expires}
+      ,{<<"next_bill_amount">>, Subscription#bt_subscription.next_bill_amount}
+      ,{<<"next_cycle_amount">>, Subscription#bt_subscription.next_cycle_amount}
+      ,{<<"next_bill_date">>, Subscription#bt_subscription.next_bill_date}
+      ,{<<"paid_through_date">>, Subscription#bt_subscription.paid_through_date}
+      ,{<<"payment_token">>, Subscription#bt_subscription.payment_token}
+      ,{<<"plan_id">>, Subscription#bt_subscription.plan_id}
+      ,{<<"price">>, Subscription#bt_subscription.price}
+      ,{<<"status">>, Subscription#bt_subscription.status}
+      ,{<<"trial_duration">>, Subscription#bt_subscription.trial_duration}
+      ,{<<"trial_duration_unit">>, Subscription#bt_subscription.trial_duration_unit}
+      ,{<<"trial_period">>, Subscription#bt_subscription.trial_period}
+      ,{<<"descriptor">>, braintree_descriptor:record_to_json(Subscription#bt_subscription.descriptor)}
+      ,{<<"do_not_inherit">>, Subscription#bt_subscription.do_not_inherit}
+      ,{<<"start_immediately">>, Subscription#bt_subscription.start_immediately}
+      ,{<<"prorate_charges">>, Subscription#bt_subscription.prorate_charges}
+      ,{<<"revert_on_prorate_fail">>, Subscription#bt_subscription.revert_on_prorate_fail}
+      ,{<<"replace_add_ons">>, Subscription#bt_subscription.replace_add_ons}
+      ,{<<"create">>, Subscription#bt_subscription.create}
+      ]).
 
 
 %%--------------------------------------------------------------------

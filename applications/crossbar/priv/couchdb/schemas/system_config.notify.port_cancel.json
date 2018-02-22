@@ -10,11 +10,11 @@
         "default_to": {
             "default": "",
             "description": "notify.port_cancel default to",
+            "items": {
+                "type": "string"
+            },
             "type": "string"
         }
     },
-    "required": [
-        "default_from"
-    ],
     "type": "object"
 }

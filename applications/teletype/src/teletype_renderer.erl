@@ -48,15 +48,15 @@ render(Renderer, TemplateId, _Template, _TemplateData, 0) ->
     {'error', 'render_failed'};
 
 render(Renderer, TemplateId, Template, TemplateData, Tries) ->
-    Start = kz_util:current_tstamp(),
-    PoolStatus = poolboy:status('teletype_render_farm'),
+    Start = kz_time:current_tstamp(),
+    PoolStatus = poolboy:status(teletype_sup:render_farm_name()),
     lager:info("starting render of ~p", [TemplateId]),
     case do_render(Renderer, TemplateId, Template, TemplateData) of
         {'error', 'render_failed'} ->
-            lager:info("render failed in ~p, pool: ~p", [kz_util:current_tstamp() - Start, PoolStatus]),
+            lager:info("render failed in ~p, pool: ~p", [kz_time:current_tstamp() - Start, PoolStatus]),
             render(Renderer, TemplateId, Template, TemplateData, Tries-1);
         GoodReturn ->
-            lager:info("render completed in ~p, pool: ~p", [kz_util:current_tstamp() - Start, PoolStatus]),
+            lager:info("render completed in ~p, pool: ~p", [kz_time:current_tstamp() - Start, PoolStatus]),
             poolboy:checkin(teletype_sup:render_farm_name(), Renderer),
             GoodReturn
     end.
@@ -81,11 +81,8 @@ next_renderer() ->
     next_renderer(?MILLISECONDS_IN_SECOND).
 
 next_renderer(BackoffMs) ->
-    try poolboy:checkout(teletype_sup:render_farm_name()
-                        ,'false'
-                        ,2 * ?MILLISECONDS_IN_SECOND
-                        )
-    of
+    Farm = teletype_sup:render_farm_name(),
+    try poolboy:checkout(Farm, false, 2 * ?MILLISECONDS_IN_SECOND) of
         'full' ->
             lager:critical("render farm pool is full! waiting ~bms", [BackoffMs]),
             timer:sleep(BackoffMs),
@@ -113,15 +110,11 @@ backoff_fudge() ->
 
 -spec init(list()) -> {'ok', atom()}.
 init(_) ->
-    Self = kz_util:to_hex_binary(list_to_binary(pid_to_list(self()))),
-
-    Module = kz_util:to_atom(
-               list_to_binary(["teletype_", Self, "_", kz_util:rand_hex_binary(4)])
-                            ,'true'
-              ),
+    Self = kz_term:to_hex_binary(list_to_binary(pid_to_list(self()))),
+    ModuleBin = <<"teletype_", Self/binary, "_", (kz_binary:rand_hex(4))/binary>>,
+    Module = kz_term:to_atom(ModuleBin, true),
     kz_util:put_callid(Module),
     lager:debug("starting template renderer, using ~s as compiled module name", [Module]),
-
     {'ok', Module}.
 
 -spec handle_call(any(), pid_ref(), state()) -> handle_call_ret_state(state()).

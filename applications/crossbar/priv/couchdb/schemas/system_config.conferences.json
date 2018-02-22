@@ -3,37 +3,71 @@
     "_id": "system_config.conferences",
     "description": "Schema for conferences system_config",
     "properties": {
+        "bridge_password": {
+            "description": "conferences bridge password",
+            "type": "string"
+        },
+        "bridge_username": {
+            "description": "conferences bridge username",
+            "type": "string"
+        },
+        "entry_tone": {
+            "default": "tone_stream://v=-7;>=2;+=.1;%(300,0,523,659);v=-7;>=3;+=.1;%(800,0,659,783)",
+            "description": "conferences entry tone",
+            "type": "string"
+        },
+        "exit_tone": {
+            "default": "tone_stream://v=-7;>=2;+=.1;%(300,0,523,440);v=-7;>=3;+=.1;%(800,0,349,440)",
+            "description": "conferences exit tone",
+            "type": "string"
+        },
+        "moderator_entry_tone": {
+            "default": "tone_stream://v=-7;>=2;+=.1;%(300,0,523,659);v=-7;>=3;+=.1;%(800,0,659,783)",
+            "description": "conferences moderator entry tone",
+            "type": "string"
+        },
+        "moderator_exit_tone": {
+            "default": "tone_stream://v=-7;>=2;+=.1;%(300,0,523,440);v=-7;>=3;+=.1;%(800,0,349,440)",
+            "description": "conferences moderator exit tone",
+            "type": "string"
+        },
+        "number_timeout": {
+            "default": 5000,
+            "description": "conferences number timeout",
+            "type": "integer"
+        },
+        "pin_timeout": {
+            "default": 5000,
+            "description": "conferences pin timeout",
+            "type": "integer"
+        },
         "profiles": {
             "properties": {
                 "default": {
-                    "properties": {
-                        "default": {
-                            "caller-controls": "default",
-                            "comfort-noise": 1000,
-                            "energy-level": 20,
-                            "enter-sound": "tone_stream://v=-7;>=2;+=.1;%(300,0,523,659);v=-7;>=3;+=.1;%(800,0,659,783)",
-                            "interval": 20,
-                            "moh-sound": "$${hold_music}",
-                            "rate": 8000
-                        },
-                        "description": "conferences default",
-                        "type": "object"
-                    }
+                    "default": {
+                        "caller-controls": "default",
+                        "comfort-noise": 1000,
+                        "energy-level": 20,
+                        "enter-sound": "tone_stream://v=-7;>=2;+=.1;%(300,0,523,659);v=-7;>=3;+=.1;%(800,0,659,783)",
+                        "interval": 20,
+                        "moh-sound": "$${hold_music}",
+                        "rate": 8000
+                    },
+                    "description": "conferences default",
+                    "type": "object"
                 },
                 "page": {
-                    "properties": {
-                        "default": {
-                            "caller-controls": "default",
-                            "comfort-noise": 1000,
-                            "energy-level": 20,
-                            "enter-sound": "",
-                            "interval": 20,
-                            "moh-sound": "",
-                            "rate": 8000
-                        },
-                        "description": "conferences page",
-                        "type": "object"
-                    }
+                    "default": {
+                        "caller-controls": "default",
+                        "comfort-noise": 1000,
+                        "energy-level": 20,
+                        "enter-sound": "",
+                        "interval": 20,
+                        "moh-sound": "",
+                        "rate": 8000
+                    },
+                    "description": "conferences page",
+                    "type": "object"
                 }
             }
         },
@@ -46,10 +80,12 @@
             "default": 3000,
             "description": "conferences route win timeout",
             "type": "integer"
+        },
+        "support_name_announcement": {
+            "default": true,
+            "description": "conferences support name announcement",
+            "type": "boolean"
         }
     },
-    "required": [
-        "profiles"
-    ],
     "type": "object"
 }

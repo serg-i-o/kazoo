@@ -3,6 +3,11 @@
     "_id": "phone_numbers",
     "description": "Schema for a number",
     "properties": {
+        "carrier_name": {
+            "maxLength": 30,
+            "minLength": 1,
+            "type": "string"
+        },
         "cnam": {
             "properties": {
                 "display_name": {
@@ -15,6 +20,21 @@
                 }
             },
             "type": "object"
+        },
+        "create_with_state": {
+            "description": "The state to create numbers in",
+            "enum": [
+                "aging",
+                "available",
+                "deleted",
+                "discovery",
+                "in_service",
+                "port_in",
+                "port_out",
+                "released",
+                "reserved"
+            ],
+            "type": "string"
         },
         "e911": {
             "properties": {
@@ -79,6 +99,8 @@
                 },
                 "region": {
                     "description": "The region (state) where the number is in service",
+                    "maxLength": 2,
+                    "minLength": 2,
                     "type": "string"
                 },
                 "status": {

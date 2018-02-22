@@ -1,5 +1,5 @@
 %%%-------------------------------------------------------------------
-%%% @copyright (c) 2010-2017, 2600Hz
+%%% @copyright (c) 2015-2017, 2600Hz
 %%% @doc
 %%%
 %%% @end
@@ -16,37 +16,41 @@
 -export([make_name/1]).
 -export([call_id/1
         ,c_seq/1
+        ,from/1
+        ,to/1
         ]).
 
 -export_type([parser_args/0]).
 
--include_lib("kazoo/include/kz_types.hrl").
--include_lib("kazoo/include/kz_log.hrl").
+-include_lib("kazoo_stdlib/include/kz_types.hrl").
+-include_lib("kazoo_stdlib/include/kz_log.hrl").
 
 %% API
 
--spec timestamp() -> api_number().
+-spec timestamp() -> float().
 timestamp() ->
-    timestamp(os:timestamp()).
+    {_, _, Micro} = os:timestamp(),
+    kz_term:to_integer(Micro) / ?MICROSECONDS_IN_SECOND +
+        kz_time:current_tstamp().
 
--spec timestamp(ne_binary() | kz_now()) -> api_number().
+-spec timestamp(ne_binary() | kz_now()) -> api_float().
 timestamp(<<YYYY:4/binary, "-", MM:2/binary, "-", DD:2/binary, "T"
             ,HH:2/binary, ":", MMM:2/binary, ":", SS:2/binary, "."
             ,Micro:6/binary, "+", _H:2/binary, ":", _M:2/binary, " ", _/binary
           >>) ->
-    1.0e-6 * kz_util:to_integer(Micro) +
+    kz_term:to_integer(Micro) / ?MICROSECONDS_IN_SECOND +
         calendar:datetime_to_gregorian_seconds(
-          {{kz_util:to_integer(YYYY), kz_util:to_integer(MM), kz_util:to_integer(DD)}
-          ,{kz_util:to_integer(HH), kz_util:to_integer(MMM), kz_util:to_integer(SS)}
+          {{kz_term:to_integer(YYYY), kz_term:to_integer(MM), kz_term:to_integer(DD)}
+          ,{kz_term:to_integer(HH), kz_term:to_integer(MMM), kz_term:to_integer(SS)}
           }
          );
 timestamp({_,_,_} = TS) ->
-    kz_util:now_s(TS);
+    kz_time:now_s(TS);
 timestamp(_) -> 'undefined'.
 
 -spec open_file(iodata()) -> file:io_device().
 open_file(Filename) ->
-    Options = ['read','append'      %% Read whole file then from its end
+    Options = ['read','append'     %% Read whole file then from its end
               ,'binary'            %% Return binaries instead of lists
               ,'raw','read_ahead'  %% Faster access to file
               ],
@@ -69,13 +73,11 @@ make_name(Bin)
     binary_to_atom(Bin, 'utf8');
 make_name({'parser_args', ListenIP, Port})
   when is_integer(Port) ->
-    make_name(<< (kz_util:to_binary(ListenIP))/binary,
-                 ":",
-                 (kz_util:to_binary(Port))/binary
-              >>);
+    Name = <<(kz_term:to_binary(ListenIP))/binary, ":", (kz_term:to_binary(Port))/binary>>,
+    make_name(Name);
 make_name({'parser_args', Filename, _IP, _Port}) ->
     FName = filename:absname(Filename),
-    make_name(kz_util:to_binary(FName)).
+    make_name(kz_term:to_binary(FName)).
 
 -spec call_id(ne_binaries()) -> ne_binary().
 call_id(Data) ->
@@ -86,6 +88,14 @@ call_id(Data) ->
 -spec c_seq(ne_binaries()) -> ne_binary().
 c_seq(Data) ->
     sip_field([<<"CSeq">>], Data).
+
+-spec to(ne_binaries()) -> ne_binary().
+to(Data) ->
+    sip_field([<<"To">>], Data).
+
+-spec from(ne_binaries()) -> ne_binary().
+from(Data) ->
+    sip_field([<<"From">>], Data).
 
 %% Internals
 
@@ -110,7 +120,7 @@ try_all(Data, Field) ->
         <<Field:FieldSz/binary, _/binary>> ->
             case binary:split(Data, <<": ">>) of
                 [_Key, Value0] ->
-                    kz_util:truncate_right_binary(Value0, byte_size(Value0));
+                    kz_binary:truncate_right(Value0, byte_size(Value0));
                 _ ->
                     'false'
             end;

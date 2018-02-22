@@ -30,18 +30,13 @@
 update_device(JObj, AuthToken) ->
     AccountId = kz_doc:account_id(JObj),
     Request = device_settings(set_owner(JObj)),
-    case check_request(Request) of
-        {'ok', Data} ->
-            _ = update_account(AccountId, AuthToken),
-            send_req('devices_post'
-                    ,Data
-                    ,AuthToken
-                    ,AccountId
-                    ,kz_device:mac_address(JObj)
-                    );
-        {'error', Errors} ->
-            handle_validation_error(Errors, AccountId)
-    end.
+    _ = update_account(AccountId, AuthToken),
+    send_req('devices_post'
+            ,maybe_add_device_defaults(Request)
+            ,AuthToken
+            ,AccountId
+            ,kz_device:mac_address(JObj)
+            ).
 
 -spec delete_device(kz_json:object(), ne_binary()) -> 'ok'.
 delete_device(JObj, AuthToken) ->
@@ -52,6 +47,26 @@ delete_device(JObj, AuthToken) ->
             ,kz_device:mac_address(JObj)
             ).
 
+-spec maybe_add_device_defaults(kz_json:object()) -> kz_json:object().
+maybe_add_device_defaults(JObj) ->
+    LinesPath = [<<"settings">>, <<"lines">>],
+    F = fun (K, V) -> {K, maybe_set_line_defaults(V)} end,
+    NewLines = kz_json:map(F, kz_json:get_value(LinesPath, JObj)),
+    kz_json:set_value(LinesPath, NewLines, JObj).
+
+-spec maybe_set_line_defaults(kz_json:object()) -> kz_json:object().
+maybe_set_line_defaults(LineJObj) ->
+    kz_json:expand(
+      kz_json:from_list(
+        [case KV of
+             {[<<"advanced">>, <<"expire">>], undefined} -> {Path, 360};
+             {[<<"advanced">>, <<"srtp">>], undefined} -> {Path, false};
+             {[<<"basic">>, <<"enabled">>], undefined} -> {Path, true};
+             _ -> KV
+         end
+         || {Path,_}=KV <- kz_json:to_proplist(kz_json:flatten(LineJObj))
+        ])).
+
 -spec device_settings(kz_json:object()) -> kz_json:object().
 device_settings(JObj) ->
     kz_json:from_list(
@@ -60,8 +75,7 @@ device_settings(JObj) ->
       ,{<<"model">>, get_model(JObj)}
       ,{<<"name">>, kz_device:name(JObj)}
       ,{<<"settings">>, settings(JObj)}
-      ]
-     ).
+      ]).
 
 -spec get_brand(kz_json:object()) -> binary().
 get_brand(JObj) ->
@@ -78,7 +92,7 @@ get_family(JObj) ->
 -spec get_model(kz_json:object()) -> ne_binary().
 get_model(JObj) ->
     Family = kz_json:get_binary_value([<<"provision">>, <<"endpoint_model">>], JObj, <<>>),
-    case kz_util:to_lower_binary(Family) of
+    case kz_term:to_lower_binary(Family) of
         <<"t19">> -> <<"t19p">>;
         <<"t21">> -> <<"t21p">>;
         <<"t22">> -> <<"t22p">>;
@@ -131,8 +145,8 @@ update_account(Account, AuthToken) ->
 -spec account_settings(kz_json:object()) -> kz_json:object().
 account_settings(JObj) ->
     kz_json:from_list(
-      [{<<"settings">>, settings(JObj)}]
-     ).
+      [{<<"settings">>, settings(JObj)}
+      ]).
 
 %%--------------------------------------------------------------------
 %% @public
@@ -167,8 +181,7 @@ maybe_save_device(Device, Settings, AccountId, AuthToken) ->
                 ,{<<"model">>, get_model(Device)}
                 ,{<<"name">>, kz_device:name(Device)}
                 ,{<<"settings">>, Settings}
-                ]
-               ),
+                ]),
     catch save_device(AccountId, Device, Request, AuthToken).
 
 -spec save_device(ne_binary(), kz_json:object(), kz_json:object(), ne_binary()) -> 'ok'.
@@ -176,12 +189,7 @@ save_device(AccountId, Device, Request, AuthToken) ->
     case kz_device:mac_address(Device) of
         'undefined' -> 'ok';
         MacAddress ->
-            send_req('devices_post'
-                    ,Request
-                    ,AuthToken
-                    ,AccountId
-                    ,MacAddress
-                    )
+            send_req('devices_post', Request, AuthToken, AccountId, MacAddress)
     end.
 
 %%--------------------------------------------------------------------
@@ -198,9 +206,12 @@ check_MAC(MacAddress, AuthToken) ->
     lager:debug("pre-provisioning via ~s", [UrlString]),
     case kz_http:get(UrlString, Headers) of
         {'ok', 200, _RespHeaders, JSONStr} ->
+            lager:debug("provisioner says ~s", [JSONStr]),
             JObj = kz_json:decode(JSONStr),
             kz_json:get_value([<<"data">>, <<"account_id">>], JObj);
-        _AnythingElse -> 'false'
+        _AnythingElse ->
+            lager:debug("device ~s not found: ~p", [MacAddress, _AnythingElse]),
+            'false'
     end.
 
 %%--------------------------------------------------------------------
@@ -213,7 +224,7 @@ check_MAC(MacAddress, AuthToken) ->
 set_owner(JObj) ->
     OwnerId = kz_json:get_ne_value(<<"owner_id">>, JObj),
     case get_owner(OwnerId, kz_doc:account_id(JObj)) of
-        {'ok', Doc} -> kz_json:merge_recursive(Doc, JObj);
+        {'ok', Doc} -> kz_json:merge(Doc, JObj);
         {'error', _R} -> JObj
     end.
 
@@ -239,23 +250,20 @@ settings(JObj) ->
               ,{<<"datetime">>, settings_datetime(JObj)}
               ,{<<"feature_keys">>, settings_feature_keys(JObj)}
               ,{<<"line_keys">>, settings_line_keys(JObj)}
-              ]
-             ),
+              ,{<<"combo_keys">>, settings_combo_keys(JObj)}
+              ]),
     kz_json:from_list(Props).
 
 -spec settings_line_keys(kz_json:object()) -> kz_json:object().
 settings_line_keys(JObj) ->
-    Brand = get_brand(JObj),
-    Family = get_family(JObj),
-    settings_line_keys(Brand, Family).
+    settings_line_keys(get_brand(JObj), get_family(JObj)).
 
 -spec settings_line_keys(ne_binary(), ne_binary()) -> kz_json:object().
 settings_line_keys(<<"yealink">>, _) ->
     Props = props:filter_empty(
               [{<<"account">>, <<"1">>}
               ,{<<"type">>, <<"15">>}
-              ]
-             ),
+              ]),
     Key = kz_json:from_list([{<<"key">>, kz_json:from_list(Props)}]),
     kz_json:from_list([{<<"0">>, Key}]);
 settings_line_keys(_, _) -> 'undefined'.
@@ -263,9 +271,9 @@ settings_line_keys(_, _) -> 'undefined'.
 -spec settings_lines(kz_json:object()) -> kz_json:object().
 settings_lines(JObj) ->
     case props:filter_empty(
-           [{<<"basic">>, settings_basic(JObj)},
-            {<<"sip">>, settings_sip(JObj)},
-            {<<"advanced">>, settings_advanced(JObj)}
+           [{<<"basic">>, settings_basic(JObj)}
+           ,{<<"sip">>, settings_sip(JObj)}
+           ,{<<"advanced">>, settings_advanced(JObj)}
            ])
     of
         [] -> kz_json:new();
@@ -276,49 +284,52 @@ settings_lines(JObj) ->
 settings_basic(JObj) ->
     Enabled = case kz_json:get_ne_value(<<"enabled">>, JObj) of
                   'undefined' -> 'undefined';
-                  Else -> kz_util:is_true(Else)
+                  Else -> kz_term:is_true(Else)
               end,
     Props = props:filter_undefined(
               [{<<"display_name">>, kz_json:get_ne_value(<<"name">>, JObj)}
               ,{<<"enable">>, Enabled}
-              ]
-             ),
+              ]),
     kz_json:from_list(Props).
 
 -spec settings_sip(kz_json:object()) -> kz_json:object().
 settings_sip(JObj) ->
-    Realm = kz_json:get_first_defined(
-              [[<<"sip">>, <<"realm">>],
-               <<"realm">>
-              ], JObj
-             ),
+    RealmPaths = [[<<"sip">>, <<"realm">>]
+                 ,<<"realm">>
+                 ],
+    Realm = kz_json:get_first_defined(RealmPaths, JObj),
     Props = props:filter_undefined(
               [{<<"username">>, kz_device:sip_username(JObj)}
               ,{<<"password">>, kz_device:sip_password(JObj)}
               ,{<<"realm">>, Realm}
-              ]
-             ),
+              ]),
     kz_json:from_list(Props).
 
 -spec settings_advanced(kz_json:object()) -> kz_json:object().
 settings_advanced(JObj) ->
     EncryptionMethods = kz_json:get_value([<<"media">>, <<"encryption">>, <<"methods">>], JObj, []),
-    Props = props:filter_undefined(
-              [{<<"expire">>, kz_json:get_integer_value([<<"sip">>, <<"expire_seconds">>], JObj)}
-               | [{M, 'true'} || M <- EncryptionMethods]
-              ]),
-    kz_json:from_list(Props).
+    kz_json:from_list(
+      [{<<"expire">>, kz_json:get_integer_value([<<"sip">>, <<"expire_seconds">>], JObj)}
+       | [{M, 'true'} || M <- EncryptionMethods]
+      ]).
 
 -spec settings_datetime(kz_json:object()) -> kz_json:object().
 settings_datetime(JObj) ->
-    Props = props:filter_empty(
-              [{<<"time">>, settings_time(JObj)}]
-             ),
-    kz_json:from_list(Props).
+    kz_json:from_list(
+      [{<<"time">>, settings_time(JObj)}
+      ]).
 
 -spec settings_feature_keys(kz_json:object()) -> kz_json:object().
 settings_feature_keys(JObj) ->
-    FeatureKeys = kz_json:get_value([<<"provision">>, <<"feature_keys">>], JObj, kz_json:new()),
+    settings_keys(?FEATURE_KEYS, <<"feature_keys">>, JObj).
+
+-spec settings_combo_keys(kz_json:object()) -> kz_json:object().
+settings_combo_keys(JObj) ->
+    settings_keys(?COMBO_KEYS, <<"combo_keys">>, JObj).
+
+-spec settings_keys(kz_json:object(), ne_binary(), kz_json:object()) -> kz_json:object().
+settings_keys(Assoc, KeyKind, JObj) ->
+    FeatureKeys = kz_json:get_value([<<"provision">>, KeyKind], JObj, kz_json:new()),
     Brand = get_brand(JObj),
     Family = get_family(JObj),
     AccountId = kz_doc:account_id(JObj),
@@ -327,7 +338,7 @@ settings_feature_keys(JObj) ->
           fun(Key, Value, Acc) ->
                   Type = kz_json:get_binary_value(<<"type">>, Value),
                   V = kz_json:get_binary_value(<<"value">>, Value),
-                  FeatureKey = get_feature_key(Type, V, Brand, Family, AccountId),
+                  FeatureKey = get_feature_key(Type, V, Brand, Family, AccountId, Assoc),
                   maybe_add_feature_key(Key, FeatureKey, Acc)
           end
                      ,kz_json:new()
@@ -338,67 +349,87 @@ settings_feature_keys(JObj) ->
         LineKey -> kz_json:set_value(<<"account">>, LineKey, Keys)
     end.
 
--spec get_feature_key(ne_binary(), ne_binary(), binary(), binary(), ne_binary()) ->
-                             api_object().
-get_feature_key(<<"presence">> = Type, Value, Brand, Family, AccountId) ->
+-spec get_label(binary(), binary()) -> binary().
+get_label(AccountId, DocId) ->
+    AccountDb = kz_util:format_account_id(AccountId, 'encoded'),
+    Doc = kz_datamgr:open_cache_doc(AccountDb, DocId),
+
+    get_label(Doc).
+
+-spec get_label(kz_json:object()) -> binary().
+get_label(Doc) ->
+    case {kz_json:get_value(<<"first_name">>, Doc), kz_json:get_value(<<"last_name">>, Doc)} of
+        {'undefined', 'undefined'} ->
+            kz_json:get_value(<<"name">>, Doc);
+
+        {First, 'undefined'} ->
+            First;
+
+        {'undefined', Last} ->
+            Last;
+
+        {First, Last} ->
+            <<First/binary, " ", Last/binary>>
+    end.
+
+-spec get_feature_key(ne_binary(), ne_binary(), binary(), binary(), ne_binary(), kz_json:object()) -> api_object().
+get_feature_key(<<"presence">>=Type, Value, Brand, Family, AccountId, Assoc) ->
     {'ok', UserJObj} = get_user(AccountId, Value),
     case kz_device:presence_id(UserJObj) of
         'undefined' -> 'undefined';
         Presence ->
             kz_json:from_list(
-              props:filter_undefined(
-                [{<<"label">>, Presence}
-                ,{<<"value">>, Presence}
-                ,{<<"type">>, get_feature_key_type(Type, Brand, Family)}
-                ,{<<"account">>, get_line_key(Brand, Family)}
-                ])
-             )
+              [{<<"label">>, get_label(AccountId, Presence)}
+              ,{<<"value">>, Presence}
+              ,{<<"type">>, get_feature_key_type(Assoc, Type, Brand, Family)}
+              ,{<<"account">>, get_line_key(Brand, Family)}
+              ])
     end;
-get_feature_key(<<"speed_dial">> = Type, Value, Brand, Family, _AccountId) ->
+get_feature_key(<<"speed_dial">>=Type, Value, Brand, Family, _AccountId, Assoc) ->
     kz_json:from_list(
-      props:filter_undefined(
-        [{<<"label">>, Value}
-        ,{<<"value">>, Value}
-        ,{<<"type">>, get_feature_key_type(Type, Brand, Family)}
-        ,{<<"account">>, get_line_key(Brand, Family)}
-        ])
-     );
-get_feature_key(<<"personal_parking">> = Type, Value, Brand, Family, AccountId) ->
+      [{<<"label">>, Value}
+      ,{<<"value">>, Value}
+      ,{<<"type">>, get_feature_key_type(Assoc, Type, Brand, Family)}
+      ,{<<"account">>, get_line_key(Brand, Family)}
+      ]);
+get_feature_key(<<"personal_parking">>=Type, Value, Brand, Family, AccountId, Assoc) ->
     {'ok', UserJObj} = get_user(AccountId, Value),
     case kz_device:presence_id(UserJObj) of
         'undefined' -> 'undefined';
         Presence ->
+            Label = <<"Park ", (get_label(AccountId, Presence))/binary>>,
             kz_json:from_list(
-              props:filter_undefined(
-                [{<<"label">>, <<>>}
-                ,{<<"value">>, <<"*3", Presence/binary>>}
-                ,{<<"type">>, get_feature_key_type(Type, Brand, Family)}
-                ,{<<"account">>, get_line_key(Brand, Family)}
-                ]
-               )
-             )
+              [{<<"label">>, Label}
+              ,{<<"value">>, <<"*3", Presence/binary>>}
+              ,{<<"type">>, get_feature_key_type(Assoc, Type, Brand, Family)}
+              ,{<<"account">>, get_line_key(Brand, Family)}
+              ])
     end;
-get_feature_key(<<"parking">> = Type, Value, Brand, Family, _AccountId) ->
+get_feature_key(<<"parking">>=Type, Value, Brand, Family, _AccountId, Assoc) ->
     kz_json:from_list(
-      props:filter_undefined(
-        [{<<"label">>, <<>>}
-        ,{<<"value">>, <<"*3", Value/binary>>}
-        ,{<<"type">>, get_feature_key_type(Type, Brand, Family)}
-        ,{<<"account">>, get_line_key(Brand, Family)}
-        ]
-       )
-     ).
+      [{<<"label">>, <<"Park ", Value/binary>>}
+      ,{<<"value">>, <<"*3", Value/binary>>}
+      ,{<<"type">>, get_feature_key_type(Assoc, Type, Brand, Family)}
+      ,{<<"account">>, get_line_key(Brand, Family)}
+      ]);
+get_feature_key(<<"line">>=Type, _Value, Brand, Family, _AccountId, Assoc) ->
+    kz_json:from_list(
+      [{<<"label">>, <<>>}
+      ,{<<"value">>, <<>>}
+      ,{<<"type">>, get_feature_key_type(Assoc, Type, Brand, Family)}
+      ,{<<"account">>, get_line_key(Brand, Family)}
+      ]).
 
 -spec get_line_key(ne_binary(), ne_binary()) -> api_binary().
 get_line_key(<<"yealink">>, _) -> <<"0">>;
 get_line_key(_, _) -> 'undefined'.
 
--spec get_feature_key_type(ne_binary(), binary(), binary()) -> api_object().
-get_feature_key_type(Type, Brand, Family) ->
+-spec get_feature_key_type(kz_json:object(), ne_binary(), binary(), binary()) -> api_object().
+get_feature_key_type(Assoc, Type, Brand, Family) ->
     kz_json:get_first_defined([[Brand, Family, Type]
                               ,[Brand, <<"_">>, Type]
                               ]
-                             ,?FEATURE_KEYS
+                             ,Assoc
                              ).
 
 -spec get_user(ne_binary(), ne_binary()) -> {'ok', kz_json:object()} |
@@ -410,24 +441,22 @@ get_user(AccountId, UserId) ->
 -spec maybe_add_feature_key(ne_binary(), api_object(), kz_json:object()) -> kz_json:object().
 maybe_add_feature_key(_Key, 'undefined', JObj) -> JObj;
 maybe_add_feature_key(Key, FeatureKey, JObj) ->
-    kz_json:set_value(
-      Key
+    kz_json:set_value(Key
                      ,kz_json:from_list([{<<"key">>, FeatureKey}])
                      ,JObj
-     ).
+                     ).
 
 -spec settings_time(kz_json:object()) -> kz_json:object().
 settings_time(JObj) ->
-    Props = props:filter_undefined(
-              [{<<"timezone">>, kz_json:get_value(<<"timezone">>, JObj)}]
-             ),
-    kz_json:from_list(Props).
+    kz_json:from_list(
+      [{<<"timezone">>, kz_json:get_value(<<"timezone">>, JObj)}
+      ]).
 
 -spec settings_codecs(kz_json:object()) -> kz_json:object().
 settings_codecs(JObj) ->
     case props:filter_empty(
-           [{<<"audio">>, settings_audio(JObj)}]
-          )
+           [{<<"audio">>, settings_audio(JObj)}
+           ])
     of
         [] -> kz_json:new();
         Props ->
@@ -457,7 +486,6 @@ settings_audio([Codec|Codecs], [Key|Keys], JObj) ->
 %% @end
 %%--------------------------------------------------------------------
 -spec send_req(atom(), api_object(), ne_binary(), ne_binary(), api_binary()) -> 'ok'.
-
 send_req('devices_post', JObj, AuthToken, AccountId, MACAddress) ->
     Data = kz_json:encode(device_payload(JObj)),
     Headers = req_headers(AuthToken),
@@ -489,7 +517,7 @@ send_req('accounts_update', JObj, AuthToken, AccountId, _) ->
 req_uri('accounts', AccountId) ->
     provisioning_uri([<<"accounts">>, AccountId]);
 req_uri('devices', MacAddress) ->
-    provisioning_uri([<<"devices">>, MacAddress]).
+    provisioning_uri([<<"devices">>, <<"search">>, MacAddress]).
 
 -spec req_uri('devices', ne_binary(), ne_binary()) -> iolist().
 req_uri('devices', AccountId, MACAddress) ->
@@ -510,8 +538,7 @@ account_payload(JObj, AccountId) ->
       ,{<<"reseller_id">>, ResellerId}
       ,{<<"merge">>, 'true'}
       ,{<<"data">>, JObj}
-      ]
-     ).
+      ]).
 
 -spec device_payload(kz_json:object()) -> kz_json:object().
 device_payload(JObj) ->
@@ -520,17 +547,15 @@ device_payload(JObj) ->
       ,{<<"generate">>, 'true'}
       ,{<<"merge">>, 'true'}
       ,{<<"data">>, JObj}
-      ]
-     ).
+      ]).
 
 -spec handle_resp(kz_http:ret(), ne_binary(), ne_binary()) -> 'ok'.
-handle_resp({'ok', 200, _, Resp}, _AccountId, _AuthToken) ->
-    lager:debug("provisioning success ~s", [decode(Resp)]);
+handle_resp({'ok', 200, _, Resp}, _, _) ->
+    lager:debug("provisioning success ~s", [Resp]);
 handle_resp({'ok', Code, _, Resp}, AccountId, AuthToken) ->
-    JObj = decode(Resp),
-    _ = create_alert(JObj, AccountId, AuthToken),
-    lager:warning("provisioning error ~p. ~s", [Code, JObj]);
-handle_resp(_Error, _AccountId, _AuthToken) ->
+    lager:warning("provisioning error ~p. ~s", [Code, Resp]),
+    create_alert(kz_json:decode(Resp), AccountId, AuthToken);
+handle_resp(_Error, _, _) ->
     lager:error("provisioning fatal error ~p", [_Error]).
 
 create_alert(JObj, AccountId, AuthToken) ->
@@ -541,8 +566,7 @@ create_alert(JObj, AccountId, AuthToken) ->
     OwnerId =
         case kz_datamgr:open_cache_doc(?KZ_TOKEN_DB, AuthToken) of
             {'error', _R} -> 'undefined';
-            {'ok', AuthJObj} ->
-                kz_json:get_value(<<"owner_id">>, AuthJObj)
+            {'ok', AuthJObj} -> kz_json:get_value(<<"owner_id">>, AuthJObj)
         end,
 
     From = [kz_json:from_list([{<<"type">>, <<"account">>}
@@ -561,85 +585,27 @@ create_alert(JObj, AccountId, AuthToken) ->
                             ])
          ],
 
-    {'ok', AlertJObj} =
-        kapps_alert:create(<<"Provisioning Error">>
-                          ,<<"Error trying to provision device">>
-                          ,From
-                          ,To
-                          ,Props
-                          ),
-    kapps_alert:save(AlertJObj).
-
--spec decode(string()) -> kz_json:object().
-decode(JSON) ->
-    try kz_json:encode(JSON) of
-        JObj -> kz_json:decode(JObj)
-    catch
-        'error':_R ->
-            io:format("~p~n", [_R]),
-            JSON
-    end.
+    Title = <<"Provisioning Error">>,
+    Msg = <<"Error trying to provision device">>,
+    {'ok', AlertJObj} = kapps_alert:create(Title, Msg, From, To, Props),
+    {ok, _} = kapps_alert:save(AlertJObj),
+    ok.
 
 -spec req_headers(ne_binary()) -> kz_proplist().
 req_headers(Token) ->
     props:filter_undefined(
       [{"Content-Type", "application/json"}
-      ,{"X-Auth-Token", kz_util:to_list(Token)}
+      ,{"X-Auth-Token", kz_term:to_list(Token)}
       ,{"X-Kazoo-Cluster-ID", get_cluster_id()}
-      ,{"User-Agent", kz_util:to_list(erlang:node())}
+      ,{"User-Agent", kz_term:to_list(erlang:node())}
       ]).
 
--spec get_cluster_id() -> string().
+-spec get_cluster_id() -> nonempty_string().
 get_cluster_id() ->
     case kapps_config:get_string(?MOD_CONFIG_CAT, <<"cluster_id">>) of
         'undefined' ->
-            ClusterId = kz_util:rand_hex_binary(16),
+            ClusterId = kz_binary:rand_hex(16),
             {'ok', _JObj} = kapps_config:set_default(?MOD_CONFIG_CAT, <<"cluster_id">>, ClusterId),
-            kz_util:to_list(ClusterId);
+            kz_term:to_list(ClusterId);
         ClusterId -> ClusterId
     end.
-
-%%--------------------------------------------------------------------
-%% @private
-%% @doc
-%%
-%% @end
-%%--------------------------------------------------------------------
--spec check_request(kz_json:object()) ->
-                           {'ok', kz_json:object()} |
-                           jesse_error:error().
-check_request(Data) ->
-    case get_schema() of
-        'undefined' ->
-            lager:warning("skiping validation, missing schema"),
-            {'ok', Data};
-        Schema ->
-            case
-                jesse:validate_with_schema(Schema
-                                          ,Data
-                                          ,[{'allowed_errors', 'infinity'}
-                                           ,{'schema_loader_fun', fun kz_json_schema:load/1}
-                                           ]
-                                          )
-            of
-                {'error', _}=Error -> Error;
-                {'ok', JObj} ->
-                    {'ok', kz_json_schema:add_defaults(JObj, Schema)}
-            end
-    end.
-
--spec get_schema() -> api_object().
-get_schema() ->
-    case kz_json_schema:load(?SCHEMA) of
-        {'ok', SchemaJObj} -> SchemaJObj;
-        {'error', _E} ->
-            lager:error("failed to find schema ~s: ~p", [?SCHEMA, _E]),
-            'undefined'
-    end.
-
--spec handle_validation_error([jesse_error:error_reason()], api_binary()) -> 'ok'.
-handle_validation_error([], AccountId) ->
-    lager:error("not sending data to provisioner, data failed to validate in ~s", [AccountId]);
-handle_validation_error([{'data_invalid', _, _Reason, _Key, _Value}|Errors], AccountId) ->
-    lager:error("failed to validate device: ~p ~p ~p", [_Reason, _Key, _Value]),
-    handle_validation_error(Errors, AccountId).

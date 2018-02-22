@@ -1,23 +1,24 @@
-### Token_restrictions
+### Token Restrictions
 
-#### About Token_restrictions
+#### About Token Restrictions
 
 #### Schema
 
 Schema for token restrictions
 
+
+
 Key | Description | Type | Default | Required
 --- | ----------- | ---- | ------- | --------
-`restrictions` |   | `object` |   | `false`
-`restrictions./^\w+$/` | Name of athentication metod used when creating token. "_" for match any auth method | `object` |   | `true`
-`restrictions./^\w+$/./^\w+$/` | User privelege level. "_" for match any priv level | `object` |   | `true`
-`restrictions./^\w+$/./^\w+$/./^\w+$/` |   | `array(object)` |   | `true`
-`restrictions./^\w+$/./^\w+$/./^\w+$/.[].allowed_accounts` | Account allowed to match this item | `array(string)` |   | `false`
-`restrictions./^\w+$/./^\w+$/./^\w+$/.[].allowed_accounts.[]` |   | `string` |   | `false`
-`restrictions./^\w+$/./^\w+$/./^\w+$/.[].rules` | Rules applied to endpoint parameters | `object` |   | `false`
-`restrictions./^\w+$/./^\w+$/./^\w+$/.[].rules./^[\w/#*]+$/` | verbs | `array(string('GET', 'PUT', 'POST', 'PATCH', 'DELETE', '_'))` |   | `false`
-`restrictions./^\w+$/./^\w+$/./^\w+$/.[].rules./^[\w/#*]+$/.[]` |   | `string` |   | `false`
-
+`restrictions./^\w+$/./^\w+$/./^\w+$/.[].allowed_accounts.[]` |   | `string()` |   | `false`
+`restrictions./^\w+$/./^\w+$/./^\w+$/.[].allowed_accounts` | Account allowed to match this item | `array(string())` |   | `false`
+`restrictions./^\w+$/./^\w+$/./^\w+$/.[].rules./^[\w/#*]+$/.[]` |   | `string()` |   | `false`
+`restrictions./^\w+$/./^\w+$/./^\w+$/.[].rules./^[\w/#*]+$/` | verbs | `array(string('GET' | 'PUT' | 'POST' | 'PATCH' | 'DELETE' | '_'))` |   | `false`
+`restrictions./^\w+$/./^\w+$/./^\w+$/.[].rules` | Rules applied to endpoint parameters | `object()` |   | `false`
+`restrictions./^\w+$/./^\w+$/./^\w+$/` |   | `array(object())` |   | `false`
+`restrictions./^\w+$/./^\w+$/` | Level of user privilege. '_' matches any priv level | `object()` |   | `false`
+`restrictions./^\w+$/` | Name of authentication method used when creating token. '_' matches any auth method | `object()` |   | `false`
+`restrictions` |   | `object()` |   | `false`
 
 
 

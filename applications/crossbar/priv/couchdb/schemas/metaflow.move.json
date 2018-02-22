@@ -3,33 +3,23 @@
     "_id": "metaflow.move",
     "description": "move metaflow schema",
     "properties": {
-        "children": {
-            "$ref": "metaflow_children"
+        "auto_answer": {
+            "default": false,
+            "type": "boolean"
         },
-        "data": {
-            "properties": {
-                "auto_answer": {
-                    "default": false,
-                    "type": "boolean"
-                },
-                "device_id": {
-                    "type": "string"
-                },
-                "owner_id": {
-                    "type": "string"
-                }
-            },
-            "type": "object"
+        "device_id": {
+            "type": "string"
         },
-        "module": {
+        "dial_strategy": {
             "enum": [
-                "move"
-            ]
+                "single",
+                "simultaneous"
+            ],
+            "type": "string"
+        },
+        "owner_id": {
+            "type": "string"
         }
     },
-    "required": [
-        "module",
-        "data"
-    ],
     "type": "object"
 }

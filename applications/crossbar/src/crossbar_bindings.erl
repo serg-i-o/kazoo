@@ -22,7 +22,7 @@
 
 %% API
 -export([bind/3
-        ,map/2
+        ,map/2, pmap/2
         ,fold/2
         ,flush/0, flush/1, flush_mod/1
         ,modules_loaded/0
@@ -70,6 +70,11 @@
 map(Routing, Payload) ->
     lager:debug("mapping ~s", [Routing]),
     kazoo_bindings:map(Routing, Payload).
+
+-spec pmap(ne_binary(), payload()) -> map_results().
+pmap(Routing, Payload) ->
+    lager:debug("pmapping ~s", [Routing]),
+    kazoo_bindings:pmap(Routing, Payload).
 
 %%--------------------------------------------------------------------
 %% @public
@@ -138,7 +143,7 @@ filter_out_failed({'halt', _}) -> 'true';
 filter_out_failed({'false', _}) -> 'false';
 filter_out_failed('false') -> 'false';
 filter_out_failed({'EXIT', _}) -> 'false';
-filter_out_failed(Term) -> not kz_util:is_empty(Term).
+filter_out_failed(Term) -> not kz_term:is_empty(Term).
 
 %%--------------------------------------------------------------------
 %% @private
@@ -152,7 +157,7 @@ filter_out_succeeded({'halt', _}) -> 'true';
 filter_out_succeeded({'false', _}) -> 'true';
 filter_out_succeeded('false') -> 'true';
 filter_out_succeeded({'EXIT', _}) -> 'true';
-filter_out_succeeded(Term) -> kz_util:is_empty(Term).
+filter_out_succeeded(Term) -> kz_term:is_empty(Term).
 
 -type bind_result() :: 'ok' |
                        {'error', 'exists'}.
@@ -184,11 +189,12 @@ is_cb_module(<<"cb_", _/binary>>) -> 'true';
 is_cb_module(<<"crossbar_", _/binary>>) -> 'true';
 is_cb_module(<<_/binary>>) -> 'false';
 is_cb_module(Mod) ->
-    is_cb_module(kz_util:to_binary(Mod)).
+    is_cb_module(kz_term:to_binary(Mod)).
 
 -spec start_link() -> 'ignore'.
 start_link() ->
     _ = init(),
+    garbage_collect(self()),
     'ignore'.
 
 -spec init() -> 'ok'.

@@ -1,10 +1,12 @@
 machine:
   environment:
-    OTP_VERSION: 18.2
+    OTP_VERSION: 19.3
     PATH: ${HOME}/.kerl/$OTP_VERSION/bin:${PATH}
     CHANGED: 'git --no-pager diff --name-only HEAD origin/master -- applications core'
+    CHANGED_SWAGGER: 'git --no-pager diff --name-only HEAD origin/master -- applications/crossbar/priv/api/swagger.json'
   services:
     - rabbitmq-server
+    - docker
 #    - couchdb-server
 
 general:
@@ -20,7 +22,7 @@ dependencies:
       - bash ./scripts/circleci-build-erlang.sh:
           timeout: 1800
       - pip install --upgrade pip
-      - pip install PyYAML
+      - pip install PyYAML mkdocs pyembed-markdown jsonschema
 
 test:
   pre:
@@ -37,12 +39,19 @@ test:
     - ./scripts/validate-js.sh $($CHANGED)
     - . ~/.kerl/$OTP_VERSION/activate && make apis
     - make docs
-    - make validate-swagger
+    - make validate-schemas
+    - |
+      if [[ ! -z "$($CHANGED_SWAGGER)" ]]; then
+        make validate-swagger
+        npm install swagger-tools && time ./node_modules/swagger-tools/bin/swagger-tools validate applications/crossbar/priv/api/swagger.json
+        make sdks
+      fi
     - |
       if [[ 0 -ne `git status --porcelain | wc -l` ]]; then
         echo Unstaged changes!
         git status --porcelain
         git --no-pager diff
+        echo 'Maybe try `make apis` and see if that fixes anything ;)'
         exit 1
       fi
     - . ~/.kerl/$OTP_VERSION/activate && make xref
@@ -56,3 +65,6 @@ test:
     - . ~/.kerl/$OTP_VERSION/activate && make elvis
     - . ~/.kerl/$OTP_VERSION/activate && make build-ci-release
     - . ~/.kerl/$OTP_VERSION/activate && ./scripts/check-release-startup.sh
+  post:
+    - mkdir $CIRCLE_ARTIFACTS/logs
+    - mv ./_rel/kazoo/log/* $CIRCLE_ARTIFACTS/logs/

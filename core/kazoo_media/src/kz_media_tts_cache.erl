@@ -30,14 +30,11 @@
 
 -define(SERVER, ?MODULE).
 
--define(MOD_CONFIG_CAT, <<"speech">>).
+-define(TIMEOUT_LIFETIME, kazoo_tts:cache_time_ms()).
 
--define(TIMEOUT_LIFETIME
-       ,kapps_config:get_integer(?CONFIG_CAT, <<"tts_cache">>, ?MILLISECONDS_IN_HOUR)
-       ).
 -define(TIMEOUT_MESSAGE, {'$kz_media_tts_cache', 'tts_timeout'}).
 
--record(state, {text :: ne_binary()
+-record(state, {text :: api_ne_binary()
                ,contents = <<>> :: binary()
                ,status :: 'streaming' | 'ready'
                ,kz_http_req_id :: kz_http:req_id()
@@ -56,8 +53,8 @@
 %% @doc Starts the server
 %%--------------------------------------------------------------------
 -spec start_link(ne_binary(), kz_json:object()) -> startlink_ret().
-start_link(Text, JObj) ->
-    gen_server:start_link(?SERVER, [Text, JObj], []).
+start_link(Id, JObj) ->
+    gen_server:start_link(?SERVER, [Id, JObj], []).
 
 -spec single(pid()) -> {kz_json:object(), ne_binary()}.
 single(Srv) -> gen_server:call(Srv, 'single').
@@ -85,23 +82,23 @@ stop(Srv) ->
 %% @end
 %%--------------------------------------------------------------------
 -spec init(list()) -> {'ok', state()}.
-init([Text, JObj]) ->
-    kz_util:put_callid(kz_util:binary_md5(Text)),
+init([Id, JObj]) ->
+    kz_util:put_callid(Id),
 
-    Voice = list_to_binary([kz_json:get_value(<<"Voice">>, JObj, <<"female">>), "/"
-                           ,get_language(kz_json:get_value(<<"Language">>, JObj, <<"en-us">>))
+    Voice = list_to_binary([kz_json:get_value(<<"Voice">>, JObj, kazoo_tts:default_voice()), "/"
+                           ,get_language(kz_json:get_value(<<"Language">>, JObj, kazoo_tts:default_language()))
                            ]),
 
+    Text = kz_json:get_value(<<"Text">>, JObj),
     Format = kz_json:get_value(<<"Format">>, JObj, <<"wav">>),
     Engine = kz_json:get_value(<<"Engine">>, JObj),
 
-    {'ok', ReqID} = kapps_speech:create(Engine, Text, Voice, Format, [{'receiver', self()}]),
+    {'ok', ReqID} = kazoo_tts:create(Engine, Text, Voice, Format, [{'receiver', self()}]),
 
-    MediaName = kz_util:binary_md5(Text),
-    lager:debug("text '~s' has id '~s'", [Text, MediaName]),
+    lager:debug("text '~s' has id '~s'", [Text, Id]),
 
     Meta = kz_json:from_list([{<<"content_type">>, kz_mime:from_extension(Format)}
-                             ,{<<"media_name">>, MediaName}
+                             ,{<<"media_name">>, Id}
                              ]),
 
     {'ok', #state{kz_http_req_id = ReqID
@@ -110,7 +107,7 @@ init([Text, JObj]) ->
                  ,contents = <<>>
                  ,reqs = []
                  ,timer_ref = start_timer()
-                 ,id = MediaName
+                 ,id = Id
                  }}.
 
 -spec get_language(ne_binary()) -> ne_binary().
@@ -293,17 +290,16 @@ code_change(_OldVsn, State, _Extra) ->
 %%%===================================================================
 -spec kv_to_bin(kz_proplist()) -> kz_proplist().
 kv_to_bin(L) ->
-    [{kz_util:to_binary(K), kz_util:to_binary(V)} || {K,V} <- L].
+    [{kz_term:to_binary(K), kz_term:to_binary(V)} || {K,V} <- L].
 
 -spec start_timer() -> reference().
 start_timer() ->
     erlang:start_timer(?TIMEOUT_LIFETIME, self(), ?TIMEOUT_MESSAGE).
 
--spec stop_timer(reference() | _) -> 'ok'.
+-spec stop_timer(reference()) -> 'ok'.
 stop_timer(Ref) when is_reference(Ref) ->
     _ = erlang:cancel_timer(Ref),
-    'ok';
-stop_timer(_) -> 'ok'.
+    'ok'.
 
 -spec publish_doc_update(ne_binary()) -> 'ok'.
 publish_doc_update(Id) ->

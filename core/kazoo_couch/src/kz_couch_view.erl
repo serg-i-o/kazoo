@@ -12,7 +12,7 @@
 %% View-related
 -export([design_compact/3
         ,design_info/3
-        ,all_design_docs/3
+        ,all_design_docs/2, all_design_docs/3
         ,get_results/4
         ,get_results_count/4
         ,all_docs/1, all_docs/2, all_docs/3
@@ -27,7 +27,7 @@
 design_compact(#server{}=Conn, DbName, Design) ->
     case couchbeam:compact(kz_couch_util:get_db(Conn, DbName), Design) of
         {'error', _E} ->
-            lager:debug("failed to compact design doc: ~p", [kz_couch_util:format_error(_E)]),
+            lager:debug("failed to compact design doc ~s/~s: ~p", [DbName, Design, kz_couch_util:format_error(_E)]),
             'false';
         'ok' -> 'true'
     end.
@@ -39,15 +39,21 @@ design_info(#server{}=Conn, DBName, Design) ->
     Db = kz_couch_util:get_db(Conn, DBName),
     do_get_design_info(Db, Design).
 
+-spec all_design_docs(kz_data:connection(), ne_binary()) ->
+                             {'ok', kz_json:objects()} |
+                             couchbeam_error().
 -spec all_design_docs(kz_data:connection(), ne_binary(), view_options()) ->
                              {'ok', kz_json:objects()} |
                              couchbeam_error().
+all_design_docs(#server{}=Conn, DBName) ->
+    all_design_docs(#server{}=Conn, DBName, []).
 all_design_docs(#server{}=Conn, DBName, Options) ->
     Db = kz_couch_util:get_db(Conn, DBName),
-    Filter = [{'startkey', <<"_design/">>}
-             ,{'endkey', <<"_design0">>}
-              | Options
-             ],
+    Filter = props:set_values([{'startkey', <<"_design/">>}
+                              ,{'endkey', <<"_design0">>}
+                              ]
+                             ,Options
+                             ),
     do_fetch_results(Db, 'all_docs', Filter).
 
 -spec all_docs(db()) -> {'ok', kz_json:objects()} | couchbeam_error().
@@ -89,7 +95,7 @@ get_results_count(#server{}=Conn, DbName, DesignDoc, ViewOptions) ->
                               couchbeam_error().
 do_fetch_results(Db, DesignDoc, Options)
   when is_binary(DesignDoc) ->
-    [DesignName, ViewName | _] = binary:split(DesignDoc, <<"/">>, ['global']),
+    [DesignName, ViewName|_] = binary:split(DesignDoc, <<"/">>, ['global']),
     do_fetch_results(Db, {DesignName, ViewName}, map_options(Options));
 do_fetch_results(Db, DesignDoc, Options) ->
     ?RETRY_504(
@@ -107,10 +113,10 @@ do_fetch_results(Db, DesignDoc, Options) ->
 map_options(Options) ->
     [map_view_option(O) || O <- Options].
 
--spec map_view_option(term()) -> term().
+-spec map_view_option(any()) -> any().
 map_view_option({K, V})
   when is_binary(K) ->
-    {kz_util:to_atom(K, 'true'), V};
+    {kz_term:to_atom(K, 'true'), V};
 map_view_option(KV) -> KV.
 
 -spec do_fetch_results_count(couchbeam_db(), ddoc(), view_options()) ->

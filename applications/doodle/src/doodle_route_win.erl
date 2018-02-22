@@ -35,7 +35,7 @@ execute_text_flow(JObj, Call) ->
             doodle_util:save_sms(doodle_util:set_flow_error(<<"error">>, ?RESTRICTED_MSG, Call)),
             'ok';
         'false' ->
-            maybe_scheduled_delivery(JObj, Call, ?SCHEDULED(Call) , kz_util:current_tstamp())
+            maybe_scheduled_delivery(JObj, Call, ?SCHEDULED(Call) , kz_time:current_tstamp())
     end.
 
 -spec maybe_scheduled_delivery(kz_json:object(), kapps_call:call(), integer(), integer()) ->
@@ -67,7 +67,7 @@ should_restrict_call(Call) ->
 -spec maybe_service_unavailable(kz_json:object(), kapps_call:call()) -> boolean().
 maybe_service_unavailable(JObj, Call) ->
     Id = kz_doc:id(JObj),
-    Services = kz_json:merge_recursive(
+    Services = kz_json:merge(
                  kz_json:get_value(<<"services">>, JObj, ?DEFAULT_SERVICES),
                  kz_json:get_value(<<"pvt_services">>, JObj, kz_json:new())),
     case kz_json:is_true([<<"sms">>,<<"enabled">>], Services, 'true') of
@@ -82,7 +82,7 @@ maybe_service_unavailable(JObj, Call) ->
 maybe_account_service_unavailable(JObj, Call) ->
     AccountId = kapps_call:account_id(Call),
     {'ok', Doc} = kz_account:fetch(AccountId),
-    Services = kz_json:merge_recursive(
+    Services = kz_json:merge(
                  kz_json:get_value(<<"services">>, Doc, ?DEFAULT_SERVICES),
                  kz_json:get_value(<<"pvt_services">>, Doc, kz_json:new())),
     case kz_json:is_true([<<"sms">>,<<"enabled">>], Services, 'true') of
@@ -271,7 +271,7 @@ send_service_unavailable(_JObj, Call) ->
 set_service_unavailable_message(Call) ->
     {'ok', Endpoint} = kz_endpoint:get(Call),
     Language = kz_json:get_value(<<"language">>, Endpoint, ?DEFAULT_LANGUAGE),
-    TextNode = kapps_config:get(?CONFIG_CAT, <<"unavailable_message">>, ?DEFAULT_UNAVAILABLE_MESSAGE_NODE),
+    TextNode = kapps_config:get_json(?CONFIG_CAT, <<"unavailable_message">>, ?DEFAULT_UNAVAILABLE_MESSAGE_NODE),
     Text = kz_json:get_value(Language, TextNode, ?DEFAULT_UNAVAILABLE_MESSAGE),
     kapps_call:kvs_store(<<"Body">>, Text, Call).
 

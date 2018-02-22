@@ -40,8 +40,9 @@ endif
 ERLC_OPTS += -Iinclude -Isrc -I../ +'{parse_transform, lager_transform}'
 ## Use pedantic flags when compiling apps from applications/ & core/
 ERLC_OPTS += -Werror +warn_export_all +warn_unused_import +warn_unused_vars +warn_missing_spec
+#ERLC_OPTS += +warn_untyped_record
 
-ELIBS = $(ERL_LIBS):$(ROOT)/deps:$(ROOT)/core
+ELIBS = $(ERL_LIBS):$(ROOT)/deps:$(ROOT)/core:$(ROOT)/applications
 
 EBINS += $(ROOT)/core/kazoo/ebin \
 	$(ROOT)/deps/lager/ebin
@@ -63,19 +64,20 @@ ebin/$(PROJECT).app: $(SOURCES)
 	@sed "s/{modules, \[\]}/{modules, \[`echo ebin/*.beam | sed 's%\.beam ebin/%, %g;s%ebin/%%;s/\.beam//'`\]}/" src/$(PROJECT).app.src > $@
 
 
-json: JSON = $(if $(wildcard priv/), $(shell find priv/ -name '*.json'))
+json: JSON = $(shell find . -name '*.json')
 json:
 	@$(ROOT)/scripts/format-json.sh $(JSON)
 
 
-compile-test: clean-test $(COMPILE_MOAR) test/$(PROJECT).app
+compile-test: clean-test $(COMPILE_MOAR) test/$(PROJECT).app json
 
 test/$(PROJECT).app: ERLC_OPTS += -DTEST
 test/$(PROJECT).app: $(TEST_SOURCES)
 	@mkdir -p test/
 	@mkdir -p ebin/
-	ERL_LIBS=$(ELIBS) erlc -v +nowarn_missing_spec $(ERLC_OPTS) $(TEST_PA) -o ebin/ $(TEST_SOURCES)
+	ERL_LIBS=$(ELIBS) erlc -v +nowarn_missing_spec $(ERLC_OPTS) $(TEST_PA) -o ebin/ $?
 	@sed "s/{modules, \[\]}/{modules, \[`echo ebin/*.beam | sed 's%\.beam ebin/%, %g;s%ebin/%%;s/\.beam//'`\]}/" src/$(PROJECT).app.src > $@
+	@sed "s/{modules, \[\]}/{modules, \[`echo ebin/*.beam | sed 's%\.beam ebin/%, %g;s%ebin/%%;s/\.beam//'`\]}/" src/$(PROJECT).app.src > ebin/$(PROJECT).app
 
 
 clean: clean-test
@@ -88,13 +90,31 @@ clean-test: $(CLEAN_MOAR)
 ## Use this one when debugging
 test: compile-test
 	ERL_LIBS=$(ELIBS) erl -noshell $(TEST_PA) -eval "case eunit:test([`echo ebin/*.beam | sed 's%\.beam ebin/%, %g;s%ebin/%%;s/\.beam//'`], [verbose]) of ok -> init:stop(); _ -> init:stop(1) end."
+test.%: compile-test
+	ERL_LIBS=$(ELIBS) erl -noshell $(TEST_PA) -eval "case eunit:test([$*], [verbose]) of ok -> init:stop(); _ -> init:stop(1) end."
+
+COVERDATA=$(PROJECT).coverdata
+COVER_REPORT_DIR=cover
 
 ## Use this one when CI
-eunit:
-	ERL_LIBS=$(ELIBS) erl -noshell $(TEST_PA) -eval "_ = cover:start(), cover:compile_beam_directory(\"ebin\"), case eunit:test([`echo ebin/*.beam | sed 's%\.beam ebin/%, %g;s%ebin/%%;s/\.beam//'`], [verbose]) of ok -> cover:export(\"$(PROJECT).coverdata\"), init:stop(); _ -> init:stop(1) end."
+eunit: compile-test
+	@mkdir -p $(COVER_REPORT_DIR)
+	ERL_LIBS=$(ELIBS) erl -noshell $(TEST_PA) -eval "_ = cover:start(), cover:compile_beam_directory(\"ebin\"), case eunit:test([`echo ebin/*.beam | sed 's%\.beam ebin/%, %g;s%ebin/%%;s/\.beam//'`], [verbose]) of ok -> cover:export(\"$(COVERDATA)\"), cover:analyse_to_file([html, {outdir, \"$(COVER_REPORT_DIR)\"}]), init:stop(); _ -> init:stop(1) end."
+
+cover: $(ROOT)/make/cover.mk
+	COVER=1 $(MAKE) eunit
+
+cover-report: $(ROOT)/make/core.mk $(ROOT)/make/cover.mk eunit
+	COVER=1 CT_RUN=1 $(MAKE) -f $(ROOT)/make/core.mk -f $(ROOT)/make/cover.mk cover-report
+
+$(ROOT)/make/cover.mk: $(ROOT)/make/core.mk
+	wget 'https://raw.githubusercontent.com/ninenines/erlang.mk/master/plugins/cover.mk' -O $(ROOT)/make/cover.mk
+
+$(ROOT)/make/core.mk:
+	wget 'https://raw.githubusercontent.com/ninenines/erlang.mk/master/core/core.mk' -O $(ROOT)/make/core.mk
 
 proper: ERLC_OPTS += -DPROPER
-proper: compile-test test
+proper: compile-test eunit
 
 PLT ?= $(ROOT)/.kazoo.plt
 $(PLT):
@@ -119,3 +139,8 @@ $(FMT):
 fmt: TO_FMT ?= $(shell find src include -iname '*.erl' -or -iname '*.hrl' -or -iname '*.app.src')
 fmt: $(FMT)
 	@$(FMT) $(TO_FMT)
+
+perf: ERLC_OPTS += -pa $(ROOT)/deps/horse/ebin -DPERF +'{parse_transform, horse_autoexport}'
+perf: compile-test
+	$(gen_verbose) @ERL_LIBS=$(ELIBS) erl -noshell  -pa $(ROOT)/deps/horse/ebin -pa $(TEST_PA) \
+		-eval 'horse:app_perf($(PROJECT)), init:stop().'

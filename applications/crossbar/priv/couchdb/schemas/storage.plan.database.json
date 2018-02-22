@@ -2,7 +2,15 @@
     "$schema": "http://json-schema.org/draft-04/schema#",
     "_id": "storage.plan.database",
     "additionalProperties": false,
-    "definitions": {
+    "description": "schema for database storage plan",
+    "properties": {
+        "attachments": {
+            "$ref": "storage.plan.database.attachment"
+        },
+        "connection": {
+            "kazoo-validation": true,
+            "type": "string"
+        },
         "database": {
             "properties": {
                 "create_options": {
@@ -10,18 +18,6 @@
                 }
             },
             "type": "object"
-        }
-    },
-    "description": "schema for database storage plan",
-    "properties": {
-        "attachments": {
-            "$ref": "storage.plan.database.attachment"
-        },
-        "connection": {
-            "type": "string"
-        },
-        "database": {
-            "$ref": "#/definitions/database"
         },
         "types": {
             "additionalProperties": false,

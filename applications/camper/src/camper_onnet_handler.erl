@@ -116,7 +116,7 @@ handle_cast({'add_request', JObj}, GlobalState) ->
     Targets = kz_json:get_value(<<"Targets">>, JObj, []),
     Timeout = timer:minutes(kz_json:get_value(<<"Timeout">>
                                              ,JObj
-                                             ,kapps_config:get(?APP_NAME, ?TIMEOUT, ?DEFAULT_TIMEOUT)
+                                             ,kapps_config:get_integer(?APP_NAME, ?TIMEOUT, ?DEFAULT_TIMEOUT)
                                              )),
     kz_hooks:register(AccountId, <<"CHANNEL_DESTROY">>),
     NewGlobal = with_state(AccountId
@@ -174,7 +174,7 @@ maybe_handle_request(SIPName, Q, Local) ->
             Local
     end.
 
--spec handle_request(ne_binary(), ne_binary(), state()) -> state().
+-spec handle_request(ne_binary(), {ne_binary(), ne_binary()}, state()) -> state().
 handle_request(SIPName, Requestor, Local) ->
     Reqs = get_requests(Local),
     case dict:find({SIPName, Requestor}, Reqs) of
@@ -182,9 +182,9 @@ handle_request(SIPName, Requestor, Local) ->
             {_, Now, _} = os:timestamp(),
             case Now > Timeout of
                 'true' ->
-                    lager:debug("Request(~s->~s) expired", [Requestor, Exten]);
+                    lager:debug("Request (~p -> ~p) expired", [Requestor, Exten]);
                 'false' ->
-                    lager:debug("Originating call(~s->~s)", [Requestor, Exten]),
+                    lager:debug("Originating call (~p -> ~p)", [Requestor, Exten]),
                     originate_call(Requestor, Exten, get_account_db(Local))
             end,
             lager:debug("Clearing request"),
@@ -217,7 +217,7 @@ originate_quickcall(Endpoints, Exten, Call) ->
            ,{<<"Authorizing-Type">>, kapps_call:authorizing_type(Call)}
            ,{<<"Authorizing-ID">>, kapps_call:authorizing_id(Call)}
            ],
-    MsgId = kz_util:rand_hex_binary(16),
+    MsgId = kz_binary:rand_hex(16),
 
     Request = [{<<"Application-Name">>, <<"transfer">>}
               ,{<<"Application-Data">>, kz_json:from_list([{<<"Route">>, Exten}])}
@@ -236,7 +236,8 @@ originate_quickcall(Endpoints, Exten, Call) ->
     lager:debug("Originate request published").
 
 -spec get_endpoints(kapps_call:call(), ne_binary(), ne_binary()) -> kz_json:objects().
-get_endpoints(Call, EndpointId, <<"device">>) ->
+get_endpoints(Call, EndpointId, Type) when Type =:= <<"device">>;
+                                           Type =:= <<"mobile">> ->
     Properties = kz_json:from_list([{<<"can_call_self">>, 'true'}
                                    ,{<<"suppress_clid">>, 'true'}
                                    ]),

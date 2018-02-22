@@ -47,7 +47,7 @@
 -include("kz_caches.hrl").
 
 -define(SERVER, ?MODULE).
--define(EXPIRES, ?SECONDS_IN_HOUR). %% an hour
+-define(EXPIRES, ?SECONDS_IN_HOUR).
 -define(EXPIRE_PERIOD, 10 * ?MILLISECONDS_IN_SECOND).
 -define(EXPIRE_PERIOD_MSG, 'expire_cache_objects').
 -define(DEFAULT_WAIT_TIMEOUT, 5).
@@ -65,7 +65,7 @@
 -type store_options() :: [{'origin', origin_tuple() | origin_tuples()} |
                           {'expires', kz_timeout()} |
                           {'callback', 'undefined' | callback_fun()}
-                         ] | [].
+                         ].
 -export_type([store_options/0]).
 
 -record(state, {name :: atom()
@@ -108,7 +108,8 @@ start_link(Name, ExpirePeriod, Props) ->
         BindingProps ->
             lager:debug("started new cache process (gen_listener): ~s", [Name]),
             Bindings = [{'conf', ['federate' | P]} || P <- maybe_add_db_binding(BindingProps)],
-            gen_listener:start_link({'local', Name}, ?MODULE
+            gen_listener:start_link({'local', Name}
+                                   ,?MODULE
                                    ,[{'bindings', Bindings}
                                     ,{'responders', ?RESPONDERS}
                                     ,{'queue_name', ?QUEUE_NAME}
@@ -208,7 +209,7 @@ fetch_local(Srv, K) ->
     case peek_local(Srv, K) of
         {'error', 'not_found'}=E -> E;
         {'ok', _Value}=Ok ->
-            ets:update_element(Srv, K, {#cache_obj.timestamp, kz_util:current_tstamp()}),
+            ets:update_element(Srv, K, {#cache_obj.timestamp, kz_time:current_tstamp()}),
             Ok
     end.
 
@@ -221,7 +222,7 @@ erase_local(Srv, K) ->
 
 -spec flush_local(text() | atom()) -> 'ok'.
 flush_local(Srv) when not is_atom(Srv) ->
-    flush_local(kz_util:to_atom(Srv));
+    flush_local(kz_term:to_atom(Srv));
 flush_local(Srv) ->
     gen_server:cast(Srv, {'flush'}).
 
@@ -267,9 +268,9 @@ dump_local(Srv) -> dump_local(Srv, 'false').
 
 -spec dump_local(text(), text() | boolean()) -> 'ok'.
 dump_local(Srv, ShowValue) when not is_atom(Srv) ->
-    dump_local(kz_util:to_atom(Srv), ShowValue);
+    dump_local(kz_term:to_atom(Srv), ShowValue);
 dump_local(Srv, ShowValue) when not is_boolean(ShowValue) ->
-    dump_local(Srv, kz_util:to_boolean(ShowValue));
+    dump_local(Srv, kz_term:to_boolean(ShowValue));
 dump_local(Srv, ShowValue) ->
     {PointerTab, MonitorTab} = gen_listener:call(Srv, {'tables'}),
 
@@ -280,7 +281,7 @@ dump_local(Srv, ShowValue) ->
 
 -spec dump_table(ets:tab(), boolean()) -> 'ok'.
 dump_table(Tab, ShowValue) ->
-    Now = kz_util:current_tstamp(),
+    Now = kz_time:current_tstamp(),
     io:format("Table ~p~n", [ets:info(Tab, 'name')]),
     _ = [display_cache_obj(CacheObj, ShowValue, Now)
          || CacheObj <- ets:match_object(Tab, #cache_obj{_ = '_'})
@@ -394,7 +395,7 @@ monitor_tab(Tab) ->
 
 -spec to_tab(atom(), string()) -> atom().
 to_tab(Tab, Suffix) ->
-    kz_util:to_atom(kz_util:to_list(Tab) ++ Suffix, 'true').
+    kz_term:to_atom(kz_term:to_list(Tab) ++ Suffix, 'true').
 
 %%--------------------------------------------------------------------
 %% @private
@@ -591,13 +592,13 @@ handle_info(_Info, State) ->
 -spec handle_event(kz_json:object(), state()) -> gen_listener:handle_event_return().
 handle_event(JObj, #state{tab=Tab}=State) ->
     case (V=kapi_conf:doc_update_v(JObj))
-        andalso (kz_api:node(JObj) =/= kz_util:to_binary(node())
+        andalso (kz_api:node(JObj) =/= kz_term:to_binary(node())
                  orelse kz_json:get_atom_value(<<"Origin-Cache">>, JObj) =/= ets:info(Tab, 'name')
                 )
     of
         'true' -> handle_document_change(JObj, State);
         'false' when V -> 'ok';
-        'false' -> lager:error("payload invalid for kapi_conf : ~p", [JObj])
+        'false' -> lager:error("payload invalid for kapi_conf: ~p", [JObj])
     end,
     'ignore'.
 
@@ -656,7 +657,7 @@ get_props_origin(Props) -> props:get_value('origin', Props).
 -spec expire_objects(ets:tab(), [ets:tab()]) -> non_neg_integer().
 -spec expire_objects(ets:tab(), [ets:tab()], list()) -> non_neg_integer().
 expire_objects(Tab, AuxTables) ->
-    Now = kz_util:current_tstamp(),
+    Now = kz_time:current_tstamp(),
     FindSpec = [{#cache_obj{key = '$1'
                            ,value = '$2'
                            ,expires = '$3'
@@ -815,11 +816,8 @@ handle_store(#cache_obj{key=Key
             ) ->
     lager:debug("storing ~p for ~ps", [Key, Expires]),
     'true' = ets:insert(Tab, CacheObj#cache_obj{origin='undefined'}),
-    lager:debug("inserted ~p", [Key]),
     insert_origin_pointers(Origins, CacheObj, PointerTab),
-    lager:debug("inserted origin pointers for ~p", [Key]),
     State1 = maybe_exec_store_callbacks(State, Key, Value),
-    lager:debug("exec store callbacks"),
     maybe_update_expire_period(State1, Expires).
 
 -spec maybe_update_expire_period(state(), integer()) -> state().
@@ -832,7 +830,6 @@ maybe_update_expire_period(#state{expire_period=ExpirePeriod
     NewRef = case erlang:read_timer(Ref) of
                  Left when Left =< Expires -> Ref;
                  _Left ->
-                     lager:debug("cancelling timer with ~p left", [_Left]),
                      _ = erlang:cancel_timer(Ref),
                      start_expire_period_timer(Expires)
              end,

@@ -1,5 +1,5 @@
 %%%-------------------------------------------------------------------
-%%% @copyright (C) 2017, 2600Hz INC
+%%% @copyright (C) 2013-2017, 2600Hz INC
 %%% @doc
 %%%
 %%% @end
@@ -72,7 +72,7 @@ check(Account)
             lager:warning("unable to open account definition for ~s: ~p", [AccountId, _R])
     end;
 check(Account) ->
-    check(kz_util:to_binary(Account)).
+    check(kz_term:to_binary(Account)).
 
 %%%===================================================================
 %%% gen_server callbacks
@@ -131,7 +131,7 @@ handle_info({timeout, Ref, _Msg}, #state{cleanup_ref = Ref
                       ],
                 lager:debug("beginning crawling accounts"),
                 State#state{cleanup_ref = cleanup_timer()
-                           ,account_ids = kz_util:shuffle_list(IDs)
+                           ,account_ids = kz_term:shuffle_list(IDs)
                            };
             {error, _R} ->
                 lager:warning("unable to list all docs in ~s: ~p", [?KZ_ACCOUNTS_DB, _R]),
@@ -278,7 +278,11 @@ handle_initial_registration(AccountId) ->
 notify_initial_registration(AccountJObj) ->
     UpdatedAccountJObj = kz_account:set_initial_registration_sent(AccountJObj, 'true'),
     _ = kz_util:account_update(UpdatedAccountJObj),
-    kz_notify:first_registration(kz_doc:id(AccountJObj)).
+    Req = [{<<"Account-ID">>, kz_doc:id(AccountJObj)}
+          ,{<<"Occurrence">>, <<"registration">>}
+           | kz_api:default_headers(?APP_NAME, ?APP_VERSION)
+          ],
+    kapps_notify_publisher:cast(Req, fun kapi_notifications:publish_first_occurrence/1).
 
 %% First Call
 -spec maybe_test_for_initial_call(ne_binary(), ne_binary(), kz_account:doc()) -> 'ok'.
@@ -313,7 +317,11 @@ handle_initial_call(AccountId) ->
 notify_initial_call(AccountJObj) ->
     UpdatedAccountJObj = kz_account:set_initial_call_sent(AccountJObj, 'true'),
     _ = kz_util:account_update(UpdatedAccountJObj),
-    kz_notify:first_call(kz_doc:id(AccountJObj)).
+    Req = [{<<"Account-ID">>, kz_doc:id(AccountJObj)}
+          ,{<<"Occurrence">>, <<"call">>}
+           | kz_api:default_headers(?APP_NAME, ?APP_VERSION)
+          ],
+    kapps_notify_publisher:cast(Req, fun kapi_notifications:publish_first_occurrence/1).
 
 %%% Low balance check
 
@@ -321,17 +329,24 @@ notify_initial_call(AccountJObj) ->
 maybe_test_for_low_balance(AccountId, AccountJObj) ->
     case ?SHOULD_CRAWL_FOR_LOW_BALANCE of
         'false' -> 'ok';
-        'true' -> test_for_low_balance(AccountId, AccountJObj)
+        'true' -> test_for_low_balance(AccountId, AccountJObj, 3)
     end.
 
--spec test_for_low_balance(ne_binary(), kz_account:doc()) -> 'ok'.
-test_for_low_balance(AccountId, AccountJObj) ->
-    CurrentBalance = wht_util:current_balance(AccountId),
-    mayby_notify_for_low_balance(AccountJObj, CurrentBalance),
-    maybe_topup_account(AccountJObj, CurrentBalance).
+-spec test_for_low_balance(ne_binary(), kz_account:doc(), 0..3) -> 'ok'.
+test_for_low_balance(_AccountId, _AccountJObj, 0) ->
+    lager:debug("max try to get account ~s current balance", [_AccountId]);
+test_for_low_balance(AccountId, AccountJObj, Loop) ->
+    case wht_util:current_balance(AccountId) of
+        {'error', 'timeout'} ->
+            test_for_low_balance(AccountId, AccountJObj, Loop - 1);
+        {'error', _R} -> 'ok';
+        {'ok', CurrentBalance} ->
+            maybe_notify_for_low_balance(AccountJObj, CurrentBalance),
+            maybe_topup_account(AccountJObj, CurrentBalance)
+    end.
 
--spec mayby_notify_for_low_balance(kz_account:doc(), kz_transaction:units()) -> 'ok'.
-mayby_notify_for_low_balance(AccountJObj, CurrentBalance) ->
+-spec maybe_notify_for_low_balance(kz_account:doc(), kz_transaction:units()) -> 'ok'.
+maybe_notify_for_low_balance(AccountJObj, CurrentBalance) ->
     AccountId = kz_account:id(AccountJObj),
     Threshold = kz_account:low_balance_threshold(AccountJObj),
     lager:info("checking if account ~s balance $~w is below notification threshold $~w"
@@ -360,7 +375,7 @@ maybe_topup_account(AccountJObj, CurrentBalance) ->
             lager:error("topup failed for ~s: ~p", [AccountId, _Error])
     end.
 
--spec maybe_reset_low_balance_sent(kz_account:doc()) -> 'ok' | {'error', any()}.
+-spec maybe_reset_low_balance_sent(kz_account:doc()) -> 'ok'.
 maybe_reset_low_balance_sent(AccountJObj) ->
     case kz_account:low_balance_sent(AccountJObj)
         orelse kz_account:low_balance_tstamp(AccountJObj) =/= 'undefined'
@@ -369,7 +384,7 @@ maybe_reset_low_balance_sent(AccountJObj) ->
         'false' -> 'ok'
     end.
 
--spec reset_low_balance_sent(kz_account:doc()) ->  'ok' | {'error', any()}.
+-spec reset_low_balance_sent(kz_account:doc()) ->  'ok'.
 reset_low_balance_sent(AccountJObj0) ->
     lager:debug("resetting low balance sent"),
     AccountJObj1 = kz_account:reset_low_balance_sent(AccountJObj0),
@@ -395,7 +410,7 @@ maybe_low_balance_notify(AccountJObj, CurrentBalance, 'true') ->
     case kz_account:low_balance_tstamp(AccountJObj) of
         LowBalanceSent when is_number(LowBalanceSent) ->
             Cycle = ?LOW_BALANCE_REPEAT,
-            Diff = kz_util:current_tstamp() - LowBalanceSent,
+            Diff = kz_time:current_tstamp() - LowBalanceSent,
             case Diff >= Cycle of
                 'true' -> notify_of_low_balance(AccountJObj, CurrentBalance);
                 'false' ->
@@ -416,7 +431,13 @@ notify_of_low_balance(AccountJObj, CurrentBalance) ->
     AccountId = kz_account:id(AccountJObj),
     lager:debug("sending low balance alert for account ~s with balance ~w"
                ,[AccountId, CurrentBalance]),
-    'ok' = kz_notify:low_balance(AccountId, CurrentBalance),
+
+    Req = [{<<"Account-ID">>, AccountId}
+          ,{<<"Current-Balance">>, CurrentBalance}
+           | kz_api:default_headers(?APP_NAME, ?APP_VERSION)
+          ],
+    kapps_notify_publisher:cast(Req, fun kapi_notifications:publish_low_balance/1),
+
     update_account_low_balance_sent(AccountJObj).
 
 -spec update_account_low_balance_sent(kz_account:doc()) -> 'ok'.

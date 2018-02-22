@@ -13,8 +13,8 @@
 
 -spec local_message_handling(knm_number_options:extra_options(), kapi_offnet_resource:req()) -> 'ok'.
 local_message_handling(Props, OffnetReq) ->
-    FetchId = kz_util:rand_hex_binary(16),
-    CallId = kz_util:rand_hex_binary(16),
+    FetchId = kz_binary:rand_hex(16),
+    CallId = kz_binary:rand_hex(16),
     ServerID = kapi_offnet_resource:server_id(OffnetReq),
     ReqResp = kz_amqp_worker:call(route_req(CallId, FetchId, Props, OffnetReq)
                                  ,fun kapi_route:publish_req/1
@@ -98,34 +98,31 @@ delivery_from_req(OffnetReq, Status, DeliveryCode, DeliveryFailure) ->
 
 -spec request_caller_id(kapi_offnet_resource:req()) -> {ne_binary(), ne_binary()}.
 request_caller_id(OffnetReq) ->
+    AccountId = kapi_offnet_resource:account_id(OffnetReq),
     {kapi_offnet_resource:outbound_caller_id_number(OffnetReq
-                                                   ,kz_util:anonymous_caller_id_number()
+                                                   ,kz_privacy:anonymous_caller_id_number(AccountId)
                                                    )
     ,kapi_offnet_resource:outbound_caller_id_name(OffnetReq
-                                                 ,kz_util:anonymous_caller_id_name()
+                                                 ,kz_privacy:anonymous_caller_id_name(AccountId)
                                                  )
     }.
 
 -spec route_req(ne_binary(), ne_binary(), knm_number_options:extra_options(), kapi_offnet_resource:req()) -> kz_proplist().
 route_req(CallId, FetchId, Props, OffnetReq) ->
     TargetAccountId = knm_number_options:account_id(Props),
-    TargetAccountRealm = kz_util:get_account_realm(TargetAccountId),
+    TargetAccountRealm = kz_account:fetch_realm(TargetAccountId),
     OffnetReqAccountRealm = kapi_offnet_resource:account_realm(OffnetReq),
     ToDID = kapi_offnet_resource:to_did(OffnetReq),
     To = <<ToDID/binary, "@", TargetAccountRealm/binary>>,
     {FromNumber, FromName} = request_caller_id(OffnetReq),
     From = <<FromNumber/binary, "@", OffnetReqAccountRealm/binary>>,
 
-    CCVs =
-        kz_json:from_list(
-          props:filter_undefined(
-            [{<<"Fetch-ID">>, FetchId}
-            ,{<<"Account-ID">>, TargetAccountId}
-            ,{<<"Account-Realm">>, TargetAccountRealm}
-            ,{<<"Inception">>, From}
-            ]
-           )
-         ),
+    CCVs = kz_json:from_list(
+             [{<<"Fetch-ID">>, FetchId}
+             ,{<<"Account-ID">>, TargetAccountId}
+             ,{<<"Account-Realm">>, TargetAccountRealm}
+             ,{<<"Inception">>, From}
+             ]),
 
     [{<<"Msg-ID">>, FetchId}
     ,{<<"Call-ID">>, CallId}

@@ -122,12 +122,12 @@ get_classifier_regex(JObj) ->
 
 -spec fixture(file:filename()) -> string().
 fixture(Filename) ->
-    Priv = code:priv_dir('kazoo_number_manager'),
-    Fixture = filename:join([Priv, "fixtures", Filename]),
+    Fixture = filename:join([code:priv_dir(?APP), "fixtures", Filename]),
+    ?LOG_DEBUG("loading fixture ~s", [Fixture]),
     read_fixture(file:read_file(Fixture), Fixture).
 
 read_fixture({'ok', Contents}, _F) ->
-    kz_util:to_list(Contents);
+    kz_term:to_list(Contents);
 read_fixture({'error', 'enoent'}, F) ->
     throw({'error', 'missing_fixture', F}).
 
@@ -136,4 +136,4 @@ read_fixture({'error', 'enoent'}, F) ->
 %% when/if we integrate that lib or do it ourselves
 -spec prefix_for_country(country_iso3166a2()) -> ne_binary().
 prefix_for_country(Country) ->
-    knm_iso3166a2_itu:to_itu(kz_util:to_upper_binary(Country)).
+    knm_iso3166a2_itu:to_itu(kz_term:to_upper_binary(Country)).

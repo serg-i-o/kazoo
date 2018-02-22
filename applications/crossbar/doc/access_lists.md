@@ -1,11 +1,11 @@
-### Access_lists
+### Access Lists
 
 SBC-level per-account and per-device access lists allow setting individual IP-based access filtering rules which
 significantly increases security for users working on-premise.
 
 Rules can be applied at account level or at individual device level
 
-#### About Access_lists
+#### About Access Lists
 
 `access_lists` API works at the level of both `accounts` and `devices` documents.
 
@@ -20,17 +20,18 @@ Sections:
 
 Access Control List entries for device or account
 
+
+
 Key | Description | Type | Default | Required
 --- | ----------- | ---- | ------- | --------
-`cidrs` | Classless Inter-Domain Routing IP notation for use on the access lists | `array(string)` |   | `true`
-`cidrs.[]` |   | `string` |   | `true`
-`order` | Allow-Deny or Deny-Allow? | `string('allow,deny', 'deny,allow')` |   | `true`
-`user_agent` | RegExp to match valid user agent strings | `string` |   | `false`
+`cidrs.[]` |   | `string()` |   | `true`
+`cidrs` | Classless Inter-Domain Routing IP notation for use on the access lists | `array(string())` |   | `true`
+`order` | Allow-Deny or Deny-Allow? | `string('allow,deny' | 'deny,allow')` |   | `true`
+`user_agent` | RegExp to match valid user agent strings | `string()` |   | `false`
 
 
 
-
-#### Remove account-level access lists
+#### Fetch
 
 > DELETE /v2/accounts/{ACCOUNT_ID}/access_lists
 

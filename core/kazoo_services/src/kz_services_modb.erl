@@ -11,16 +11,16 @@
         ,modb/1
         ]).
 
--include_lib("kazoo/include/kz_types.hrl").
--include_lib("kazoo/include/kz_databases.hrl").
--include_lib("kazoo/include/kz_log.hrl").
+-include_lib("kazoo_stdlib/include/kz_types.hrl").
+-include_lib("kazoo_stdlib/include/kz_databases.hrl").
+-include_lib("kazoo_stdlib/include/kz_log.hrl").
 -include_lib("kazoo_transactions/include/kazoo_transactions.hrl").
--include_lib("kazoo_services/include/kz_service.hrl").
+-include_lib("kazoo_services/include/kazoo_services.hrl").
 
 -spec start_link() -> startlink_ret().
 start_link() ->
     _Pid = kz_util:spawn(fun kazoo_modb:add_routine/1, [?MODULE]),
-    io:format("started add_rountine in ~p~n", [_Pid]),
+    io:format("started services modb add_rountine in ~p~n", [_Pid]),
     'ignore'.
 
 -spec modb(ne_binary()) -> 'ok'.

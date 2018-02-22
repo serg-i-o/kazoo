@@ -43,10 +43,10 @@ url() ->
     "/payment_methods/".
 
 url(Token) ->
-    "/payment_methods/" ++ kz_util:to_list(Token).
+    "/payment_methods/" ++ kz_term:to_list(Token).
 
 url(Token, _) ->
-    "/payment_methods/credit_card/" ++ kz_util:to_list(Token).
+    "/payment_methods/credit_card/" ++ kz_term:to_list(Token).
 
 %%--------------------------------------------------------------------
 %% @public
@@ -145,7 +145,7 @@ delete(Token) ->
 -spec expired() -> [bt_xml()].
 expired() ->
     Xml = braintree_request:post("/payment_methods/all/expired_ids", <<>>),
-    [kz_util:get_xml_value("/item/text()", Item)
+    [kz_xml:get_value("/item/text()", Item)
      || Item <- xmerl_xpath:string("/search-results/ids/item", Xml)
     ].
 
@@ -162,9 +162,9 @@ expired(#bt_card{expired=Expired}) -> Expired.
 -spec expiring(text(), text()) -> [bt_xml()].
 expiring(Start, End) ->
     Url = lists:append(["/payment_methods/all/expiring?start="
-                       ,kz_util:to_list(Start)
+                       ,kz_term:to_list(Start)
                        ,"&end="
-                       ,kz_util:to_list(End)
+                       ,kz_term:to_list(End)
                        ]),
     Xml = braintree_request:post(Url, <<>>),
     [xml_to_record(Item)
@@ -198,22 +198,22 @@ xml_to_record(Xml) ->
     xml_to_record(Xml, "/credit-card").
 
 xml_to_record(Xml, Base) ->
-    #bt_card{token = kz_util:get_xml_value([Base, "/token/text()"], Xml)
-            ,bin = kz_util:get_xml_value([Base, "/bin/text()"], Xml)
-            ,cardholder_name = kz_util:get_xml_value([Base, "/cardholder-name/text()"], Xml)
-            ,card_type = kz_util:get_xml_value([Base, "/card-type/text()"], Xml)
-            ,created_at = kz_util:get_xml_value([Base, "/created-at/text()"], Xml)
-            ,updated_at = kz_util:get_xml_value([Base, "/updated-at/text()"], Xml)
-            ,default = kz_util:is_true(kz_util:get_xml_value([Base, "/default/text()"], Xml))
-            ,expiration_date = kz_util:get_xml_value([Base, "/expiration-date/text()"], Xml)
-            ,expiration_month = kz_util:get_xml_value([Base, "/expiration-month/text()"], Xml)
-            ,expiration_year = kz_util:get_xml_value([Base, "/expiration-year/text()"], Xml)
-            ,expired = kz_util:is_true(kz_util:get_xml_value([Base, "/expired/text()"], Xml))
-            ,customer_location = kz_util:get_xml_value([Base, "/customer-location/text()"], Xml)
-            ,last_four = kz_util:get_xml_value([Base, "/last-4/text()"], Xml)
-            ,customer_id = kz_util:get_xml_value([Base, "/customer-id/text()"], Xml)
+    #bt_card{token = kz_xml:get_value([Base, "/token/text()"], Xml)
+            ,bin = kz_xml:get_value([Base, "/bin/text()"], Xml)
+            ,cardholder_name = kz_xml:get_value([Base, "/cardholder-name/text()"], Xml)
+            ,card_type = kz_xml:get_value([Base, "/card-type/text()"], Xml)
+            ,created_at = kz_xml:get_value([Base, "/created-at/text()"], Xml)
+            ,updated_at = kz_xml:get_value([Base, "/updated-at/text()"], Xml)
+            ,default = kz_term:is_true(kz_xml:get_value([Base, "/default/text()"], Xml))
+            ,expiration_date = kz_xml:get_value([Base, "/expiration-date/text()"], Xml)
+            ,expiration_month = kz_xml:get_value([Base, "/expiration-month/text()"], Xml)
+            ,expiration_year = kz_xml:get_value([Base, "/expiration-year/text()"], Xml)
+            ,expired = kz_term:is_true(kz_xml:get_value([Base, "/expired/text()"], Xml))
+            ,customer_location = kz_xml:get_value([Base, "/customer-location/text()"], Xml)
+            ,last_four = kz_xml:get_value([Base, "/last-4/text()"], Xml)
+            ,customer_id = kz_xml:get_value([Base, "/customer-id/text()"], Xml)
             ,billing_address = braintree_address:xml_to_record(Xml, [Base, "/billing-address"])
-            ,billing_address_id = kz_util:get_xml_value([Base, "/billing-address/id/text()"], Xml)
+            ,billing_address_id = kz_xml:get_value([Base, "/billing-address/id/text()"], Xml)
             }.
 
 %%--------------------------------------------------------------------
@@ -327,26 +327,26 @@ json_to_record(JObj) ->
 %%--------------------------------------------------------------------
 -spec record_to_json(bt_card()) -> kz_json:object().
 record_to_json(#bt_card{}=Card) ->
-    Props =[{<<"id">>, Card#bt_card.token}
-           ,{<<"bin">>, Card#bt_card.bin}
-           ,{<<"cardholder_name">>, Card#bt_card.cardholder_name}
-           ,{<<"card_type">>, Card#bt_card.card_type}
-           ,{<<"created_at">>, Card#bt_card.created_at}
-           ,{<<"updated_at">>, Card#bt_card.updated_at}
-           ,{<<"default">>, Card#bt_card.default}
-           ,{<<"expiration_date">>, Card#bt_card.expiration_date}
-           ,{<<"expiration_month">>, Card#bt_card.expiration_month}
-           ,{<<"expiration_year">>, Card#bt_card.expiration_year}
-           ,{<<"expired">>, Card#bt_card.expired}
-           ,{<<"customer_location">>, Card#bt_card.customer_location}
-           ,{<<"last_four">>, Card#bt_card.last_four}
-           ,{<<"customer_id">>, Card#bt_card.customer_id}
-           ,{<<"created_at">>, Card#bt_card.created_at}
-           ,{<<"updated_at">>, Card#bt_card.updated_at}
-           ,{<<"billing_address">>, braintree_address:record_to_json(Card#bt_card.billing_address)}
-           ,{<<"billing_address_id">>, Card#bt_card.billing_address_id}
-           ],
-    kz_json:from_list(props:filter_undefined(Props)).
+    kz_json:from_list(
+      [{<<"id">>, Card#bt_card.token}
+      ,{<<"bin">>, Card#bt_card.bin}
+      ,{<<"cardholder_name">>, Card#bt_card.cardholder_name}
+      ,{<<"card_type">>, Card#bt_card.card_type}
+      ,{<<"created_at">>, Card#bt_card.created_at}
+      ,{<<"updated_at">>, Card#bt_card.updated_at}
+      ,{<<"default">>, Card#bt_card.default}
+      ,{<<"expiration_date">>, Card#bt_card.expiration_date}
+      ,{<<"expiration_month">>, Card#bt_card.expiration_month}
+      ,{<<"expiration_year">>, Card#bt_card.expiration_year}
+      ,{<<"expired">>, Card#bt_card.expired}
+      ,{<<"customer_location">>, Card#bt_card.customer_location}
+      ,{<<"last_four">>, Card#bt_card.last_four}
+      ,{<<"customer_id">>, Card#bt_card.customer_id}
+      ,{<<"created_at">>, Card#bt_card.created_at}
+      ,{<<"updated_at">>, Card#bt_card.updated_at}
+      ,{<<"billing_address">>, braintree_address:record_to_json(Card#bt_card.billing_address)}
+      ,{<<"billing_address_id">>, Card#bt_card.billing_address_id}
+      ]).
 
 %%--------------------------------------------------------------------
 %% @public
@@ -359,5 +359,5 @@ record_to_json(#bt_card{}=Card) ->
 create_or_get_json_id(JObj) ->
     case kz_json:get_value(<<"number">>, JObj) of
         'undefined' -> kz_doc:id(JObj);
-        _ ->          kz_doc:id(JObj, kz_util:rand_hex_binary(16))
+        _ ->          kz_doc:id(JObj, kz_binary:rand_hex(16))
     end.

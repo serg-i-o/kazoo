@@ -18,6 +18,12 @@
 
 -define(ADDRESS_ID, <<"address_id">>).
 
+-define(MOD_CONFIG_CAT, <<(?KNM_CONFIG_CAT)/binary, ".telnyx">>).
+
+-define(IS_SANDBOX_PROVISIONING_TRUE
+       ,kapps_config:get_is_true(?MOD_CONFIG_CAT, <<"sandbox_provisioning">>, 'false')
+       ).
+
 %%--------------------------------------------------------------------
 %% @public
 %% @doc
@@ -76,13 +82,15 @@ feature(Number) ->
 -spec maybe_update_e911(knm_number:knm_number(), boolean()) -> knm_number:knm_number().
 maybe_update_e911(Number) ->
     IsDryRun = knm_phone_number:dry_run(knm_number:phone_number(Number)),
-    maybe_update_e911(Number, IsDryRun).
+    maybe_update_e911(Number, (IsDryRun
+                               orelse ?IS_SANDBOX_PROVISIONING_TRUE
+                              )).
 
 maybe_update_e911(Number, 'true') ->
     CurrentE911 = feature(Number),
     E911 = kz_json:get_ne_value(?FEATURE_E911, knm_phone_number:doc(knm_number:phone_number(Number))),
     NotChanged = kz_json:are_equal(CurrentE911, E911),
-    case kz_util:is_empty(E911) of
+    case kz_term:is_empty(E911) of
         'true' ->
             lager:debug("dry run: information has been removed, updating upstream"),
             knm_services:deactivate_feature(Number, ?FEATURE_E911);
@@ -97,7 +105,7 @@ maybe_update_e911(Number, 'false') ->
     CurrentE911 = feature(Number),
     E911 = kz_json:get_ne_value(?FEATURE_E911, knm_phone_number:doc(knm_number:phone_number(Number))),
     NotChanged = kz_json:are_equal(CurrentE911, E911),
-    case kz_util:is_empty(E911) of
+    case kz_term:is_empty(E911) of
         'true' ->
             lager:debug("information has been removed, updating upstream"),
             {'ok', NewNumber} = remove_number(Number),
@@ -172,7 +180,7 @@ assign_address(Number, AddressId) ->
             ST = erlang:get_stacktrace(),
             lager:error("~p ~p", [_T, E]),
             kz_util:log_stacktrace(ST),
-            {'error', kz_util:to_binary(E)}
+            {'error', kz_term:to_binary(E)}
     end.
 
 toogle('true') -> "enable";
@@ -212,10 +220,9 @@ reason(RepJObj) ->
     Message = <<"message">>,
     Reasons = <<"reasons">>,
     Error = kz_json:from_list(
-              props:filter_undefined(
-                [{Message, kz_json:get_ne_binary_value(Message, RepJObj)}
-                ,{Reasons, kz_json:get_value(Reasons, RepJObj)}
-                ])),
+              [{Message, kz_json:get_ne_binary_value(Message, RepJObj)}
+              ,{Reasons, kz_json:get_value(Reasons, RepJObj)}
+              ]),
     Reason = kz_json:encode(Error),
     lager:error("~s", [Reason]),
     Reason.
@@ -237,7 +244,7 @@ e911_address(Number, JObj) ->
 -spec cleanse(api_ne_binary()) -> api_binary().
 cleanse('undefined') -> 'undefined';
 cleanse(NEBin) ->
-    Upper = kz_util:to_upper_binary(NEBin),
+    Upper = kz_term:to_upper_binary(NEBin),
     << <<C>> || <<C>> <= Upper, is_ALnum_or_space(C)>>.
 
 -spec is_ALnum_or_space(char()) -> boolean().

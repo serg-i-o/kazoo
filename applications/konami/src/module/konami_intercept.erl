@@ -60,20 +60,20 @@ maybe_update_metaflow(Data, Call, Results, CallId) ->
 maybe_update_metaflow_control(_Data, Call, CallId, ControlQueue, 'a') ->
     lager:debug("update ~s to ~s with ctl ~s", [kapps_call:call_id(Call), CallId, ControlQueue]),
 
-    konami_code_fsm:transfer_to(
+    konami_code_statem:transfer_to(
       kapps_call:set_control_queue(ControlQueue
                                   ,kapps_call:set_call_id(CallId, Call)
                                   )
-                               ,'a'
+                                  ,'a'
      ),
 
     {'stop', Call};
 maybe_update_metaflow_control(_Data, Call, CallId, _ControlQueue, 'b') ->
     lager:debug("update ~s to ~s with ctl ~s", [kapps_call:other_leg_call_id(Call), CallId, _ControlQueue]),
 
-    konami_code_fsm:transfer_to(
+    konami_code_statem:transfer_to(
       kapps_call:set_other_leg_call_id(CallId, Call)
-                               ,'b'
+                                  ,'b'
      ),
 
     {'stop', Call}.
@@ -138,7 +138,7 @@ build_originate(Endpoints, CallId, UnbridgedOnly, Call) ->
       ,{<<"Endpoints">>, Endpoints}
       ,{<<"Existing-Call-ID">>, CallId}
       ,{<<"Intercept-Unbridged-Only">>, UnbridgedOnly}
-      ,{<<"Outbound-Call-ID">>, <<(kz_util:rand_hex_binary(18))/binary, "-intercept">>}
+      ,{<<"Outbound-Call-ID">>, <<(kz_binary:rand_hex(18))/binary, "-intercept">>}
       ,{<<"Outbound-Caller-ID-Name">>, kapps_call:caller_id_name(Call)}
       ,{<<"Outbound-Caller-ID-Number">>, kapps_call:caller_id_number(Call)}
       ,{<<"Caller-ID-Name">>, kapps_call:caller_id_name(Call)}

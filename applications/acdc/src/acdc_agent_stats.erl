@@ -48,7 +48,7 @@ agent_ready(AccountId, AgentId) ->
     Prop = props:filter_undefined(
              [{<<"Account-ID">>, AccountId}
              ,{<<"Agent-ID">>, AgentId}
-             ,{<<"Timestamp">>, kz_util:current_tstamp()}
+             ,{<<"Timestamp">>, kz_time:current_tstamp()}
              ,{<<"Status">>, <<"ready">>}
               | kz_api:default_headers(?APP_NAME, ?APP_VERSION)
              ]),
@@ -61,7 +61,7 @@ agent_logged_in(AccountId, AgentId) ->
     Prop = props:filter_undefined(
              [{<<"Account-ID">>, AccountId}
              ,{<<"Agent-ID">>, AgentId}
-             ,{<<"Timestamp">>, kz_util:current_tstamp()}
+             ,{<<"Timestamp">>, kz_time:current_tstamp()}
              ,{<<"Status">>, <<"logged_in">>}
               | kz_api:default_headers(?APP_NAME, ?APP_VERSION)
              ]),
@@ -74,7 +74,7 @@ agent_logged_out(AccountId, AgentId) ->
     Prop = props:filter_undefined(
              [{<<"Account-ID">>, AccountId}
              ,{<<"Agent-ID">>, AgentId}
-             ,{<<"Timestamp">>, kz_util:current_tstamp()}
+             ,{<<"Timestamp">>, kz_time:current_tstamp()}
              ,{<<"Status">>, <<"logged_out">>}
               | kz_api:default_headers(?APP_NAME, ?APP_VERSION)
              ]),
@@ -88,7 +88,7 @@ agent_pending_logged_out(AccountId, AgentId) ->
     Prop = props:filter_undefined(
              [{<<"Account-ID">>, AccountId}
              ,{<<"Agent-ID">>, AgentId}
-             ,{<<"Timestamp">>, kz_util:current_tstamp()}
+             ,{<<"Timestamp">>, kz_time:current_tstamp()}
              ,{<<"Status">>, <<"pending_logged_out">>}
               | kz_api:default_headers(?APP_NAME, ?APP_VERSION)
              ]),
@@ -106,7 +106,7 @@ agent_connecting(AccountId, AgentId, CallId, CallerIDName, CallerIDNumber) ->
     Prop = props:filter_undefined(
              [{<<"Account-ID">>, AccountId}
              ,{<<"Agent-ID">>, AgentId}
-             ,{<<"Timestamp">>, kz_util:current_tstamp()}
+             ,{<<"Timestamp">>, kz_time:current_tstamp()}
              ,{<<"Status">>, <<"connecting">>}
              ,{<<"Call-ID">>, CallId}
              ,{<<"Caller-ID-Name">>, CallerIDName}
@@ -127,7 +127,7 @@ agent_connected(AccountId, AgentId, CallId, CallerIDName, CallerIDNumber) ->
     Prop = props:filter_undefined(
              [{<<"Account-ID">>, AccountId}
              ,{<<"Agent-ID">>, AgentId}
-             ,{<<"Timestamp">>, kz_util:current_tstamp()}
+             ,{<<"Timestamp">>, kz_time:current_tstamp()}
              ,{<<"Status">>, <<"connected">>}
              ,{<<"Call-ID">>, CallId}
              ,{<<"Caller-ID-Name">>, CallerIDName}
@@ -143,7 +143,7 @@ agent_wrapup(AccountId, AgentId, WaitTime) ->
     Prop = props:filter_undefined(
              [{<<"Account-ID">>, AccountId}
              ,{<<"Agent-ID">>, AgentId}
-             ,{<<"Timestamp">>, kz_util:current_tstamp()}
+             ,{<<"Timestamp">>, kz_time:current_tstamp()}
              ,{<<"Status">>, <<"wrapup">>}
              ,{<<"Wait-Time">>, WaitTime}
               | kz_api:default_headers(?APP_NAME, ?APP_VERSION)
@@ -159,7 +159,7 @@ agent_paused(AccountId, AgentId, PauseTime) ->
     Prop = props:filter_undefined(
              [{<<"Account-ID">>, AccountId}
              ,{<<"Agent-ID">>, AgentId}
-             ,{<<"Timestamp">>, kz_util:current_tstamp()}
+             ,{<<"Timestamp">>, kz_time:current_tstamp()}
              ,{<<"Status">>, <<"paused">>}
              ,{<<"Pause-Time">>, PauseTime}
               | kz_api:default_headers(?APP_NAME, ?APP_VERSION)
@@ -173,7 +173,7 @@ agent_outbound(AccountId, AgentId, CallId) ->
     Prop = props:filter_undefined(
              [{<<"Account-ID">>, AccountId}
              ,{<<"Agent-ID">>, AgentId}
-             ,{<<"Timestamp">>, kz_util:current_tstamp()}
+             ,{<<"Timestamp">>, kz_time:current_tstamp()}
              ,{<<"Status">>, <<"outbound">>}
              ,{<<"Call-ID">>, CallId}
               | kz_api:default_headers(?APP_NAME, ?APP_VERSION)
@@ -221,7 +221,7 @@ handle_status_stat(JObj, Props) ->
 
 -spec status_stat_id(ne_binary(), pos_integer(), any()) -> ne_binary().
 status_stat_id(AgentId, Timestamp, _EventName) ->
-    <<AgentId/binary, "::", (kz_util:to_binary(Timestamp))/binary>>.
+    <<AgentId/binary, "::", (kz_term:to_binary(Timestamp))/binary>>.
 
 -spec handle_status_query(kz_json:object(), kz_proplist()) -> 'ok'.
 handle_status_query(JObj, _Prop) ->
@@ -270,10 +270,10 @@ status_match_builder_fold(<<"Agent-ID">>, AgentId, {StatusStat, Contstraints}) -
     ,[{'=:=', '$2', {'const', AgentId}} | Contstraints]
     };
 status_match_builder_fold(<<"Start-Range">>, Start, {StatusStat, Contstraints}) ->
-    Now = kz_util:current_tstamp(),
+    Now = kz_time:current_tstamp(),
     Past = Now - ?CLEANUP_WINDOW,
 
-    try kz_util:to_integer(Start) of
+    try kz_term:to_integer(Start) of
         N when N < Past ->
             {'error', kz_json:from_list([{<<"Start-Range">>, <<"supplied value is too far in the past">>}
                                         ,{<<"Window-Size">>, ?CLEANUP_WINDOW}
@@ -294,10 +294,10 @@ status_match_builder_fold(<<"Start-Range">>, Start, {StatusStat, Contstraints}) 
             {'error', kz_json:from_list([{<<"Start-Range">>, <<"supplied value is not an integer">>}])}
     end;
 status_match_builder_fold(<<"End-Range">>, End, {StatusStat, Contstraints}) ->
-    Now = kz_util:current_tstamp(),
+    Now = kz_time:current_tstamp(),
     Past = Now - ?CLEANUP_WINDOW,
 
-    try kz_util:to_integer(End) of
+    try kz_term:to_integer(End) of
         N when N < Past ->
             {'error', kz_json:from_list([{<<"End-Range">>, <<"supplied value is too far in the past">>}
                                         ,{<<"Window-Size">>, ?CLEANUP_WINDOW}
@@ -353,7 +353,7 @@ trim_query_statuses(A, Statuses, Limit) ->
     {A, Trimmed}.
 
 trim_query_statuses_fold(TBin, Datum, {Ks, Data}=Acc) ->
-    T = kz_util:to_integer(TBin),
+    T = kz_term:to_integer(TBin),
     case lists:min(Ks) of
         N when N < T ->
             {[T | lists:delete(N, Ks)]
@@ -369,7 +369,7 @@ query_status_fold(#status_stat{agent_id=AgentId
                               ,timestamp=T
                               }=Stat, Acc) ->
     Doc = status_stat_to_doc(Stat),
-    kz_json:set_value([AgentId, kz_util:to_binary(T)], Doc, Acc).
+    kz_json:set_value([AgentId, kz_term:to_binary(T)], Doc, Acc).
 
 -spec status_stat_to_doc(status_stat()) -> kz_json:object().
 status_stat_to_doc(#status_stat{id=Id
@@ -393,8 +393,7 @@ status_stat_to_doc(#status_stat{id=Id
            ,{<<"caller_id_name">>, CIDName}
            ,{<<"caller_id_number">>, CIDNum}
            ],
-    kz_doc:update_pvt_parameters(
-      kz_json:from_list(props:filter_undefined(Prop))
+    kz_doc:update_pvt_parameters(kz_json:from_list(Prop)
                                 ,acdc_stats_util:db_name(AccountId)
                                 ,[{'account_id', AccountId}
                                  ,{'type', <<"status_stat">>}
@@ -413,7 +412,7 @@ archive_status_data(Srv, 'true') ->
 
 archive_status_data(Srv, 'false') ->
     kz_util:put_callid(<<"acdc_stats.status_archiver">>),
-    Past = kz_util:current_tstamp() - ?ARCHIVE_WINDOW,
+    Past = kz_time:current_tstamp() - ?ARCHIVE_WINDOW,
     Match = [{#status_stat{timestamp='$1'
                           ,is_archived='$2'
                           ,_='_'

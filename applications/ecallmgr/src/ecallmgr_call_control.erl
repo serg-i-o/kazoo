@@ -73,12 +73,11 @@
 
 -define(SERVER, ?MODULE).
 
--define(KEEP_ALIVE, 2 * ?MILLISECONDS_IN_MINUTE). %% after hangup, keep alive for 2 minutes
+-define(KEEP_ALIVE, 2 * ?MILLISECONDS_IN_SECOND).
 
 -type insert_at_options() :: 'now' | 'head' | 'tail' | 'flush'.
 
--record(state, {
-          node :: atom()
+-record(state, {node :: atom()
                ,call_id :: ne_binary()
                ,command_q = queue:new() :: queue:queue()
                ,current_app :: api_binary()
@@ -96,7 +95,7 @@
                ,control_q :: api_binary()
                ,initial_ccvs :: kz_json:object()
                ,node_down_tref :: api_reference()
-         }).
+               }).
 -type state() :: #state{}.
 
 -define(RESPONDERS, []).
@@ -148,7 +147,7 @@ node(Srv) ->
 -spec hostname(pid()) -> binary().
 hostname(Srv) ->
     Node = ?MODULE:node(Srv),
-    [_, Hostname] = binary:split(kz_util:to_binary(Node), <<"@">>),
+    [_, Hostname] = binary:split(kz_term:to_binary(Node), <<"@">>),
     Hostname.
 
 -spec queue_name(pid() | 'undefined') -> api_binary().
@@ -193,7 +192,7 @@ fs_nodedown(Srv, Node) ->
 %% Initializes the server
 %% @end
 %%--------------------------------------------------------------------
--spec init([atom() | ne_binary() | kz_proplist()]) -> {'ok', state()}.
+-spec init([atom() | ne_binary() | kz_json:object()]) -> {'ok', state()}.
 init([Node, CallId, FetchId, ControllerQ, CCVs]) ->
     kz_util:put_callid(CallId),
     lager:debug("starting call control listener"),
@@ -300,7 +299,7 @@ handle_cast({'fs_nodeup', Node}, #state{node=Node
                                        }=State) ->
     lager:debug("regained connection to media node ~s", [Node]),
     _ = (catch erlang:cancel_timer(TRef)),
-    _ = timer:sleep(crypto:rand_uniform(100, 1500)),
+    _ = timer:sleep(100 + rand:uniform(1400)),
     case freeswitch:api(Node, 'uuid_exists', CallId) of
         {'ok', <<"true">>} ->
             {'noreply', force_queue_advance(State#state{is_node_up='true'})};
@@ -467,7 +466,7 @@ call_control_ready(#state{call_id=CallId
     Usurp = [{<<"Call-ID">>, CallId}
             ,{<<"Fetch-ID">>, FetchId}
             ,{<<"Reason">>, <<"Route-Win">>}
-            ,{<<"Media-Node">>, kz_util:to_binary(Node)}
+            ,{<<"Media-Node">>, kz_term:to_binary(Node)}
              | kz_api:default_headers(?APP_NAME, ?APP_VERSION)
             ],
     lager:debug("sending control usurp for ~s", [FetchId]),
@@ -811,7 +810,7 @@ handle_dialplan(JObj, #state{call_id=CallId
                             ,current_app=CurrApp
                             }=State) ->
     NewCmdQ = try
-                  insert_command(State, kz_util:to_atom(kz_json:get_value(<<"Insert-At">>, JObj, 'tail')), JObj)
+                  insert_command(State, kz_term:to_atom(kz_json:get_value(<<"Insert-At">>, JObj, 'tail')), JObj)
               catch _T:_R ->
                       lager:debug("failed to insert command into control queue: ~p:~p", [_T, _R]),
                       CmdQ
@@ -873,7 +872,7 @@ insert_command(#state{node=Node
             CommandQ;
         <<"queue">> ->
             'true' = kapi_dialplan:queue_v(JObj),
-            Commands = kz_json:get_value(<<"Commands">>, JObj, []),
+            Commands = kz_json:get_list_value(<<"Commands">>, JObj, []),
             DefJObj = kz_json:from_list(kz_api:extract_defaults(JObj)),
             _ = execute_queue_commands(Commands, DefJObj, State),
             CommandQ;
@@ -901,7 +900,7 @@ insert_command(Q, Pos, _) ->
 execute_queue_commands([], _, _) -> 'ok';
 execute_queue_commands([Command|Commands], DefJObj, State) ->
     case kz_json:is_empty(Command)
-        orelse kz_json:get_ne_value(<<"Application-Name">>, Command) =:= 'undefined'
+        orelse 'undefined' =:=  kz_json:get_ne_binary_value(<<"Application-Name">>, Command)
     of
         'true' -> execute_queue_commands(Commands, DefJObj, State);
         'false' ->
@@ -1010,10 +1009,10 @@ is_post_hangup_command(AppName) ->
 -spec get_module(ne_binary(), ne_binary()) -> atom().
 get_module(Category, Name) ->
     ModuleName = <<"ecallmgr_", Category/binary, "_", Name/binary>>,
-    try kz_util:to_atom(ModuleName)
+    try kz_term:to_atom(ModuleName)
     catch
         'error':'badarg' ->
-            kz_util:to_atom(ModuleName, 'true')
+            kz_term:to_atom(ModuleName, 'true')
     end.
 
 %%--------------------------------------------------------------------
@@ -1214,14 +1213,19 @@ handle_replaced(Props, #state{fetch_id=FetchId
     case props:get_value(?GET_CCV(<<"Fetch-ID">>), Props) of
         FetchId ->
             ReplacedBy = props:get_value(<<"att_xfer_replaced_by">>, Props),
-            {'ok', Channel} = ecallmgr_fs_channel:fetch(ReplacedBy),
-            OtherLeg = kz_json:get_value(<<"other_leg">>, Channel),
-            OtherUUID = props:get_value(<<"Other-Leg-Unique-ID">>, Props),
-            CDR = kz_json:get_value(<<"interaction_id">>, Channel),
-            kz_cache:store_local(?ECALLMGR_INTERACTION_CACHE, CallId, CDR),
-            ecallmgr_fs_command:set(Node, OtherUUID, [{<<?CALL_INTERACTION_ID>>, CDR}]),
-            ecallmgr_fs_command:set(Node, OtherLeg, [{<<?CALL_INTERACTION_ID>>, CDR}]),
-            {'noreply', handle_sofia_replaced(ReplacedBy, State)};
+            case ecallmgr_fs_channel:fetch(ReplacedBy) of
+                {'ok', Channel} ->
+                    OtherLeg = kz_json:get_value(<<"other_leg">>, Channel),
+                    OtherUUID = props:get_value(<<"Other-Leg-Unique-ID">>, Props),
+                    CDR = kz_json:get_value(<<"interaction_id">>, Channel),
+                    kz_cache:store_local(?ECALLMGR_INTERACTION_CACHE, CallId, CDR),
+                    ecallmgr_fs_command:set(Node, OtherUUID, [{<<?CALL_INTERACTION_ID>>, CDR}]),
+                    ecallmgr_fs_command:set(Node, OtherLeg, [{<<?CALL_INTERACTION_ID>>, CDR}]),
+                    {'noreply', handle_sofia_replaced(ReplacedBy, State)};
+                _Else ->
+                    lager:debug("channel replaced was not handled : ~p", [_Else]),
+                    {'noreply', State}
+            end;
         _Else ->
             lager:info("sofia replaced on our channel but different fetch id~n"),
             {'noreply', State}

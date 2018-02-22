@@ -6,12 +6,13 @@
 %%% @contributors
 %%%-------------------------------------------------------------------
 -module(kz_service_phone_numbers).
+-behaviour(kz_gen_service).
 
 -export([reconcile/1, reconcile/2]).
 -export([feature_activation_charge/2]).
 -export([phone_number_activation_charge/2]).
 
--include("kazoo_services.hrl").
+-include("services.hrl").
 -include_lib("kazoo_number_manager/include/knm_phone_number.hrl").
 
 -define(NUMBER_SERVICES, <<"number_services">>).
@@ -27,7 +28,7 @@
                          }).
 
 %% ?NUMBER_CARRIERS is nested under ?CLASSIFICATIONS, so we add it "manually".
--define(DEFAULT_RESET_CATEGORIES, [?NUMBER_CARRIERS | maps:keys(?MAP_CATEGORIES)]).
+-define(DEFAULT_RESET_CATEGORIES, [?NUMBER_CARRIERS | maps:values(?MAP_CATEGORIES)]).
 
 -type pn() :: knm_phone_number:knm_phone_number().
 -type pns() :: [pn()].
@@ -53,7 +54,7 @@ reconcile(Services) ->
     end.
 
 reconcile(Services, PNs) ->
-    update_numbers(reset(Services), PNs).
+    update_numbers(Services, PNs).
 
 -spec reset(kz_services:services()) -> kz_services:services().
 reset(Services) ->
@@ -144,7 +145,7 @@ update_number_quantities(Services, PN) ->
         'false' -> Services;
         'undefined' -> Services;
         Classification ->
-            Quantity = kz_services:updated_quantity(?PHONE_NUMBERS, Classification, Services),
+            Quantity = kz_services:quantity(?PHONE_NUMBERS, Classification, Services),
             kz_services:update(?PHONE_NUMBERS, Classification, Quantity + 1, Services)
     end.
 
@@ -159,14 +160,10 @@ is_number_billable(PN) ->
     IsBillable.
 
 %% @private
-%% @doc
-%%
-%% @end
-%%--------------------------------------------------------------------
 -spec update_feature_quantities(ne_binaries(), kz_services:services()) -> kz_services:services().
 update_feature_quantities([], Services) -> Services;
 update_feature_quantities([Feature|Features], Services) ->
     Name = knm_providers:service_name(Feature, kz_services:account_id(Services)),
-    Quantity = kz_services:updated_quantity(?NUMBER_SERVICES, Name, Services),
+    Quantity = kz_services:quantity(?NUMBER_SERVICES, Name, Services),
     UpdatedServices = kz_services:update(?NUMBER_SERVICES, Name, Quantity + 1, Services),
     update_feature_quantities(Features, UpdatedServices).

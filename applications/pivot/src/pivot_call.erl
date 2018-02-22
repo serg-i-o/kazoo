@@ -34,23 +34,24 @@
 
 -type http_method() :: 'get' | 'post'.
 
--record(state, {voice_uri :: api_binary()
-               ,cdr_uri :: api_binary()
-               ,request_format = <<"twiml">> :: api_binary()
+-record(state, {voice_uri :: api_ne_binary()
+               ,cdr_uri :: api_ne_binary()
+               ,request_format = <<"kazoo">> :: ne_binary()
                ,method = 'get' :: http_method()
-               ,call :: kapps_call:call()
-               ,request_id :: kz_http:req_id()
-               ,request_params :: kz_json:object()
-               ,response_code :: ne_binary()
-               ,response_headers :: binaries() | ne_binary()
+               ,call :: kapps_call:call() | 'undefined'
+               ,request_id :: kz_http:req_id() | 'undefined'
+               ,request_params :: api_object()
+               ,response_code :: api_ne_binary()
+               ,response_headers :: binaries() | api_ne_binary()
                ,response_body = <<>> :: binary()
-               ,response_content_type :: binary()
-               ,response_pid :: pid() %% pid of the processing of the response
+               ,response_content_type :: api_binary()
+               ,response_pid :: api_pid() %% pid of the processing of the response
                ,response_event_handlers = [] :: pids()
-               ,response_ref :: reference() %% monitor ref for the pid
+               ,response_ref :: api_reference() %% monitor ref for the pid
                ,debug = 'false' :: boolean()
-               ,requester_queue :: api_binary()
+               ,requester_queue :: api_ne_binary()
                }).
+
 -type state() :: #state{}.
 
 %%%===================================================================
@@ -250,12 +251,12 @@ handle_cast({'cdr', JObj}
                   ,debug=Debug
                   }=State) ->
     JObj1 = kz_json:delete_key(<<"Custom-Channel-Vars">>, JObj),
-    Body =  kz_json:to_querystring(kz_api:remove_defaults(JObj1)),
+    Body =  kz_http_util:json_to_querystring(kz_api:remove_defaults(JObj1)),
     Headers = [{"Content-Type", "application/x-www-form-urlencoded"}],
 
     maybe_debug_req(Call, Url, 'post', Headers, Body, Debug),
 
-    case kz_http:post(kz_util:to_list(Url), Headers, Body) of
+    case kz_http:post(kz_term:to_list(Url), Headers, Body) of
         {'ok', RespCode, RespHeaders, RespBody} ->
             maybe_debug_resp(Debug, Call, integer_to_binary(RespCode), RespHeaders, RespBody),
             lager:debug("recv ~p from cdr url ~s", [RespCode, Url]);
@@ -351,7 +352,7 @@ handle_info({'http', {ReqId, {{_, StatusCode, _}, RespHeaders, RespBody}}}
   when (StatusCode - 400) < 100 ->
     lager:info("recv client failure status code ~p", [StatusCode]),
     publish_failed(Call, RequesterQ),
-    maybe_debug_resp(ShouldDebug, Call, kz_util:to_binary(StatusCode), RespHeaders, RespBody),
+    maybe_debug_resp(ShouldDebug, Call, kz_term:to_binary(StatusCode), RespHeaders, RespBody),
     {'stop', 'normal', State};
 handle_info({'http', {ReqId, {{_, StatusCode, _}, RespHeaders, RespBody}}}
            ,#state{request_id=ReqId
@@ -362,7 +363,7 @@ handle_info({'http', {ReqId, {{_, StatusCode, _}, RespHeaders, RespBody}}}
   when (StatusCode - 500) < 100 ->
     lager:info("recv server failure status code ~p", [StatusCode]),
     publish_failed(Call, RequesterQ),
-    maybe_debug_resp(ShouldDebug, Call, kz_util:to_binary(StatusCode), RespHeaders, RespBody),
+    maybe_debug_resp(ShouldDebug, Call, kz_term:to_binary(StatusCode), RespHeaders, RespBody),
     {'stop', 'normal', State};
 
 handle_info({'DOWN', Ref, 'process', Pid, 'normal'}
@@ -388,7 +389,7 @@ handle_info(_Info, State) ->
 %% @doc
 %% Handling messaging bus events
 %%
-%% @spec handle_event(JObj, State) -> {'noreply', proplist()} |
+%% @spec handle_event(JObj, State) -> {'noreply', kz_proplist()} |
 %%                                    ignore
 %% @end
 %%--------------------------------------------------------------------
@@ -440,13 +441,13 @@ send_req(Call, Uri, 'get', BaseParams, Debug) ->
     UserParams = kzt_translator:get_user_vars(Call),
     Params = kz_json:set_values(BaseParams, UserParams),
     UpdatedCall = kapps_call:kvs_erase(<<"digits_collected">>, Call),
-    send(UpdatedCall, uri(Uri, kz_json:to_querystring(Params)), 'get', [], [], Debug);
+    send(UpdatedCall, uri(Uri, kz_http_util:json_to_querystring(Params)), 'get', [], [], Debug);
 send_req(Call, Uri, 'post', BaseParams, Debug) ->
     UserParams = kzt_translator:get_user_vars(Call),
     Params = kz_json:set_values(BaseParams, UserParams),
     UpdatedCall = kapps_call:kvs_erase(<<"digits_collected">>, Call),
     Headers = [{"Content-Type", "application/x-www-form-urlencoded"}],
-    send(UpdatedCall, Uri, 'post', Headers, kz_json:to_querystring(Params), Debug).
+    send(UpdatedCall, Uri, 'post', Headers, kz_http_util:json_to_querystring(Params), Debug).
 
 -spec send(kapps_call:call(), ne_binary(), http_method(), kz_proplist(), iolist(), boolean()) ->
                   {'ok', kz_http:req_id(), kapps_call:call()} |
@@ -467,7 +468,7 @@ send(Call, Uri, Method, ReqHdrs, ReqBody, Debug) ->
 
 -spec normalize_resp_headers(kz_proplist()) -> kz_proplist().
 normalize_resp_headers(Headers) ->
-    [{kz_util:to_lower_binary(K), kz_util:to_binary(V)} || {K, V} <- Headers].
+    [{kz_term:to_lower_binary(K), kz_term:to_binary(V)} || {K, V} <- Headers].
 
 -spec handle_resp(api_binary(), kapps_call:call(), ne_binary(), binary()) -> 'ok'.
 handle_resp(RequesterQ, Call, CT, <<_/binary>> = RespBody) ->
@@ -552,7 +553,7 @@ uri(URI, QueryString) ->
 
 -spec req_params(ne_binary(), kapps_call:call()) -> kz_proplist().
 req_params(Format, Call) ->
-    FmtAtom = kz_util:to_atom(<<"kzt_", Format/binary>>, 'true'),
+    FmtAtom = kz_term:to_atom(<<"kzt_", Format/binary>>, 'true'),
     try FmtAtom:req_params(Call) of
         Result ->
             lager:debug("get req params from ~s", [FmtAtom]),
@@ -566,7 +567,7 @@ maybe_debug_req(_Call, _Uri, _Method, _ReqHdrs, _ReqBody, 'false') -> 'ok';
 maybe_debug_req(Call, Uri, Method, ReqHdrs, ReqBody, 'true') ->
     Headers = kz_json:from_list([{fix_value(K), fix_value(V)} || {K, V} <- ReqHdrs]),
     store_debug(Call, [{<<"uri">>, iolist_to_binary(Uri)}
-                      ,{<<"method">>, kz_util:to_binary(Method)}
+                      ,{<<"method">>, kz_term:to_binary(Method)}
                       ,{<<"req_headers">>, Headers}
                       ,{<<"req_body">>, iolist_to_binary(ReqBody)}
                       ]).
@@ -622,7 +623,7 @@ store_debug(Call, DebugJObj) ->
                                     ,[{'account_id', kapps_call:account_id(Call)}
                                      ,{'account_db', AccountModDb}
                                      ,{'type', <<"pivot_debug">>}
-                                     ,{'now', kz_util:current_tstamp()}
+                                     ,{'now', kz_time:current_tstamp()}
                                      ]
                                     ),
     case kazoo_modb:save_doc(AccountModDb, JObj) of
@@ -634,4 +635,4 @@ store_debug(Call, DebugJObj) ->
 
 -spec fix_value(number() | list()) -> number() | ne_binary().
 fix_value(N) when is_number(N) -> N;
-fix_value(O) -> kz_util:to_lower_binary(O).
+fix_value(O) -> kz_term:to_lower_binary(O).

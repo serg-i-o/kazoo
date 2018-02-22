@@ -119,7 +119,7 @@ maybe_update_e911(Number, 'true') ->
     CurrentE911 = feature(Number),
     E911 = kz_json:get_ne_value(?FEATURE_E911, knm_phone_number:doc(knm_number:phone_number(Number))),
     NotChanged = kz_json:are_equal(CurrentE911, E911),
-    case kz_util:is_empty(E911) of
+    case kz_term:is_empty(E911) of
         'true' ->
             lager:debug("dry run: information has been removed, updating upstream"),
             knm_services:deactivate_feature(Number, ?FEATURE_E911);
@@ -134,7 +134,7 @@ maybe_update_e911(Number, 'false') ->
     CurrentE911 = feature(Number),
     E911 = kz_json:get_ne_value(?FEATURE_E911, knm_phone_number:doc(knm_number:phone_number(Number))),
     NotChanged = kz_json:are_equal(CurrentE911, E911),
-    case kz_util:is_empty(E911) of
+    case kz_term:is_empty(E911) of
         'true' ->
             lager:debug("information has been removed, updating upstream"),
             _ = remove_number(Number),
@@ -303,7 +303,8 @@ location_options(AddressJObj) ->
 %%--------------------------------------------------------------------
 -spec process_xml_resp(text()) -> {'ok', kz_json:object() | ne_binary()} |
                                   {'error', ne_binary()}.
-process_xml_resp(RespXML) ->
+process_xml_resp(RespXML_binary) ->
+    RespXML = unicode:characters_to_list( RespXML_binary),
     try xmerl_scan:string(RespXML) of
         {XmlEl, _} -> process_xml_content_tag(XmlEl)
     catch

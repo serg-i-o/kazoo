@@ -10,6 +10,7 @@
 -module(knm_managed).
 -behaviour(knm_gen_carrier).
 
+-export([info/0]).
 -export([is_local/0]).
 -export([find_numbers/3]).
 -export([acquire_number/1]).
@@ -25,6 +26,16 @@
 
 -define(KZ_MANAGED, <<"numbers%2Fmanaged">>).
 -define(MANAGED_VIEW_FILE, <<"views/numbers_managed.json">>).
+
+%%--------------------------------------------------------------------
+%% @public
+%% @doc
+%% @end
+%%--------------------------------------------------------------------
+-spec info() -> map().
+info() ->
+    #{?CARRIER_INFO_MAX_PREFIX => 15
+     }.
 
 %%--------------------------------------------------------------------
 %% @public
@@ -156,7 +167,7 @@ generate_numbers(?MATCH_ACCOUNT_RAW(AccountId), Number, Quantity)
   when Quantity > 0
        andalso is_integer(Number)
        andalso is_integer(Quantity) ->
-    {'ok', _JObj} = save_doc(AccountId, <<"+",(kz_util:to_binary(Number))/binary>>),
+    {'ok', _JObj} = save_doc(AccountId, <<"+",(kz_term:to_binary(Number))/binary>>),
     generate_numbers(AccountId, Number+1, Quantity-1).
 
 -spec import_numbers(ne_binary(), ne_binaries()) -> kz_json:object().
@@ -204,7 +215,7 @@ save_doc(JObj) ->
 update_doc(Number, UpdateProps) ->
     PhoneNumber = knm_number:phone_number(Number),
     Num = knm_phone_number:number(PhoneNumber),
-    case kz_datamgr:update_doc(?KZ_MANAGED, Num, [{?PVT_MODULE_NAME, kz_util:to_binary(?MODULE)}
+    case kz_datamgr:update_doc(?KZ_MANAGED, Num, [{?PVT_MODULE_NAME, kz_term:to_binary(?MODULE)}
                                                   | UpdateProps
                                                  ])
     of

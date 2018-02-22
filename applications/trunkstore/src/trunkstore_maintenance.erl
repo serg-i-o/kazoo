@@ -97,7 +97,7 @@ create_ts_doc(AcctDB, AcctID, TSJObj) ->
 
 create_credit_doc(AcctDB, AcctID, TSJObj) ->
     Credit = kz_json:get_value([<<"account">>, <<"credits">>, <<"prepay">>], TSJObj, 0.0),
-    Units = wht_util:dollars_to_units(kz_util:to_float(Credit)),
+    Units = wht_util:dollars_to_units(kz_term:to_float(Credit)),
     lager:info("Putting ~p units", [Units]),
     Transaction = kz_json:from_list([{<<"amount">>, Units}
                                     ,{<<"pvt_type">>, <<"credit">>}
@@ -108,7 +108,7 @@ create_credit_doc(AcctDB, AcctID, TSJObj) ->
     kz_datamgr:save_doc(AcctDB, Transaction).
 
 account_exists_with_realm(Realm) ->
-    ViewOptions = [{'key', kz_util:to_lower_binary(Realm)}],
+    ViewOptions = [{'key', kz_term:to_lower_binary(Realm)}],
     case kz_datamgr:get_results(?KZ_ACCOUNTS_DB, <<"accounts/listing_by_realm">>, ViewOptions) of
         {'ok', []} -> 'false';
         {'ok', [AcctObj]} ->
@@ -141,7 +141,7 @@ create_account(Realm) ->
 
 create_account_doc(Realm, AcctID, AcctDB) ->
     lager:info("creating the account doc in ~s and ~s", [AcctDB, ?KZ_ACCOUNTS_DB]),
-    Default = kapps_config:get(<<"crossbar.accounts">>, <<"default_parent">>, <<>>),
+    Default = kapps_config:get_binary(<<"crossbar.accounts">>, <<"default_parent">>, <<>>),
     Doc = kz_json:from_list([{<<"realm">>, Realm}
                             ,{<<"name">>, Realm}
                             ,{<<"pvt_account_id">>, AcctID}

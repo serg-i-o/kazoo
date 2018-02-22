@@ -16,11 +16,11 @@
 
 -include("kz_voicemail.hrl").
 
--define(DEFAULT_VM_EXTENSION,
-        kapps_config:get(?CF_CONFIG_CAT, [?KEY_VOICEMAIL, <<"extension">>], <<"mp3">>)).
+-define(DEFAULT_VM_EXTENSION
+       ,kapps_config:get_ne_binary(?CF_CONFIG_CAT, [?KEY_VOICEMAIL, <<"extension">>], <<"mp3">>)).
 
--define(MAX_BULK_INSERT,
-        kapps_config:get(?CF_CONFIG_CAT, [?KEY_VOICEMAIL, <<"migrate_max_bulk_insert">>], 2000)).
+-define(MAX_BULK_INSERT
+       ,kapps_config:get_integer(?CF_CONFIG_CAT, [?KEY_VOICEMAIL, <<"migrate_max_bulk_insert">>], kz_datamgr:max_bulk_insert())).
 
 -define(LEGACY_MSG_LISTING, <<"vmboxes/legacy_msg_by_timestamp">>).
 
@@ -247,19 +247,19 @@ update_message_array(BoxJObj, MODbFailed, Failed) ->
     Messages = kz_json:get_value(<<"messages">>, BoxJObj),
     %% check if messages are failed or not, if not remove them from message array
     Fun = fun(Msg, Acc) ->
-                  Timestamp = kz_json:get_value(<<"timestamp">>, Msg),
+                  Timestamp = kz_json:get_integer_value(<<"timestamp">>, Msg),
                   {{Year, Month, _}, _} = calendar:gregorian_seconds_to_datetime(Timestamp),
-                  MsgId = ?MODB_MSG_ID(Year, Month, kz_json:get_value(<<"media_id">>, Msg)),
+                  MsgId = kazoo_modb_util:modb_id(Year, Month, kz_json:get_value(<<"media_id">>, Msg)),
                   M = dict:is_key(MsgId, MODbFailed),
                   F = dict:is_key(MsgId, Failed),
 
                   case {M, F} of
                       {'true', _} ->
                           Error = dict:fetch(MsgId, MODbFailed),
-                          [kz_json:set_value(<<"migration_error">>, kz_util:to_binary(Error), Msg) | Acc];
+                          [kz_json:set_value(<<"migration_error">>, kz_term:to_binary(Error), Msg) | Acc];
                       {_, 'true'} ->
                           Error = dict:fetch(MsgId, Failed),
-                          [kz_json:set_value(<<"migration_error">>, kz_util:to_binary(Error), Msg) | Acc];
+                          [kz_json:set_value(<<"migration_error">>, kz_term:to_binary(Error), Msg) | Acc];
                       _ -> Acc
                   end
           end,
@@ -303,18 +303,19 @@ generate_lagecy_view_result(BoxJObj) ->
     Messages = kz_json:get_value(?VM_KEY_MESSAGES, BoxJObj, []),
 
     Fun = fun(M, Acc) ->
+                  Timestamp = kz_json:get_integer_value(<<"timestamp">>, M),
                   Value = kz_json:from_list(
                             props:filter_empty(
                               [{<<"source_id">>, BoxId}
                               ,{<<"owner_id">>, OwnerId}
                               ,{<<"timezone">>, Timezone}
                               ,{<<"mailbox">>, Mailbox}
-                              ,{<<"metadata">>, M}
+                              ,{<<"metadata">>, kz_json:set_value(<<"timestamp">>, Timestamp, M)}
                               ])),
                   [kz_json:from_list(
                      props:filter_empty(
                        [{<<"id">>, BoxId}
-                       ,{<<"key">>, kz_json:get_value(<<"timestamp">>, M)}
+                       ,{<<"key">>, kz_json:get_integer_value(<<"timestamp">>, M)}
                        ,{<<"value">>, Value}
                        ,{<<"_id">>, BoxId}
                        ]))
@@ -411,10 +412,10 @@ create_message(AccountId, FakeBoxJObj, DefaultExt) ->
     TimeZone = kzd_voicemail_box:timezone(BoxJObj),
 
     Metadata = kzd_box_message:metadata(BoxJObj),
-    Timestamp = kz_json:get_value(<<"timestamp">>, Metadata),
+    Timestamp = kz_json:get_integer_value(<<"timestamp">>, Metadata),
 
     %% setting a db_link as attachment
-    AttName = <<(kz_util:rand_hex_binary(16))/binary, ".", DefaultExt/binary>>,
+    AttName = <<(kz_binary:rand_hex(16))/binary, ".", DefaultExt/binary>>,
     AttHandlerProps = [{<<"att_dbname">>, kz_util:format_account_db(AccountId)}
                       ,{<<"att_docid">>, kzd_box_message:media_id(Metadata)}
                       ],

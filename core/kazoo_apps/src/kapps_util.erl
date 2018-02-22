@@ -25,18 +25,20 @@
         ,is_account_mod/1
         ]).
 -export([get_account_by_realm/1
-        ,get_account_by_ip/1, get_ccvs_by_ip/1
+        ,get_ccvs_by_ip/1
         ,get_accounts_by_name/1
+
+        ,are_all_enabled/1
         ]).
 -export([get_master_account_id/0
         ,get_master_account_db/0
         ]).
 -export([is_master_account/1]).
 -export([account_depth/1]).
--export([account_has_descendants/1]).
--export([get_account_name/1]).
+-export([account_has_descendants/1
+        ,account_descendants/1
+        ]).
 -export([find_oldest_doc/1]).
--export([get_event_type/1]).
 -export([get_call_termination_reason/1]).
 -export([get_view_json/1, get_view_json/2]).
 -export([get_views_json/2]).
@@ -58,7 +60,6 @@
         ]).
 
 -export([media_local_store_url/2]).
--export([system_report/2, system_report/3]).
 
 -include("kazoo_apps.hrl").
 -include_lib("kazoo_caches/include/kazoo_caches.hrl").
@@ -155,7 +156,7 @@ replicate_from_account(AccountDb, TargetDb, FilterDoc) ->
 -spec get_master_account_id() -> {'ok', ne_binary()} |
                                  {'error', atom()}.
 get_master_account_id() ->
-    case kapps_config:get(?KZ_SYSTEM_CONFIG_ACCOUNT, <<"master_account_id">>) of
+    case kapps_config:get_ne_binary(?KZ_SYSTEM_CONFIG_ACCOUNT, <<"master_account_id">>) of
         'undefined' ->
             R = kz_datamgr:get_results(?KZ_ACCOUNTS_DB, <<"accounts/listing_by_id">>, ['include_docs']),
             find_master_account_id(R);
@@ -201,31 +202,33 @@ account_depth(Account) ->
     length(kz_account:tree(JObj)).
 
 %%--------------------------------------------------------------------
-%% @public
+%% @private
 %% @doc
+%% List an account's descendants (including the provided AccountId).
 %% @end
 %%--------------------------------------------------------------------
--spec account_has_descendants(ne_binary()) -> boolean().
-account_has_descendants(Account) ->
+-spec account_descendants(ne_binary()) -> ne_binaries().
+account_descendants(?MATCH_ACCOUNT_RAW(AccountId)) ->
     View = <<"accounts/listing_by_descendants">>,
-    AccountId = kz_util:format_account_id(Account),
-    ViewOptions = [{'startkey', [AccountId]}
-                  ,{'endkey', [AccountId, kz_json:new()]}
+    ViewOptions = [{startkey, [AccountId]}
+                  ,{endkey, [AccountId, kz_json:new()]}
                   ],
-    {'ok', JObjs} = kz_datamgr:get_results(?KZ_ACCOUNTS_DB, View, ViewOptions),
-    lists:any(fun (JObj) -> kz_account:id(JObj) =/= AccountId end, JObjs).
+    case kz_datamgr:get_results(?KZ_ACCOUNTS_DB, View, ViewOptions) of
+        {ok, JObjs} -> [kz_account:id(JObj) || JObj <- JObjs];
+        {error, _R} ->
+            lager:debug("unable to get descendants of ~s: ~p", [AccountId, _R]),
+            []
+    end.
 
 %%--------------------------------------------------------------------
 %% @public
 %% @doc
 %% @end
 %%--------------------------------------------------------------------
--spec get_account_name(ne_binary()) -> ne_binary().
-get_account_name(Account) ->
-    case kz_account:fetch(Account) of
-        {'error', _} -> 'undefined';
-        {'ok', JObj} -> kz_account:name(JObj)
-    end.
+-spec account_has_descendants(ne_binary()) -> boolean().
+account_has_descendants(Account) ->
+    AccountId = kz_util:format_account_id(Account),
+    [] =/= (account_descendants(AccountId) -- [AccountId]).
 
 %%--------------------------------------------------------------------
 %% @public
@@ -359,16 +362,8 @@ is_account_db(Db) ->
 %%--------------------------------------------------------------------
 -spec get_account_by_realm(ne_binary()) -> getby_return().
 get_account_by_realm(RawRealm) ->
-    Realm = kz_util:to_lower_binary(RawRealm),
+    Realm = kz_term:to_lower_binary(RawRealm),
     get_accounts_by(Realm, ?ACCT_BY_REALM_CACHE(Realm), ?AGG_LIST_BY_REALM).
-
--spec get_account_by_ip(ne_binary()) -> getby_return().
-get_account_by_ip(IP) ->
-    case get_ccvs_by_ip(IP) of
-        {'error', 'not_found'}=E -> E;
-        {'ok', AccountCCVs} ->
-            {'ok', props:get_value(<<"Account-ID">>, AccountCCVs)}
-    end.
 
 -spec get_ccvs_by_ip(ne_binary()) ->
                             {'ok', kz_proplist()} |
@@ -384,7 +379,9 @@ get_ccvs_by_ip(IP) ->
                                {'ok', kz_proplist()} |
                                {'error', 'not_found'}.
 do_get_ccvs_by_ip(IP) ->
-    case kz_datamgr:get_results(?KZ_SIP_DB, ?AGG_LIST_BY_IP, [{'key', IP}]) of
+    case kapps_config:get_is_true(<<"registrar">>, <<"use_aggregate">>, 'true')
+        andalso kz_datamgr:get_results(?KZ_SIP_DB, ?AGG_LIST_BY_IP, [{'key', IP}])
+    of
         {'ok', []} ->
             NotF = {'error', 'not_found'},
             lager:debug("no entry in ~s for IP: ~s", [?KZ_SIP_DB, IP]),
@@ -402,17 +399,62 @@ do_get_ccvs_by_ip(IP) ->
 
 -spec account_ccvs_from_ip_auth(kz_json:object()) -> kz_proplist().
 account_ccvs_from_ip_auth(Doc) ->
-    AccountID = kz_json:get_value([<<"value">>, <<"account_id">>], Doc),
-    OwnerID = kz_json:get_value([<<"value">>, <<"owner_id">>], Doc),
+    AccountId = kz_json:get_value([<<"value">>, <<"account_id">>], Doc),
+    OwnerId = kz_json:get_value([<<"value">>, <<"owner_id">>], Doc),
     AuthType = kz_json:get_value([<<"value">>, <<"authorizing_type">>], Doc, <<"anonymous">>),
 
-    props:filter_undefined(
-      [{<<"Account-ID">>, AccountID}
-      ,{<<"Owner-ID">>, OwnerID}
-      ,{<<"Authorizing-ID">>, kz_doc:id(Doc)}
-      ,{<<"Inception">>, <<"on-net">>}
-      ,{<<"Authorizing-Type">>, AuthType}
-      ]).
+    case are_all_enabled([{<<"account">>, AccountId}
+                         ,{<<"owner">>, OwnerId}
+                         ,{AuthType, kz_doc:id(Doc)}
+                         ])
+    of
+        {'false', _Reason} ->
+            lager:notice("no IP auth info: ~p", [_Reason]),
+            [];
+        'true' ->
+            props:filter_undefined(
+              [{<<"Account-ID">>, AccountId}
+              ,{<<"Owner-ID">>, OwnerId}
+              ,{<<"Authorizing-ID">>, kz_doc:id(Doc)}
+              ,{<<"Inception">>, <<"on-net">>}
+              ,{<<"Authorizing-Type">>, AuthType}
+              ])
+    end.
+
+-type not_enabled_error() :: 'device_disabled' |
+                             'owner_disabled' |
+                             'account_disabled'.
+-spec are_all_enabled(kz_proplist()) ->
+                             'true' |
+                             {'false', {not_enabled_error(), ne_binary()}}.
+are_all_enabled(Things) ->
+    ?MATCH_ACCOUNT_RAW(AccountId) = props:get_value(<<"account">>, Things),
+    try lists:all(fun(Thing) -> is_enabled(AccountId, Thing) end, Things)
+    catch
+        'throw':{'error', Reason} -> {'false', Reason}
+    end.
+
+-spec is_enabled(ne_binary(), {ne_binary(), api_ne_binary()}) -> boolean().
+is_enabled(_AccountId, {_Type, 'undefined'}) -> 'true';
+is_enabled(AccountId, {<<"device">>, DeviceId}) ->
+    Default = kapps_config:get_is_true(<<"registrar">>, <<"device_enabled_default">>, 'true'),
+    {'ok', DeviceJObj} = kz_datamgr:open_cache_doc(kz_util:format_account_db(AccountId), DeviceId),
+    kz_device:enabled(DeviceJObj, Default)
+        orelse throw({'error', {'device_disabled', DeviceId}});
+is_enabled(AccountId, {<<"owner">>, OwnerId}) ->
+    case kz_datamgr:open_cache_doc(kz_util:format_account_db(AccountId), OwnerId) of
+        {'ok', UserJObj} ->
+            Default = kapps_config:get_is_true(<<"registrar">>, <<"owner_enabled_default">>, 'true'),
+            kzd_user:is_enabled(UserJObj, Default)
+                orelse throw({'error', {'owner_disabled', OwnerId}});
+        {'error', _R} ->
+            lager:debug("unable to fetch owner doc ~s: ~p", [OwnerId, _R]),
+            'true'
+    end;
+is_enabled(AccountId, {<<"account">>, AccountId}) ->
+    kz_util:is_account_enabled(AccountId)
+        orelse throw({'error', {'account_disabled', AccountId}});
+is_enabled(_AccountId, {_Type, _Thing}) -> 'true'.
 
 %%--------------------------------------------------------------------
 %% @public
@@ -459,16 +501,6 @@ cache(Key, AccountDbs) ->
 %%--------------------------------------------------------------------
 %% @public
 %% @doc
-%% Given an API JSON object extract the category and name into a
-%% tuple for easy processing
-%% @end
-%%--------------------------------------------------------------------
--spec get_event_type(kz_json:object()) -> {ne_binary(), ne_binary()}.
-get_event_type(JObj) -> kz_util:get_event_type(JObj).
-
-%%--------------------------------------------------------------------
-%% @public
-%% @doc
 %% Given an JSON Object for a hangup event, or bridge completion
 %% this returns the cause and code for the call termination
 %% @end
@@ -492,30 +524,20 @@ get_call_termination_reason(JObj) ->
 %%--------------------------------------------------------------------
 -spec get_views_json(atom(), string()) -> kz_datamgr:views_listing().
 get_views_json(App, Folder) ->
-    Files = filelib:wildcard(lists:flatten([code:priv_dir(App), "/couchdb/", Folder, "/*.json"])),
-    [JObj
-     || File <- Files,
-        begin
-            JObj = (catch(get_view_json(File))),
-            case JObj of {'EXIT', _} -> 'false'; _ -> 'true' end
-        end
+    Pattern = filename:join([code:priv_dir(App), "couchdb", Folder, "*.json"]),
+    [ViewListing
+     || File <- filelib:wildcard(Pattern),
+        {?NE_BINARY,_}=ViewListing <- [catch get_view_json(File)]
     ].
 
-%%--------------------------------------------------------------------
-%% @public
-%% @doc
-%%
-%% @end
-%%--------------------------------------------------------------------
 -spec get_view_json(atom(), text()) -> kz_datamgr:view_listing().
--spec get_view_json(text()) -> kz_datamgr:view_listing().
-
 get_view_json(App, File) ->
-    Path = list_to_binary([code:priv_dir(App), "/couchdb/", File]),
+    Path = filename:join([code:priv_dir(App), "couchdb", File]),
     get_view_json(Path).
 
+-spec get_view_json(text()) -> kz_datamgr:view_listing().
 get_view_json(Path) ->
-    lager:debug("fetch view from ~s", [Path]),
+    lager:debug("fetching view from ~s", [Path]),
     {'ok', Bin} = file:read_file(Path),
     JObj = kz_json:decode(Bin),
     {kz_doc:id(JObj), JObj}.
@@ -527,13 +549,12 @@ get_view_json(Path) ->
 %% @end
 %%--------------------------------------------------------------------
 -spec update_views(ne_binary(), kz_datamgr:views_listing()) -> boolean().
--spec update_views(ne_binary(), kz_datamgr:views_listing(), boolean()) -> boolean().
-
 update_views(Db, Views) ->
     update_views(Db, Views, 'false').
 
-update_views(Db, Views, Remove) ->
-    kz_util:is_true(kz_datamgr:db_view_update(Db, Views, Remove)).
+-spec update_views(ne_binary(), kz_datamgr:views_listing(), boolean()) -> boolean().
+update_views(Db, Views, ShouldRemove) ->
+    kz_term:is_true(kz_datamgr:db_view_update(Db, Views, ShouldRemove)).
 
 %%--------------------------------------------------------------------
 %% @private
@@ -654,8 +675,8 @@ get_destination(JObj, Cat, Key) ->
 -spec get_destination(kz_json:object(), ne_binaries()) ->
                              {ne_binary(), ne_binary()}.
 get_destination(JObj, [Key|Keys]) ->
-    case try_split(Key, JObj) of
-        {_,_}=UserRealm -> UserRealm;
+    case maybe_split(Key, JObj) of
+        [User,Realm] -> {User,Realm};
         'undefined' -> get_destination(JObj, Keys)
     end;
 get_destination(JObj, []) ->
@@ -663,36 +684,28 @@ get_destination(JObj, []) ->
     ,kz_json:get_value(<<"To-Realm">>, JObj)
     }.
 
--spec try_split(api_binary()) ->
-                       {ne_binary(), ne_binary()} |
-                       'undefined'.
--spec try_split(ne_binary(), kz_json:object()) ->
-                       {ne_binary(), ne_binary()} |
-                       'undefined'.
-try_split(Key, JObj) ->
-    try_split(kz_json:get_value(Key, JObj)).
-
-try_split('undefined') -> 'undefined';
-try_split(<<"nouser@", _/binary>>) -> 'undefined';
-try_split(<<_/binary>> = Bin) ->
-    [_, _] = Dest = binary:split(Bin, <<"@">>),
-    list_to_tuple(Dest).
+maybe_split(Key, JObj) ->
+    case kz_json:get_ne_binary_value(Key, JObj) of
+        undefined -> undefined;
+        <<"nouser@",_/binary>> -> undefined;
+        Bin -> binary:split(Bin, <<"@">>)
+    end.
 
 -spec write_tts_file(ne_binary(), ne_binary()) ->
                             'ok' |
                             {'error', file:posix() | 'badarg' | 'terminated'}.
 write_tts_file(Path, Say) ->
     lager:debug("trying to save TTS media to ~s", [Path]),
-    {'ok', _, Wav} = kapps_speech:create(Say),
+    {'ok', _, Wav} = kazoo_tts:create(Say),
     file:write_file(Path, Wav).
 
 -spec to_magic_hash(iodata()) -> ne_binary().
 to_magic_hash(Bin) ->
-    kz_util:to_hex_binary(zlib:zip(Bin)).
+    kz_term:to_hex_binary(zlib:zip(Bin)).
 
 -spec from_magic_hash(ne_binary()) -> ne_binary().
 from_magic_hash(Bin) ->
-    zlib:unzip(kz_util:from_hex_binary(Bin)).
+    zlib:unzip(kz_binary:from_hex(Bin)).
 
 -spec media_local_store_url(kapps_call:call(), kz_json:object()) ->
                                    {'ok', ne_binary()} |
@@ -703,22 +716,3 @@ media_local_store_url(Call, JObj) ->
     MediaId = kz_doc:id(JObj),
     MediaName = kz_json:get_value(<<"name">>, JObj),
     kz_datamgr:attachment_url(AccountDb, MediaId, MediaName).
-
--spec system_report({text(), text()} | text(), kapps_call:call()) -> 'ok'.
-system_report({Subject, Msg}, Call) ->
-    system_report(Subject, Msg, Call);
-system_report(Msg, Call) ->
-    system_report(Msg, Msg, Call).
-
--spec system_report(text(), text(), kapps_call:call()) -> 'ok'.
-system_report(Subject, Msg, Call) ->
-    AppName = kapps_call:application_name(Call),
-    AppVersion = kapps_call:application_version(Call),
-    Notify = props:filter_undefined(
-               [{<<"Subject">>, iolist_to_binary(Subject)}
-               ,{<<"Message">>, iolist_to_binary(Msg)}
-               ,{<<"Details">>, kapps_call:to_json(Call)}
-               ,{<<"Account-ID">>, kapps_call:account_id(Call)}
-                | kz_api:default_headers(AppName, AppVersion)
-               ]),
-    kz_amqp_worker:cast(Notify, fun kapi_notifications:publish_system_alert/1).

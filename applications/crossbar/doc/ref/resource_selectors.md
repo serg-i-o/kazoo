@@ -1,20 +1,21 @@
-### Resource_selectors
+### Resource Selectors
 
-#### About Resource_selectors
+#### About Resource Selectors
 
 #### Schema
 
 Schema for resource selector document
 
+
+
 Key | Description | Type | Default | Required
 --- | ----------- | ---- | ------- | --------
-`name` | Selector name | `string` |   | `true`
-`resource` | Resource ID | `string` |   | `true`
-`selector` | Selector data | `string` |   | `true`
-`start_time` | Start time (gregorian seconds) | `integer` |   | `false`
-`stop_time` | Stop time (gregorian seconds) | `integer` |   | `false`
-`value` | Extra selector data | `string` |   | `false`
-
+`name` | Selector name | `string()` |   | `true`
+`resource` | Resource ID | `string()` |   | `true`
+`selector` | Selector data | `string()` |   | `true`
+`start_time` | Start time (gregorian seconds) | `integer()` |   | `false`
+`stop_time` | Stop time (gregorian seconds) | `integer()` |   | `false`
+`value` | Extra selector data | `string()` |   | `false`
 
 
 

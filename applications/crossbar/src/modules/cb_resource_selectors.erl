@@ -244,7 +244,7 @@ load_rules(Context) ->
 
 -spec summary(cb_context:context(), api_binaries(), api_binary(), boolean()) -> cb_context:context().
 summary(Context, Prefix, ViewName, Reduce) ->
-    case kz_util:is_true(Reduce) of
+    case kz_term:is_true(Reduce) of
         'true' ->
             Options = [{'startkey', build_start_key(Context, Prefix)}
                       ,{'endkey', build_end_key(Context, Prefix)}
@@ -298,7 +298,7 @@ fix_envelope_start_keys(JObj, Prefix) ->
 %%--------------------------------------------------------------------
 %% @private
 %% @doc
-%% Normalizes the resuts of a view
+%% Normalizes the results of a view
 %% @end
 %%--------------------------------------------------------------------
 -spec normalize_view_results(kz_json:object(), kz_json:objects()) -> kz_json:objects().
@@ -350,7 +350,7 @@ maybe_handle_load_failure(Context, 404) ->
     JObj = kz_doc:set_type(kz_doc:set_id(cb_context:req_data(Context),?RULES_PVT_TYPE), ?RULES_PVT_TYPE),
     cb_context:setters(Context
                       ,[{fun cb_context:set_resp_status/2, 'success'}
-                       ,{fun cb_context:set_resp_data/2, kz_json:public_fields(JObj)}
+                       ,{fun cb_context:set_resp_data/2, kz_doc:public_fields(JObj)}
                        ,{fun cb_context:set_doc/2, crossbar_doc:update_pvt_parameters(JObj, Context)}
                        ]);
 maybe_handle_load_failure(Context, _RespCode) -> Context.

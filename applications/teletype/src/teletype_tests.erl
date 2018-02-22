@@ -71,16 +71,16 @@ voicemail_to_email(AccountId, VMBox,  [Message|_]) ->
            ,{<<"Account-DB">>, kz_util:format_account_db(AccountId)}
            ,{<<"Account-ID">>, AccountId}
            ,{<<"Voicemail-Box">>, kz_doc:id(VMBox)}
-           ,{<<"Voicemail-Name">>, MediaId}
+           ,{<<"Voicemail-ID">>, MediaId}
            ,{<<"Caller-ID-Number">>, <<"CallerIdNumber">>}
            ,{<<"Caller-ID-Name">>, <<"CallerIdName">>}
-           ,{<<"Voicemail-Timestamp">>, kz_util:current_tstamp()}
+           ,{<<"Voicemail-Timestamp">>, kz_time:current_tstamp()}
            ,{<<"Voicemail-Length">>, Length}
            ,{<<"Call-ID">>, CallId}
             | kz_api:default_headers(?APP_NAME, ?APP_VERSION)
            ],
     kz_amqp_worker:call_collect(Prop
-                               ,fun kapi_notifications:publish_voicemail/1
+                               ,fun kapi_notifications:publish_voicemail_new/1
                                ,5 * ?MILLISECONDS_IN_SECOND
                                ).
 
@@ -125,7 +125,7 @@ voicemail_full(AccountId) ->
         [Box|_] -> voicemail_full(AccountId, kz_json:get_value(<<"doc">>, Box))
     end.
 
--spec voicemail_full(ne_binary(), ne_binary()) -> ok.
+-spec voicemail_full(ne_binary(), ne_binary()) -> kz_amqp_worker:request_return().
 voicemail_full(AccountId, ?NE_BINARY=BoxId) ->
     AccountDb = kz_util:format_account_id(AccountId, 'encoded'),
     {'ok', Box} = kz_datamgr:open_cache_doc(AccountDb, BoxId),
@@ -135,7 +135,6 @@ voicemail_full(AccountId, Box) ->
     Props = [{<<"Account-DB">>, AccountDb}
             ,{<<"Account-ID">>, AccountId}
             ,{<<"Voicemail-Box">>, kz_doc:id(Box)}
-            ,{<<"Voicemail-Number">>, kz_json:get_value(<<"mailbox">>, Box)}
             ,{<<"Max-Message-Count">>, 1}
             ,{<<"Message-Count">>, 2}
             ,{<<"Preview">>, 'true'}
@@ -161,7 +160,7 @@ find_fax_with_attachment(AccountId, [Fax|Faxes]) ->
         _As -> fax_inbound_to_email(AccountId, kz_json:get_value(<<"doc">>, Fax))
     end.
 
--spec fax_inbound_to_email(ne_binary(), ne_binary()) -> ok.
+-spec fax_inbound_to_email(ne_binary(), ne_binary()) -> kz_amqp_worker:request_return().
 fax_inbound_to_email(AccountId, ?NE_BINARY=FaxId) ->
     AccountDb = kz_util:format_account_id(AccountId, 'encoded'),
     {'ok', Fax} = kz_datamgr:open_cache_doc(AccountDb, FaxId),
@@ -191,6 +190,6 @@ notify_fields(JObj) ->
       ,{<<"Callee-ID-Number">>, <<"Callee-Number">>}
       ,{<<"Callee-ID-Name">>, <<"Callee-Name">>}
       ,{<<"Call-ID">>, kz_json:get_value(<<"call_id">>, JObj)}
-      ,{<<"Fax-Timestamp">>, kz_util:current_tstamp()}
+      ,{<<"Fax-Timestamp">>, kz_time:current_tstamp()}
        | kz_api:default_headers(?APP_NAME, ?APP_VERSION)
       ]).

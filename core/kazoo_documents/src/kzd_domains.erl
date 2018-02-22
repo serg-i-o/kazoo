@@ -59,21 +59,18 @@
 
 -spec new() -> doc().
 new() ->
-    kz_json:from_list([{?KEY_CNAME, kz_json:new()}
-                      ,{?KEY_A_RECORD, kz_json:new()}
-                      ,{?KEY_NAPTR, kz_json:new()}
-                      ,{?KEY_SRV, kz_json:new()}
-                      ,{?KEY_MX, kz_json:new()}
-                      ,{?KEY_TXT, kz_json:new()}
-                      ]).
+    kz_json:from_list(
+      [{?KEY_CNAME, kz_json:new()}
+      ,{?KEY_A_RECORD, kz_json:new()}
+      ,{?KEY_NAPTR, kz_json:new()}
+      ,{?KEY_SRV, kz_json:new()}
+      ,{?KEY_MX, kz_json:new()}
+      ,{?KEY_TXT, kz_json:new()}
+      ]).
 
 -spec default() -> kz_json:object().
 default() ->
-    PrivDir = code:priv_dir('kazoo_documents'),
-    {'ok', FixtureJSON} = file:read_file(
-                            filename:join([PrivDir, "fixtures", "domains.json"])
-                           ),
-    kz_json:decode(FixtureJSON).
+    kz_json:load_fixture_from_file(?APP, "fixtures", "domains.json").
 
 -spec cname(doc()) -> api_object().
 -spec cname(doc(), Default) -> kz_json:object() | Default.
@@ -225,20 +222,18 @@ save(Domains, PvtFields) ->
             {'error', Errors}
     end.
 
--spec try_save(doc(), api_object()) ->
-                      {'ok', doc()} |
-                      {'error', any()}.
+-spec try_save(doc(), api_object()) -> {'ok', doc()} |
+                                       {'error', any()}.
 try_save(Domains, PvtFields) ->
-    case kapps_config:update_default(
-           <<"whitelabel">>
+    case kapps_config:update_default(<<"whitelabel">>
                                     ,<<"domains">>
                                     ,Domains
                                     ,[{'pvt_fields', PvtFields}]
-          )
+                                    )
     of
         {'error', _E}=E -> E;
         _ ->
-            {'ok', kapps_config:get(<<"whitelabel">>, <<"domains">>)}
+            {'ok', kapps_config:get_json(<<"whitelabel">>, <<"domains">>)}
     end.
 
 -spec is_valid(doc()) ->

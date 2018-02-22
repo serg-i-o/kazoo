@@ -41,18 +41,18 @@
 
 -type xmpp_client() :: #client{}. %% escalus
 
--record(state, {faxbox_id :: ne_binary()
-               ,printer_id :: ne_binary()
-               ,oauth_app_id :: ne_binary()
-               ,refresh_token :: oauth_refresh_token()
+-record(state, {faxbox_id :: api_ne_binary()
+               ,printer_id :: api_ne_binary()
+               ,oauth_app_id :: api_ne_binary()
+               ,refresh_token :: oauth_refresh_token() | 'undefined'
                ,connected = 'false' :: boolean()
-               ,session :: xmpp_client()
-               ,jid :: ne_binary()
-               ,monitor :: reference()
+               ,session :: xmpp_client() | 'undefined'
+               ,jid :: api_ne_binary()
+               ,monitor :: api_reference()
                }).
 -type state() :: #state{}.
 
--define(NAME(P), kz_util:to_atom(P, 'true')).
+-define(NAME(P), kz_term:to_atom(P, 'true')).
 
 %%-define(SERVER(P), {{'via', 'kz_globals', {'xmpp', P}}).
 -define(SERVER(P), {'via', 'kz_globals', ?NAME(P)}).
@@ -276,15 +276,13 @@ wait_for_success(Username, Conn) ->
 -spec start_all_printers() -> 'ok'.
 start_all_printers() ->
     {'ok', Results} = kz_datamgr:get_results(?KZ_FAXES_DB, <<"faxbox/cloud">>),
-    List = kz_util:shuffle_list(
-             [ {crypto:rand_uniform(2000, 6000), Id, Jid}
-               || {Id, Jid, <<"claimed">>}
-                      <- [{kz_doc:id(Result)
-                          ,kz_json:get_value([<<"value">>,<<"xmpp_jid">>], Result)
-                          ,kz_json:get_value([<<"value">>,<<"state">>], Result)
-                          }
-                          || Result <- Results
-                         ]
+    List = kz_term:shuffle_list(
+             [{2000 + rand:uniform(4000)
+              ,kz_doc:id(Result)
+              ,kz_json:get_value([<<"value">>,<<"xmpp_jid">>], Result)
+              }
+              || Result <- Results,
+                 <<"claimed">> =:= kz_json:get_ne_binary_value([<<"value">>,<<"state">>], Result)
              ]),
     [begin
          send_start_printer(Id, Jid),

@@ -1,40 +1,66 @@
 {
-    "$schema": "http://json-schema.org/draft-03/schema#",
+    "$schema": "http://json-schema.org/draft-04/schema#",
     "_id": "callflows.group",
     "description": "Validator for the group callflow's data object",
     "properties": {
         "endpoints": {
             "default": [],
-            "description": "",
+            "description": "List of endpoint (device/user/group) IDs",
+            "items": {
+                "description": "ID of the endpoint",
+                "type": "string"
+            },
             "type": "array"
         },
         "fail_on_single_reject": {
-            "description": ""
+            "description": "If any leg rejects the call, cancel all other legs",
+            "type": "boolean"
+        },
+        "id": {
+            "description": "Group ID",
+            "type": "string"
         },
         "ignore_forward": {
             "default": true,
-            "description": "",
+            "description": "Whether to ignore forwarded phones",
             "type": "boolean"
         },
         "repeats": {
             "default": 1,
-            "description": "",
+            "description": "How many times to repeat dialing the group",
             "type": "integer"
         },
         "ringback": {
-            "description": ""
+            "description": "Ringback to use",
+            "type": "string"
+        },
+        "ringtones": {
+            "properties": {
+                "external": {
+                    "description": "Ring tone for calls from external sources",
+                    "type": "string"
+                },
+                "internal": {
+                    "description": "Ring tone for calls from external sources",
+                    "type": "string"
+                }
+            },
+            "type": "object"
         },
         "strategy": {
             "default": "simultaneous",
-            "description": "",
+            "description": "How to ring the endpoints",
+            "enum": [
+                "single",
+                "simultaneous"
+            ],
             "type": "string"
         },
         "timeout": {
             "default": 20,
-            "description": "",
+            "description": "How long to attempt the group",
             "type": "integer"
         }
     },
-    "required": true,
     "type": "object"
 }

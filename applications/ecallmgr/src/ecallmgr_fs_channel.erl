@@ -176,11 +176,11 @@ import_moh(UUID) ->
 set_account_id(UUID, Value) when is_binary(Value) ->
     ecallmgr_fs_channels:update(UUID, #channel.account_id, Value);
 set_account_id(UUID, Value) ->
-    set_account_id(UUID, kz_util:to_binary(Value)).
+    set_account_id(UUID, kz_term:to_binary(Value)).
 
 -spec set_authorized(ne_binary(), boolean() | ne_binary()) -> 'ok'.
 set_authorized(UUID, Value) ->
-    ecallmgr_fs_channels:update(UUID, #channel.is_authorized, kz_util:is_true(Value)).
+    ecallmgr_fs_channels:update(UUID, #channel.is_authorized, kz_term:is_true(Value)).
 
 -spec renew(atom(), ne_binary()) ->
                    {'ok', channel()} |
@@ -193,7 +193,7 @@ renew(Node, UUID) ->
     end.
 
 -spec channel_data(atom(), ne_binary()) -> {'ok', kz_proplist()} |
-                                           {'error', 'timeout' | 'badarg'}.
+                                           freeswitch:fs_api_error().
 channel_data(Node, UUID) ->
     case freeswitch:api(Node, 'uuid_dump', UUID) of
         {'error', _}=E -> E;
@@ -238,7 +238,7 @@ to_props(Channel) ->
       ,{<<"switch_nodename">>, Channel#channel.node}
       ,{<<"to_tag">>, Channel#channel.to_tag}
       ,{<<"from_tag">>, Channel#channel.from_tag}
-      ,{<<"elapsed_s">>, kz_util:elapsed_s(Channel#channel.timestamp)}
+      ,{<<"elapsed_s">>, kz_time:elapsed_s(Channel#channel.timestamp)}
       ,{<<"interaction_id">>, Channel#channel.interaction_id}
       ,{<<"is_loopback">>, Channel#channel.is_loopback}
       ,{<<"loopback_leg_name">>, Channel#channel.loopback_leg_name}
@@ -273,7 +273,7 @@ to_api_props(Channel) ->
       ,{<<"Realm">>, Channel#channel.realm}
       ,{<<"Username">>, Channel#channel.username}
       ,{<<"Answered">>, Channel#channel.answered}
-      ,{<<"Media-Node">>, kz_util:to_binary(Channel#channel.node)}
+      ,{<<"Media-Node">>, kz_term:to_binary(Channel#channel.node)}
       ,{<<"Timestamp">>, Channel#channel.timestamp}
       ,{<<"Profile">>, Channel#channel.profile}
       ,{<<"Context">>, Channel#channel.context}
@@ -282,7 +282,7 @@ to_api_props(Channel) ->
       ,{<<"To-Tag">>, Channel#channel.to_tag}
       ,{<<"From-Tag">>, Channel#channel.from_tag}
       ,{<<"Switch-URL">>, ecallmgr_fs_nodes:sip_url(Channel#channel.node)}
-      ,{<<"Elapsed-Seconds">>, kz_util:elapsed_s(Channel#channel.timestamp)}
+      ,{<<"Elapsed-Seconds">>, kz_time:elapsed_s(Channel#channel.timestamp)}
       ,{<<?CALL_INTERACTION_ID>>, Channel#channel.interaction_id}
       ,{<<"Is-Loopback">>, Channel#channel.is_loopback}
       ,{<<"Loopback-Leg-Name">>, Channel#channel.loopback_leg_name}
@@ -398,6 +398,7 @@ handle_cast('bind_to_events', #state{node=Node}=State) ->
         andalso gproc:reg({'p', 'l', ?FS_EVENT_REG_MSG(Node, <<"CHANNEL_BRIDGE">>)}) =:= 'true'
         andalso gproc:reg({'p', 'l', ?FS_EVENT_REG_MSG(Node, <<"CHANNEL_UNBRIDGE">>)}) =:= 'true'
         andalso gproc:reg({'p', 'l', ?FS_EVENT_REG_MSG(Node, <<"CALL_UPDATE">>)}) =:= 'true'
+        andalso gproc:reg({'p', 'l', ?FS_OPTION_MSG(Node)}) =:= 'true'
     of
         'true' -> {'noreply', State};
         'false' -> {'stop', 'gproc_badarg', State}
@@ -556,8 +557,8 @@ channel_resp_dialprefix(ReqProps, Channel, ChannelVars) ->
 
 -spec fs_props_to_binary(kz_proplist()) -> ne_binary().
 fs_props_to_binary([{Hk,Hv}|T]) ->
-    Rest = << <<",", K/binary, "='", (kz_util:to_binary(V))/binary, "'">> || {K,V} <- T >>,
-    <<"[", Hk/binary, "='", (kz_util:to_binary(Hv))/binary, "'", Rest/binary, "]">>.
+    Rest = << <<",", K/binary, "='", (kz_term:to_binary(V))/binary, "'">> || {K,V} <- T >>,
+    <<"[", Hk/binary, "='", (kz_term:to_binary(Hv))/binary, "'", Rest/binary, "]">>.
 
 -spec try_channel_resp(ne_binary(), atom(), kz_proplist()) -> 'ok'.
 try_channel_resp(FetchId, Node, Props) ->
@@ -618,9 +619,14 @@ process_event(UUID, Props, Node, Pid) ->
 process_specific_event(<<"CHANNEL_CREATE">>, UUID, Props, Node) ->
     _ = maybe_publish_channel_state(Props, Node),
     case props:get_value(?GET_CCV(<<"Ecallmgr-Node">>), Props)
-        =:= kz_util:to_binary(node())
+        =:= kz_term:to_binary(node())
     of
-        'true' -> ecallmgr_fs_authz:authorize(Props, UUID, Node);
+        'true' ->
+            case ecallmgr_fs_authz:authorize(Props, UUID, Node) of
+                {'true', CCVs} ->
+                    ecallmgr_fs_command:set(Node, UUID, kz_json:to_proplist(CCVs));
+                Authz -> Authz
+            end;
         'false' -> 'ok'
     end;
 process_specific_event(<<"CHANNEL_DESTROY">>, UUID, Props, Node) ->
@@ -656,9 +662,10 @@ maybe_publish_channel_state(Props, Node) ->
     %% NOTE: this will significantly reduce AMQP request however if a ecallmgr
     %%   becomes disconnected any calls it previsouly controlled will not produce
     %%   CDRs.  The long-term strategy is to round-robin CDR events from mod_kazoo.
+    Event = ecallmgr_call_events:get_event_name(Props),
     case props:is_true(<<"Publish-Channel-State">>, Props, 'true')
         andalso ecallmgr_config:get_boolean(<<"publish_channel_state">>, 'true', Node) of
-        'false' -> lager:debug("not publishing channel state");
+        'false' -> lager:debug("not publishing channel state ~s", [Event]);
         'true' ->
             case ecallmgr_config:get_boolean(<<"restrict_channel_state_publisher">>, 'false') of
                 'false' -> ecallmgr_call_events:process_channel_event(Props);
@@ -668,13 +675,14 @@ maybe_publish_channel_state(Props, Node) ->
 
 -spec maybe_publish_restricted(kz_proplist()) -> 'ok'.
 maybe_publish_restricted(Props) ->
-    EcallmgrNode = kz_util:to_binary(node()),
+    EcallmgrNode = kz_term:to_binary(node()),
+    Event = ecallmgr_call_events:get_event_name(Props),
 
     case props:get_value(?GET_CCV(<<"Ecallmgr-Node">>), Props) of
         'undefined' -> ecallmgr_call_events:process_channel_event(Props);
         EcallmgrNode -> ecallmgr_call_events:process_channel_event(Props);
         _EventEcallmgr ->
-            lager:debug("channel state for call controlled by another ecallmgr(~s), not publishing", [_EventEcallmgr])
+            lager:debug("channel state ~s for call controlled by another ecallmgr(~s), not publishing", [Event, _EventEcallmgr])
     end.
 
 -spec props_to_record(kz_proplist(), atom()) -> channel().
@@ -700,13 +708,13 @@ props_to_record(Props, Node) ->
             ,bridge_id=props:get_value(<<"Bridge-ID">>, CCVs, UUID)
             ,reseller_id=props:get_value(<<"Reseller-ID">>, CCVs)
             ,reseller_billing=props:get_value(<<"Reseller-Billing">>, CCVs)
-            ,precedence=kz_util:to_integer(props:get_value(<<"Precedence">>, CCVs, 5))
+            ,precedence=kz_term:to_integer(props:get_value(<<"Precedence">>, CCVs, 5))
             ,realm=props:get_value(<<"Realm">>, CCVs, get_realm(Props))
             ,username=props:get_value(<<"Username">>, CCVs, get_username(Props))
             ,import_moh=props:get_value(<<"variable_hold_music">>, Props) =:= 'undefined'
             ,answered=props:get_value(<<"Answer-State">>, Props) =:= <<"answered">>
             ,node=Node
-            ,timestamp=kz_util:current_tstamp()
+            ,timestamp=kz_time:current_tstamp()
             ,profile=props:get_value(<<"variable_sofia_profile_name">>, Props, ?DEFAULT_FS_PROFILE)
             ,context=props:get_value(<<"Caller-Context">>, Props, ?DEFAULT_FREESWITCH_CONTEXT)
             ,dialplan=props:get_value(<<"Caller-Dialplan">>, Props, ?DEFAULT_FS_DIALPLAN)
@@ -731,9 +739,9 @@ other_leg_handling_locally(OtherLeg) ->
 -spec handling_locally(kz_proplist(), api_binary()) -> boolean().
 handling_locally(Props, 'undefined') ->
     props:get_value(?GET_CCV(<<"Ecallmgr-Node">>), Props)
-        =:= kz_util:to_binary(node());
+        =:= kz_term:to_binary(node());
 handling_locally(Props, OtherLeg) ->
-    Node = kz_util:to_binary(node()),
+    Node = kz_term:to_binary(node()),
     case props:get_value(?GET_CCV(<<"Ecallmgr-Node">>), Props) of
         Node -> 'true';
         _ -> other_leg_handling_locally(OtherLeg)
@@ -748,7 +756,7 @@ get_username(Props) ->
                                 )
     of
         'undefined' -> 'undefined';
-        Username -> kz_util:to_lower_binary(Username)
+        Username -> kz_term:to_lower_binary(Username)
     end.
 
 -spec get_realm(kz_proplist()) -> api_binary().
@@ -760,10 +768,10 @@ get_realm(Props) ->
                                 )
     of
         'undefined' -> 'undefined';
-        Realm -> kz_util:to_lower_binary(Realm)
+        Realm -> kz_term:to_lower_binary(Realm)
     end.
 
--spec props_to_update(kz_proplist()) -> [{integer(), ne_binary()}].
+-spec props_to_update(kz_proplist()) -> channel_updates().
 props_to_update(Props) ->
     UUID = props:get_value(<<"Unique-ID">>, Props),
     CCVs = ecallmgr_util:custom_channel_vars(Props),
@@ -782,7 +790,7 @@ props_to_update(Props) ->
                            ,{#channel.bridge_id, props:get_value(<<"Bridge-ID">>, CCVs, UUID)}
                            ,{#channel.reseller_id, props:get_value(<<"Reseller-ID">>, CCVs)}
                            ,{#channel.reseller_billing, props:get_value(<<"Reseller-Billing">>, CCVs)}
-                           ,{#channel.precedence, kz_util:to_integer(props:get_value(<<"Precedence">>, CCVs, 5))}
+                           ,{#channel.precedence, kz_term:to_integer(props:get_value(<<"Precedence">>, CCVs, 5))}
                            ,{#channel.realm, props:get_value(<<"Realm">>, CCVs, get_realm(Props))}
                            ,{#channel.username, props:get_value(<<"Username">>, CCVs, get_username(Props))}
                            ,{#channel.import_moh, props:get_value(<<"variable_hold_music">>, Props) =:= 'undefined'}
@@ -800,7 +808,7 @@ props_to_update(Props) ->
                             | update_callee(UUID, Props)
                            ]).
 
--spec update_callee(binary(), kz_proplist()) -> kz_proplist().
+-spec update_callee(binary(), channel_updates()) -> channel_updates().
 update_callee(UUID, Props) ->
     case fetch(UUID, 'record') of
         {'ok', #channel{callee_number = Num2

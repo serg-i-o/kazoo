@@ -19,7 +19,7 @@
 -include("tasks.hrl").
 
 -define(LOOP_TIMEOUT,
-        kapps_config:get_integer(<<"crossbar">>, <<"token_auth_expiry">>, ?SECONDS_IN_HOUR)).
+        kapps_config:get_integer(<<"crossbar.auth">>, <<"token_auth_expiry_s">>, ?SECONDS_IN_HOUR)).
 
 
 %%%===================================================================
@@ -34,7 +34,7 @@ init() ->
 
 -spec clean_expired() -> 'ok'.
 clean_expired() ->
-    clean_expired(kz_util:current_tstamp() - ?LOOP_TIMEOUT).
+    clean_expired(kz_time:current_tstamp() - ?LOOP_TIMEOUT).
 
 -spec clean_expired(gregorian_seconds()) -> 'ok'.
 clean_expired(CreatedBefore) ->

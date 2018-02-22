@@ -9,7 +9,7 @@
 -module(teletype_webhook_disabled).
 
 -export([init/0
-        ,handle_webhook_disabled/2
+        ,handle_req/1
         ]).
 
 -include("teletype.hrl").
@@ -24,8 +24,9 @@
           ,?MACRO_VALUE(<<"hook.uri">>, <<"hook_uri">>, <<"Hook URI">>, <<"Hook URI">>)
           ,?MACRO_VALUE(<<"hook.event">>, <<"hook_event">>, <<"Hook Event">>, <<"Hook Event">>)
           ,?MACRO_VALUE(<<"hook.disable_reason">>, <<"hook_disable_reason">>, <<"Disable Reason">>, <<"Why the hook was disabled">>)
-           | ?ACCOUNT_MACROS
-          ])
+           | ?COMMON_TEMPLATE_MACROS
+          ]
+         )
        ).
 
 -define(TEMPLATE_SUBJECT, <<"Webhook '{{hook.name}}' auto-disabled">>).
@@ -50,20 +51,31 @@ init() ->
                                           ,{'cc', ?TEMPLATE_CC}
                                           ,{'bcc', ?TEMPLATE_BCC}
                                           ,{'reply_to', ?TEMPLATE_REPLY_TO}
-                                          ]).
+                                          ]),
+    teletype_bindings:bind(<<"webhook_disabled">>, ?MODULE, 'handle_req').
 
--spec handle_webhook_disabled(kz_json:object(), kz_proplist()) -> 'ok'.
-handle_webhook_disabled(JObj, _Props) ->
-    'true' = kapi_notifications:webhook_disabled_v(JObj),
-    kz_util:put_callid(JObj),
+-spec handle_req(kz_json:object()) -> 'ok'.
+handle_req(JObj) ->
+    handle_req(JObj, kapi_notifications:webhook_disabled_v(JObj)).
+
+-spec handle_req(kz_json:object(), boolean()) -> 'ok'.
+handle_req(JObj, 'false') ->
+    lager:debug("invalid data for ~s", [?TEMPLATE_ID]),
+    teletype_util:send_update(JObj, <<"failed">>, <<"validation_failed">>);
+handle_req(JObj, 'true') ->
+    lager:debug("valid data for ~s, processing...", [?TEMPLATE_ID]),
 
     %% Gather data for template
     DataJObj = kz_json:normalize(JObj),
     AccountId = kz_json:get_value(<<"account_id">>, DataJObj),
 
-    teletype_util:is_notice_enabled(AccountId, JObj, ?TEMPLATE_ID)
-        orelse teletype_util:stop_processing("template ~s not enabled for account ~s", [?TEMPLATE_ID, AccountId]),
+    case teletype_util:is_notice_enabled(AccountId, JObj, ?TEMPLATE_ID) of
+        'false' -> teletype_util:notification_disabled(DataJObj, ?TEMPLATE_ID);
+        'true' -> process_req(DataJObj, AccountId)
+    end.
 
+-spec process_req(kz_json:object(), ne_binary()) -> 'ok'.
+process_req(DataJObj, AccountId) ->
     HookId = kz_json:get_value(<<"hook_id">>, DataJObj),
 
     lager:debug("looking for hook ~s in account ~s", [HookId, AccountId]),
@@ -78,6 +90,7 @@ process_req(DataJObj) ->
     teletype_util:send_update(DataJObj, <<"pending">>),
     Macros = [{<<"account">>, teletype_util:account_params(DataJObj)}
              ,{<<"hook">>, hook_data(kz_json:get_value(<<"hook">>, DataJObj))}
+             ,{<<"system">>, teletype_util:system_params()}
              ],
 
     %% Populate templates
@@ -85,7 +98,7 @@ process_req(DataJObj) ->
 
     {'ok', TemplateMetaJObj} =
         teletype_templates:fetch_notification(?TEMPLATE_ID
-                                             ,teletype_util:find_account_id(DataJObj)
+                                             ,kapi_notifications:account_id(DataJObj)
                                              ),
 
     Subject = teletype_util:render_subject(

@@ -8,8 +8,8 @@
 
 -behaviour(application).
 
--include_lib("kazoo/include/kz_types.hrl").
--include_lib("kazoo/include/kz_databases.hrl").
+-include_lib("kazoo_stdlib/include/kz_types.hrl").
+-include_lib("kazoo_stdlib/include/kz_databases.hrl").
 
 -export([start/2, stop/1]).
 
@@ -20,7 +20,6 @@
 -spec start(application:start_type(), any()) -> startapp_ret().
 start(_StartType, _StartArgs) ->
     _ = declare_exchanges(),
-    _ = kapps_maintenance:bind({'refresh', ?KZ_OFFNET_DB}, 'stepswitch_maintenance', 'refresh'),
     stepswitch_sup:start_link().
 
 %%--------------------------------------------------------------------
@@ -29,7 +28,6 @@ start(_StartType, _StartArgs) ->
 %%--------------------------------------------------------------------
 -spec stop(any()) -> any().
 stop(_State) ->
-    _ = kapps_maintenance:unbind({'refresh', ?KZ_OFFNET_DB}, 'stepswitch_maintenance', 'refresh'),
     'ok'.
 
 -spec declare_exchanges() -> 'ok'.

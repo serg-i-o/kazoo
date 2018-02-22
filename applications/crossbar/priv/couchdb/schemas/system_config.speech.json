@@ -14,7 +14,20 @@
                 "application/wav"
             ],
             "description": "speech asr content types",
+            "items": {
+                "type": "string"
+            },
             "type": "array"
+        },
+        "asr_locale": {
+            "default": "en-us",
+            "description": "speech asr default locale",
+            "type": "string"
+        },
+        "asr_mime_type": {
+            "default": "application/wav",
+            "description": "speech asr mime type",
+            "type": "string"
         },
         "asr_prefered_content_type": {
             "default": "application/mpeg",
@@ -46,10 +59,10 @@
             "description": "speech tts args encode",
             "type": "string"
         },
-        "tts_default_voice": {
-            "default": "female/en-US",
-            "description": "speech tts default voice",
-            "type": "string"
+        "tts_cache": {
+            "default": 3600000,
+            "description": "How long, in milliseconds, to cache TTS media files",
+            "type": "integer"
         },
         "tts_end_padding": {
             "default": 0,
@@ -57,7 +70,7 @@
             "type": "integer"
         },
         "tts_language": {
-            "default": "en-US",
+            "default": "en-us",
             "description": "speech tts language",
             "type": "string"
         },

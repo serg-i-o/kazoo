@@ -141,7 +141,7 @@ run_rate_limits_query(Entity, AccountDB, IncludeRealm, MethodList) ->
 -spec to_json_key(ne_binary()) -> ne_binary().
 to_json_key(Token) ->
     Tokens = binary:split(Token, <<"_">>),
-    kz_util:join_binary([kz_util:ucfirst_binary(T) || T <- Tokens], <<"-">>).
+    kz_binary:join([kz_binary:ucfirst(T) || T <- Tokens], <<"-">>).
 
 -spec fold_responses(kz_json:object(), kz_json:object()) -> kz_json:object().
 fold_responses(Record, Acc) ->
@@ -220,7 +220,7 @@ fetch_rates_from_sys_config(_, _, []) ->
     [];
 fetch_rates_from_sys_config(<<_/binary>> = Entity, Type, MethodList) ->
     Section = section_type(Type),
-    AllRates = kapps_config:get(?APP_NAME, <<"rate_limits">>),
+    AllRates = kapps_config:get_json(?APP_NAME, <<"rate_limits">>),
     TargetRates = kz_json:get_value(Section, AllRates, kz_json:new()),
 
     lists:foldl(fun(Method, Acc) ->

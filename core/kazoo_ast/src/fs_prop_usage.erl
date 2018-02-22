@@ -7,10 +7,10 @@
         ]).
 
 -include_lib("kazoo_ast/include/kz_ast.hrl").
--include_lib("kazoo_json/include/kazoo_json.hrl").
+-include_lib("kazoo_stdlib/include/kazoo_json.hrl").
 
 -define(DEBUG(_Fmt, _Args), 'ok').
-%% -define(DEBUG(Fmt, Args), io:format([$~, $p, $  | Fmt], [?LINE | Args])).
+%%-define(DEBUG(Fmt, Args), io:format([$~, $p, $  | Fmt], [?LINE | Args])).
 
 -spec to_header_file() -> ok.
 to_header_file() ->
@@ -146,9 +146,9 @@ function_args('ecallmgr_originate') ->
     {'handle_fs_event'
     ,[?VAR(0, 'Props'), ?VAR(0, 'UUID')]
     };
-function_args('ecallmgr_fs_event_stream') ->
-    {'handle_fs_props'
-    ,[?VAR(0, 'UUID'), ?VAR(0, 'Props'), ?VAR(0, 'Node'), ?VAR(0, 'SwitchURI'), ?VAR(0, 'SwitchURL')]
+function_args('ecallmgr_events') ->
+    {'event'
+    ,[?VAR(0, 'EventName'), ?VAR(0, 'UUID'), ?VAR(0, 'Props'), ?VAR(0, 'Node')]
     };
 function_args('ecallmgr_call_events') ->
     {'process_channel_event'
@@ -183,7 +183,7 @@ function_args('ecallmgr_fs_conferences') ->
      ,[?VAR(0, 'Props'), ?VAR(0, 'Node')]
      }
     ,{'participant_from_props'
-     ,[?VAR(0, 'Props'), ?VAR(0, 'Node'), ?VAR(0, 'CallInfo')]
+     ,[?VAR(0, 'Props'), ?VAR(0, 'Node')]
      }
     ];
 function_args('ecallmgr_fs_loopback') ->
@@ -214,6 +214,10 @@ function_args('ecallmgr_call_control') ->
      ,[?VAR(0, 'CallId'), ?VAR(0, 'Props'), ?VAR(0, 'State')]
      }
     ];
+function_args('ecallmgr_fs_presence') ->
+    {'maybe_build_presence_event'
+    ,[?VAR(0, 'Node'), ?VAR(0, 'UUID'), ?VAR(0, 'Props')]
+    };
 function_args(_M) ->
     {'undefined', []}.
 
@@ -495,7 +499,8 @@ list_of_keys_to_binary(Head, Tail) ->
 list_of_keys_to_binary(Arg, ?EMPTY_LIST, Path) ->
     lists:reverse([arg_to_key(Arg) | Path]);
 list_of_keys_to_binary(Arg, ?LIST(Head, Tail), Path) ->
-    list_of_keys_to_binary(Head, Tail, [arg_to_key(Arg) | Path]).
+    list_of_keys_to_binary(Head, Tail, [arg_to_key(Arg) | Path]);
+list_of_keys_to_binary(_Head, _Tail, Path) -> Path.
 
 maybe_add_usage(Usages, Call) ->
     case lists:member(Call, Usages) of
@@ -553,7 +558,9 @@ process_mfa_call(#usage{data_var_name=DataName
                     Acc#usage{visited=lists:usort([{M, F, As} | Vs])};
                 {M, AST} ->
                     ?DEBUG("  added AST for ~p~n", [M]),
-                    process_mfa_call(Acc#usage{functions=kz_ast_util:add_module_ast(Fs, M, AST)}
+                    #module_ast{functions=NewFs
+                               } = kz_ast_util:add_module_ast(#module_ast{functions=Fs}, M, AST),
+                    process_mfa_call(Acc#usage{functions=NewFs}
                                     ,M, F, As, 'false'
                                     )
             end;

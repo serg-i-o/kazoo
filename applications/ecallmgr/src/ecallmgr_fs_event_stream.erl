@@ -65,7 +65,7 @@ start_link(Node, Bindings, Subclasses) ->
 -spec init([atom() | bindings()]) -> {'ok', state()} | {'stop', any()}.
 init([Node, Bindings, Subclasses]) ->
     process_flag('trap_exit', 'true'),
-    kz_util:put_callid(list_to_binary([kz_util:to_binary(Node), <<"-eventstream">>])),
+    kz_util:put_callid(list_to_binary([kz_term:to_binary(Node), <<"-eventstream">>])),
     request_event_stream(#state{node=Node
                                ,bindings=Bindings
                                ,subclasses=Subclasses
@@ -161,7 +161,7 @@ handle_info({'tcp', Socket, Data}, #state{socket=Socket
     try binary_to_term(Data) of
         {'event', [UUID | Props]} when is_binary(UUID)
                                        orelse UUID =:= 'undefined' ->
-            _ = handle_fs_props(UUID, Props, Node, SwitchURI, SwitchURL),
+            _ = kz_util:spawn(fun handle_fs_props/5, [UUID, Props, Node, SwitchURI, SwitchURL]),
             {'noreply', State, Timeout};
         _Else ->
             io:format("~p~n", [_Else]),
@@ -201,14 +201,15 @@ handle_info(_Msg, #state{idle_alert=Timeout}=State) ->
 
 -spec handle_fs_props(api_binary(), kzd_freeswitch:data(), atom(), ne_binary(), ne_binary()) -> pid().
 handle_fs_props(UUID, Props, Node, SwitchURI, SwitchURL) ->
+    kz_util:put_callid(UUID),
     EventName = props:get_value(<<"Event-Subclass">>, Props, props:get_value(<<"Event-Name">>, Props)),
     EventProps = props:filter_undefined([{<<"Switch-URL">>, SwitchURL}
                                         ,{<<"Switch-URI">>, SwitchURI}
-                                        ,{<<"Switch-Nodename">>, kz_util:to_binary(Node)}
+                                        ,{<<"Switch-Nodename">>, kz_term:to_binary(Node)}
                                         ]
                                        )
         ++ Props ,
-    kz_util:spawn(fun process_stream/4, [EventName, UUID, EventProps, Node]).
+    ecallmgr_events:event(EventName, UUID, EventProps, Node).
 
 %%--------------------------------------------------------------------
 %% @private
@@ -255,11 +256,11 @@ request_event_stream(#state{node=Node}=State) ->
         {'ok', {IP, Port}} ->
             {'ok', IPAddress} = inet_parse:address(IP),
             gen_server:cast(self(), 'connect'),
-            kz_util:put_callid(list_to_binary([kz_util:to_binary(Node)
-                                              ,$-, kz_util:to_binary(IP)
-                                              ,$:, kz_util:to_binary(Port)
+            kz_util:put_callid(list_to_binary([kz_term:to_binary(Node)
+                                              ,$-, kz_term:to_binary(IP)
+                                              ,$:, kz_term:to_binary(Port)
                                               ])),
-            {'ok', State#state{ip=IPAddress, port=kz_util:to_integer(Port)}};
+            {'ok', State#state{ip=IPAddress, port=kz_term:to_integer(Port)}};
         {'EXIT', ExitReason} ->
             {'stop', {'shutdown', ExitReason}};
         {'error', ErrorReason} ->
@@ -283,7 +284,7 @@ get_event_bindings(#state{bindings='undefined'
     ['HEARTBEAT' | Acc];
 get_event_bindings(#state{subclasses=Subclasses}=State, Acc) when is_list(Subclasses) ->
     get_event_bindings(State#state{subclasses='undefined'}
-                      ,[kz_util:to_atom(Subclass, 'true') || Subclass <- Subclasses] ++ Acc
+                      ,[kz_term:to_atom(Subclass, 'true') || Subclass <- Subclasses] ++ Acc
                       );
 get_event_bindings(#state{subclasses=Subclass}=State, Acc)
   when is_atom(Subclass),
@@ -291,11 +292,11 @@ get_event_bindings(#state{subclasses=Subclass}=State, Acc)
     get_event_bindings(State#state{subclasses='undefined'}, [Subclass | Acc]);
 get_event_bindings(#state{subclasses=Subclass}=State, Acc) when is_binary(Subclass) ->
     get_event_bindings(State#state{subclasses='undefined'}
-                      ,[kz_util:to_atom(Subclass, 'true') | Acc]
+                      ,[kz_term:to_atom(Subclass, 'true') | Acc]
                       );
 get_event_bindings(#state{bindings=Bindings}=State, Acc) when is_list(Bindings) ->
     get_event_bindings(State#state{bindings='undefined'}
-                      ,[kz_util:to_atom(Binding, 'true') || Binding <- Bindings] ++ Acc
+                      ,[kz_term:to_atom(Binding, 'true') || Binding <- Bindings] ++ Acc
                       );
 get_event_bindings(#state{bindings=Binding}=State, Acc)
   when is_atom(Binding),
@@ -303,7 +304,7 @@ get_event_bindings(#state{bindings=Binding}=State, Acc)
     get_event_bindings(State#state{bindings='undefined'}, [Binding | Acc]);
 get_event_bindings(#state{bindings=Binding}=State, Acc) when is_binary(Binding) ->
     get_event_bindings(State#state{bindings='undefined'}
-                      ,[kz_util:to_atom(Binding, 'true') | Acc]
+                      ,[kz_term:to_atom(Binding, 'true') | Acc]
                       ).
 
 -spec maybe_bind(atom(), atoms()) ->
@@ -333,160 +334,6 @@ maybe_bind(Node, Bindings, Attempts) ->
         {'error', _Reason} ->
             lager:debug("failed on attempt ~b to bind: ~p", [Attempts, _Reason]),
             maybe_bind(Node, Bindings, Attempts+1)
-    end.
-
--spec process_stream(ne_binary(), api_binary(), kz_proplist(), atom()) -> any().
-process_stream(<<"CHANNEL_CREATE">> = EventName, UUID, EventProps, Node) ->
-    Props = ecallmgr_fs_loopback:filter(Node, UUID, EventProps, 'true'),
-    maybe_send_event(EventName, UUID, Props, Node),
-    process_event(EventName, UUID, Props, Node);
-process_stream(<<"sofia::transferor">> = EventName, UUID, Props, Node) ->
-    case props:get_value(<<"variable_refer_uuid">>, Props) of
-        'undefined' -> 'ok';
-        ReferUUID ->
-            lager:debug("found refer uuid ~s for interaction caching", [ReferUUID]),
-            {'ok', Channel} = ecallmgr_fs_channel:fetch(UUID),
-            CDR = kz_json:get_value(<<"interaction_id">>, Channel),
-            kz_cache:store_local(?ECALLMGR_INTERACTION_CACHE, ReferUUID, CDR),
-            lager:debug("caching interaction id ~s for callid ~s", [CDR, ReferUUID]),
-            ecallmgr_fs_command:set(Node, ReferUUID, [{<<?CALL_INTERACTION_ID>>, CDR}])
-    end,
-    maybe_send_event(EventName, UUID, Props, Node),
-    process_event(EventName, UUID, Props, Node);
-process_stream(<<"sofia::intercepted">> = EventName, UUID, Props, Node) ->
-    InterceptedBy = props:get_value(<<"intercepted_by">>, Props),
-    case ecallmgr_fs_channel:fetch(UUID, 'record') of
-        {'ok', #channel{interaction_id=InterAction
-                       ,direction=Direction
-                       }
-        } ->
-            lager:debug("sofia::intercepted: channel ~s Intercepted by ~s", [UUID, InterceptedBy]),
-            Vars = [{<<"Application-Logical-Direction">>, Direction}
-                   ,{<<?CALL_INTERACTION_ID>>, InterAction}
-                   ],
-            ecallmgr_fs_command:set(Node, InterceptedBy, Vars);
-        _ -> 'ok'
-    end,
-    ChannelUUID = props:get_value(<<"Channel-Call-UUID">>, Props),
-    Updates = props:filter_undefined(
-                [{<<"Caller-Callee-ID-Name">>, props:get_value(<<"Caller-Callee-ID-Name">>, Props)}
-                ,{<<"Caller-Callee-ID-Number">>, props:get_value(<<"Caller-Callee-ID-Number">>, Props)}
-                ]),
-    ecallmgr_fs_command:set(Node, ChannelUUID, Updates),
-    maybe_send_event(EventName, UUID, Props, Node),
-    process_event(EventName, UUID, Props, Node);
-process_stream(<<"CHANNEL_HOLD">> = EventName, UUID, Props, Node) ->
-    gproc:send({'p', 'l', ?FS_EVENT_REG_MSG(Node, EventName)}, {'event', [UUID | Props]});
-process_stream(<<"CHANNEL_UNHOLD">> = EventName, UUID, Props, Node) ->
-    gproc:send({'p', 'l', ?FS_EVENT_REG_MSG(Node, EventName)}, {'event', [UUID | Props]});
-process_stream(EventName, UUID, EventProps, Node) ->
-    kz_util:put_callid(UUID),
-    maybe_send_event(EventName, UUID, EventProps, Node),
-    process_event(EventName, UUID, EventProps, Node).
-
--spec process_event(ne_binary(), api_binary(), kz_proplist(), atom()) -> any().
-process_event(<<"CHANNEL_CREATE">>, UUID, Props, Node) ->
-    kz_util:put_callid(UUID),
-    _ = ecallmgr_fs_channel:new(Props, Node),
-    _ = ecallmgr_fs_channel:maybe_update_interaction_id(Props, Node),
-    maybe_start_event_listener(Node, UUID);
-process_event(?CHANNEL_MOVE_RELEASED_EVENT_BIN, _, Props, Node) ->
-    UUID = props:get_value(<<"old_node_channel_uuid">>, Props),
-    kz_util:put_callid(UUID),
-    gproc:send({'p', 'l', ?CHANNEL_MOVE_REG(Node, UUID)}
-              ,?CHANNEL_MOVE_RELEASED_MSG(Node, UUID, Props)
-              );
-process_event(?CHANNEL_MOVE_COMPLETE_EVENT_BIN, _, Props, Node) ->
-    UUID = props:get_value(<<"old_node_channel_uuid">>, Props),
-    kz_util:put_callid(UUID),
-    gproc:send({'p', 'l', ?CHANNEL_MOVE_REG(Node, UUID)}
-              ,?CHANNEL_MOVE_COMPLETE_MSG(Node, UUID, Props)
-              );
-process_event(<<"sofia::register">>, _UUID, Props, Node) ->
-    gproc:send({'p', 'l', ?REGISTER_SUCCESS_REG}, ?REGISTER_SUCCESS_MSG(Node, Props));
-process_event(<<"loopback::bowout">>, _UUID, Props, Node) ->
-    ResigningUUID = props:get_value(?RESIGNING_UUID, Props),
-    kz_util:put_callid(ResigningUUID),
-    lager:debug("bowout detected on ~s, transferring to ~s"
-               ,[ResigningUUID, props:get_value(?ACQUIRED_UUID, Props)]
-               ),
-    gproc:send({'p', 'l', ?LOOPBACK_BOWOUT_REG(ResigningUUID)}, ?LOOPBACK_BOWOUT_MSG(Node, Props));
-process_event(_, _, _, _) -> 'ok'.
-
--spec maybe_send_event(ne_binary(), api_binary(), kz_proplist(), atom()) -> any().
-maybe_send_event(<<"HEARTBEAT">>, _UUID, _Props, _Node) -> 'ok';
-maybe_send_event(<<"CHANNEL_BRIDGE">>=EventName, UUID, Props, Node) ->
-    kz_util:put_callid(UUID),
-    BridgeID = props:get_value(<<"variable_bridge_uuid">>, Props),
-    DialPlan = props:get_value(<<"Caller-Dialplan">>, Props),
-    Direction = props:get_value(?GET_CCV(<<"Application-Logical-Direction">>), Props),
-    App = props:get_value(<<"variable_current_application">>, Props),
-    Destination = props:get_value(<<"Caller-Destination-Number">>, Props),
-
-    case {BridgeID, Direction, DialPlan, App, Destination} of
-        {'undefined', _, _, _, _} ->
-            gproc:send({'p', 'l', ?FS_EVENT_REG_MSG(Node, EventName)}, {'event', [UUID | Props]}),
-            maybe_send_call_event(UUID, Props, Node);
-        {BridgeID, <<"outbound">>, <<"inline">>, <<"intercept">>, 'undefined'} ->
-            ALeg = props:get_value(<<"Bridge-A-Unique-ID">>, Props),
-            BLeg = props:get_value(<<"Bridge-B-Unique-ID">>, Props),
-            lager:debug("channel bridge intercept: UUID: ~s, A : ~s, B : ~s", [UUID, ALeg, BLeg]),
-            case ecallmgr_fs_channel:channel_data(Node, BLeg) of
-                {'ok', CData} ->
-                    Data = props:filter_undefined(
-                             [{<<"Event-Subclass">>, props:get_value(<<"Event-Subclass">>, Props)}
-                             ,{<<"Event-Name">>, props:get_value(<<"Event-Name">>, Props)}
-                             ]) ++ CData,
-                    gproc:send({'p', 'l', ?FS_EVENT_REG_MSG(Node, EventName)}, {'event', [BLeg | Data]}),
-                    gproc:send({'p', 'l', ?FS_CALL_EVENT_REG_MSG(Node, BLeg)}, {'event', [BLeg | Data]});
-                _ ->
-                    lager:debug("channel bridge intercept: failed to get channel data for ~s", [BLeg])
-            end;
-        _Else ->
-            gproc:send({'p', 'l', ?FS_EVENT_REG_MSG(Node, EventName)}, {'event', [UUID | Props]}),
-            maybe_send_call_event(UUID, Props, Node)
-    end;
-maybe_send_event(<<"loopback::bowout">> = EventName, _UUID, Props, Node) ->
-    ResigningUUID = props:get_value(?RESIGNING_UUID, Props),
-    _AcquiringUUID = props:get_value(?ACQUIRED_UUID, Props),
-    kz_util:put_callid(ResigningUUID),
-
-    lager:debug("bowout for '~s', resigning ~s acquiring ~s", [_UUID, ResigningUUID, _AcquiringUUID]),
-
-    send_event(EventName, ResigningUUID, Props, Node);
-maybe_send_event(<<"CHANNEL_DESTROY">> = EventName, UUID, Props, Node) ->
-    kz_util:put_callid(UUID),
-    case ecallmgr_fs_channel:node(UUID) of
-        {'ok', Node} ->
-            gproc:send({'p', 'l', ?FS_EVENT_REG_MSG(Node, EventName)}, {'event', [UUID | Props]}),
-            maybe_send_call_event(UUID, Props, Node);
-        {'ok', _OtherNode} ->
-            lager:debug("dropping channel destroy from ~s (expected ~s)", [Node, _OtherNode]);
-        {'error', 'not_found'} ->
-            lager:debug("dropping channel destroy from ~s (no such channel)", [Node])
-    end;
-maybe_send_event(EventName, UUID, Props, Node) ->
-    kz_util:put_callid(UUID),
-    case kz_util:is_true(props:get_value(<<"variable_channel_is_moving">>, Props)) of
-        'true' -> 'ok';
-        'false' ->
-            send_event(EventName, UUID, Props, Node)
-    end.
-
-send_event(EventName, UUID, Props, Node) ->
-    gproc:send({'p', 'l', ?FS_EVENT_REG_MSG(Node, EventName)}, {'event', [UUID | Props]}),
-    maybe_send_call_event(UUID, Props, Node).
-
--spec maybe_send_call_event(api_binary(), kz_proplist(), atom()) -> any().
-maybe_send_call_event('undefined', _, _) -> 'ok';
-maybe_send_call_event(CallId, Props, Node) ->
-    gproc:send({'p', 'l', ?FS_CALL_EVENT_REG_MSG(Node, CallId)}, {'event', [CallId | Props]}).
-
--spec maybe_start_event_listener(atom(), ne_binary()) -> 'ok' | sup_startchild_ret().
-maybe_start_event_listener(Node, UUID) ->
-    case kz_cache:fetch_local(?ECALLMGR_UTIL_CACHE, {UUID, 'start_listener'}) of
-        {'ok', 'true'} -> ecallmgr_call_sup:start_event_process(Node, UUID);
-        _E -> 'ok'
     end.
 
 -spec idle_alert_timeout() -> kz_timeout().

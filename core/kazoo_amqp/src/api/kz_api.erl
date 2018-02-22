@@ -37,6 +37,9 @@
         ,app_name/1
         ,app_version/1
         ,node/1
+        ,defer_response/1
+        ,from_pid/1
+        ,reply_to/1
         ]).
 
 -export([is_federated_event/1
@@ -121,6 +124,24 @@ call_id(Props) when is_list(Props) ->
 call_id(JObj) ->
     kz_json:get_value(?KEY_API_CALL_ID, JObj).
 
+-spec defer_response(api_terms()) -> api_binary().
+defer_response(Props) when is_list(Props) ->
+    props:get_is_true(?KEY_DEFER_RESPONSE, Props);
+defer_response(JObj) ->
+    kz_json:is_true(?KEY_DEFER_RESPONSE, JObj).
+
+-spec from_pid(api_terms()) -> api_binary().
+from_pid(Props) when is_list(Props) ->
+    props:get_value(?KEY_REQUEST_FROM_PID, Props);
+from_pid(JObj) ->
+    kz_json:get_value(?KEY_REQUEST_FROM_PID, JObj).
+
+-spec reply_to(api_terms()) -> api_binary().
+reply_to(Props) when is_list(Props) ->
+    props:get_value(?KEY_REPLY_TO_PID, Props);
+reply_to(JObj) ->
+    kz_json:get_value(?KEY_REPLY_TO_PID, JObj).
+
 %%--------------------------------------------------------------------
 %% @doc Default Headers in all messages - see wiki
 %% Creates the seed proplist for the eventual message to be sent
@@ -141,7 +162,7 @@ default_headers(ServerID, AppName, AppVsn) ->
     [{?KEY_SERVER_ID, ServerID}
     ,{?KEY_APP_NAME, AppName}
     ,{?KEY_APP_VERSION, AppVsn}
-    ,{?KEY_NODE, kz_util:to_binary(node())}
+    ,{?KEY_NODE, kz_term:to_binary(node())}
     ].
 
 default_headers(EvtCat, EvtName, AppName, AppVsn) ->
@@ -153,7 +174,7 @@ default_headers(ServerID, EvtCat, EvtName, AppName, AppVsn) ->
     ,{?KEY_EVENT_NAME, EvtName}
     ,{?KEY_APP_NAME, AppName}
     ,{?KEY_APP_VERSION, AppVsn}
-    ,{?KEY_NODE, kz_util:to_binary(node())}
+    ,{?KEY_NODE, kz_term:to_binary(node())}
     ].
 
 default_headers_v(Props) when is_list(Props) ->
@@ -164,12 +185,12 @@ default_headers_v(JObj) ->
 
 -spec default_header_v(ne_binary(), kz_proplist()) -> boolean().
 default_header_v(Header, Props) ->
-    not kz_util:is_empty(props:get_value(Header, Props)).
+    not kz_term:is_empty(props:get_value(Header, Props)).
 
 -spec disambiguate_and_publish(kz_json:object(), kz_json:object(), ne_binary() | atom()) -> any().
 disambiguate_and_publish(ReqJObj, RespJObj, Binding) ->
-    Wapi = list_to_binary([<<"kapi_">>, kz_util:to_binary(Binding)]),
-    ApiMod = kz_util:to_atom(Wapi),
+    Wapi = list_to_binary([<<"kapi_">>, kz_term:to_binary(Binding)]),
+    ApiMod = kz_term:to_atom(Wapi),
     ApiMod:disambiguate_and_publish(ReqJObj, RespJObj).
 
 %%--------------------------------------------------------------------
@@ -193,7 +214,7 @@ prepare_api_payload(Prop, HeaderValues) ->
 prepare_api_payload(Prop, HeaderValues, FormatterFun) when is_function(FormatterFun, 1) ->
     prepare_api_payload(Prop, HeaderValues, [{'formatter', FormatterFun}]);
 prepare_api_payload(Prop, HeaderValues, Options) when is_list(Prop) ->
-    FormatterFun = props:get_value('formatter', Options, fun kz_util:identity/1),
+    FormatterFun = props:get_value('formatter', Options, fun kz_term:identity/1),
     CleanupFuns = [fun (P) -> remove_empty_values(P, props:get_is_true('remove_recursive', Options, 'true')) end
                   ,fun (P) -> set_missing_values(P, ?DEFAULT_VALUES) end
                   ,fun (P) -> set_missing_values(P, HeaderValues) end
@@ -248,7 +269,7 @@ do_empty_value_removal([{K,V}=KV|T], Recursive, Acc) ->
         'true' -> do_empty_value_removal(T, Recursive, Acc);
         'false' ->
             case (kz_json:is_json_object(V)
-                  orelse kz_util:is_proplist(V)
+                  orelse kz_term:is_proplist(V)
                  )
                 andalso Recursive
             of
@@ -346,7 +367,7 @@ build_message(Prop, ReqH, OptH) when is_list(Prop) ->
     case defaults(Prop, ReqH ++ OptH) of
         {'error', _Reason}=Error ->
             lager:debug("API message does not have the default headers ~s: ~p"
-                       ,[string:join([kz_util:to_list(H) || H <- ReqH], ","), Error]
+                       ,[string:join([kz_term:to_list(H) || H <- ReqH], ","), Error]
                        ),
             Error;
         HeadAndProp ->
@@ -365,7 +386,7 @@ build_message_specific_headers({Headers, Prop}, ReqH, OptH) ->
     case update_required_headers(Prop, ReqH, Headers) of
         {'error', _Reason} = Error ->
             lager:debug("API message does not have the required headers ~s: ~p : ~p"
-                       ,[kz_util:join_binary(ReqH, <<",">>), Error, ReqH]
+                       ,[kz_binary:join(ReqH, <<",">>), Error, ReqH]
                        ),
             Error;
         {Headers1, Prop1} ->
@@ -381,7 +402,7 @@ build_message_specific({Headers, Prop}, ReqH, OptH) ->
     case update_required_headers(Prop, ReqH, Headers) of
         {'error', _Reason} = Error ->
             lager:debug("API message does not have the required headers ~s: ~p"
-                       ,[kz_util:join_binary(ReqH, <<",">>), Error]
+                       ,[kz_binary:join(ReqH, <<",">>), Error]
                        ),
             Error;
         {Headers1, Prop1} ->
@@ -402,7 +423,7 @@ headers_to_json([_|_]=HeadersProp) ->
 %% Checks Prop for all default headers, throws error if one is missing
 %% defaults(PassedProps, MessageHeaders) -> { Headers, NewPropList } | {error, Reason}
 
--spec defaults(api_terms(), kz_proplist()) ->
+-spec defaults(api_terms(), api_headers()) ->
                       {kz_proplist(), kz_proplist()} |
                       {'error', string()}.
 defaults(Prop, MsgHeaders) -> defaults(Prop, expand_headers(MsgHeaders), []).
@@ -513,9 +534,7 @@ values_check_all(Prop, {Key, V}) ->
         'undefined' -> 'true'; % isn't defined in Prop, has_all will error if req'd
         V -> 'true';
         _Val ->
-            lager:debug("API key '~s' value '~p' is not '~p'"
-                       ,[Key, _Val, V]
-                       ),
+            lager:debug("API key '~s' value '~p' is not '~p'", [Key, _Val, V]),
             'false'
     end.
 

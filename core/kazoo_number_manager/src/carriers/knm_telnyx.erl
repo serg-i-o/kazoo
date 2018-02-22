@@ -11,6 +11,7 @@
 -module(knm_telnyx).
 -behaviour(knm_gen_carrier).
 
+-export([info/0]).
 -export([is_local/0]).
 -export([find_numbers/3]).
 -export([acquire_number/1]).
@@ -23,13 +24,24 @@
 
 -define(MOD_CONFIG_CAT, <<(?KNM_CONFIG_CAT)/binary, ".telnyx">>).
 
--define(IS_SANDBOX_PROVISIONING_TRUE,
-        kapps_config:get_is_true(?MOD_CONFIG_CAT, <<"sandbox_provisioning">>, 'false')).
--define(IS_PROVISIONING_ENABLED,
-        kapps_config:get_is_true(?MOD_CONFIG_CAT, <<"enable_provisioning">>, 'true')).
-
+-define(IS_SANDBOX_PROVISIONING_TRUE
+       ,kapps_config:get_is_true(?MOD_CONFIG_CAT, <<"sandbox_provisioning">>, 'false')
+       ).
+-define(IS_PROVISIONING_ENABLED
+       ,kapps_config:get_is_true(?MOD_CONFIG_CAT, <<"enable_provisioning">>, 'true')
+       ).
 
 %%% API
+
+%%--------------------------------------------------------------------
+%% @public
+%% @doc
+%% @end
+%%--------------------------------------------------------------------
+-spec info() -> map().
+info() ->
+    #{?CARRIER_INFO_MAX_PREFIX => 3
+     }.
 
 %%--------------------------------------------------------------------
 %% @public
@@ -176,7 +188,7 @@ international_numbers(JObjs, Options) ->
 %%TODO: once Telnyx gives back real numbers, remove this.
 %% Right now international search returns only prefixes.
 ugly_hack(Dialcode, Num) ->
-    kz_util:pad_binary(<<Dialcode/binary, Num/binary>>, 9, <<"0">>).
+    kz_binary:pad(<<Dialcode/binary, Num/binary>>, 9, <<"0">>).
 
 search_kind('npa') -> 1;
 search_kind('region') -> 2;

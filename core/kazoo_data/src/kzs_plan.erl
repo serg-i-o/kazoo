@@ -52,7 +52,7 @@ plan(DbName, 'undefined')  ->
     plan(DbName);
 plan(DbName, DocType)
   when is_atom(DocType) ->
-    plan(DbName, kz_util:to_binary(DocType)).
+    plan(DbName, kz_term:to_binary(DocType)).
 
 -spec plan(ne_binary(), api_binary(), api_binary()) -> map().
 plan(DbName, 'undefined', 'undefined') ->
@@ -185,7 +185,7 @@ dataplan_match(Classification, Plan, AccountId) ->
                                 ,<<"settings">> := AttSettings
                                 }
              } = GAtt,
-            AttHandler = kz_util:to_atom(<<"kz_att_", AttHandlerBin/binary>>,'true'),
+            AttHandler = kz_term:to_atom(<<"kz_att_", AttHandlerBin/binary>>,'true'),
             Params = maps:merge(AttSettings, maps:get(<<"params">>, CAtt, #{})),
 
             #{tag => Tag
@@ -193,7 +193,7 @@ dataplan_match(Classification, Plan, AccountId) ->
              ,others => Others
              ,att_proxy => 'true'
              ,att_post_handler => att_post_handler(CAtt)
-             ,att_handler => {AttHandler, kzs_util:map_keys_to_atoms(Params)}
+             ,att_handler => {AttHandler, kz_maps:keys_to_atoms(Params)}
              ,classification => Classification
              ,account_id => AccountId
              }
@@ -233,13 +233,13 @@ dataplan_type_match(Classification, DocType, Plan, AccountId) ->
                                 ,<<"settings">> := AttSettings
                                 }
              } = GAtt,
-            AttHandler = kz_util:to_atom(<<"kz_att_", AttHandlerBin/binary>>,'true'),
+            AttHandler = kz_term:to_atom(<<"kz_att_", AttHandlerBin/binary>>,'true'),
             Params = maps:merge(AttSettings, maps:get(<<"params">>, TypeAttMap, #{})),
             #{tag => Tag
              ,server => Server
              ,att_proxy => 'true'
              ,att_post_handler => att_post_handler(TypeAttMap)
-             ,att_handler => {AttHandler, kzs_util:map_keys_to_atoms(Params)}
+             ,att_handler => {AttHandler, kz_maps:keys_to_atoms(Params)}
              ,classification => Classification
              ,doc_type => DocType
              ,account_id => AccountId
@@ -308,11 +308,8 @@ fetch_dataplan(Id) ->
 
 -spec fetch_dataplan_from_file(ne_binary()) -> kz_json:object().
 fetch_dataplan_from_file(Id) ->
-    JObj = kz_json:load_fixture_from_file('kazoo_data'
-                                         ,?DATAPLAN_FILE_LOCATION
-                                         ,[Id, ".json"]
-                                         ),
-    kzs_cache:add_to_doc_cache(?KZ_DATA_DB, Id, JObj),
+    JObj = kz_json:load_fixture_from_file(?APP, ?DATAPLAN_FILE_LOCATION, [Id, ".json"]),
+    _ = kzs_cache:add_to_doc_cache(?KZ_DATA_DB, Id, JObj),
     JObj.
 
 -spec default_dataplan() -> kz_json:object().
@@ -322,7 +319,7 @@ default_dataplan() ->
 -spec maybe_start_connection(atom() | ne_binary(), map()) -> {atom(), server()}.
 maybe_start_connection(Connection, Params)
   when is_binary(Connection) ->
-    maybe_start_connection(kz_util:to_atom(Connection, 'true'), Params);
+    maybe_start_connection(kz_term:to_atom(Connection, 'true'), Params);
 maybe_start_connection(Tag, Params) ->
     case kz_dataconnections:get_server(Tag) of
         'undefined' -> start_connection(Tag, Params);
@@ -331,7 +328,7 @@ maybe_start_connection(Tag, Params) ->
 
 -spec start_connection(atom(), map()) -> {atom(), server()}.
 start_connection(Tag, Params) ->
-    Connection = kz_dataconfig:connection(kzs_util:map_keys_to_atoms(Params#{tag => Tag})),
+    Connection = kz_dataconfig:connection(kz_maps:keys_to_atoms(Params#{tag => Tag})),
     kz_dataconnections:add(Connection),
     case kz_dataconnections:wait_for_connection(Tag, ?NEW_CONNECTION_TIMEOUT) of
         'no_connection' ->

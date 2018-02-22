@@ -12,7 +12,6 @@
         ,type/0
         ,notification_emails/1, notification_emails/2
         ,owner_id/1, owner_id/2
-        ,owner/1
         ,timezone/1, timezone/2
         ,skip_instructions/1, skip_instructions/2
         ,skip_greeting/1, skip_greeting/2
@@ -23,6 +22,7 @@
         ,is_setup/1, is_setup/2
 
         ,set_notification_emails/2
+        ,media_extension/1
         ]).
 
 -include("kz_documents.hrl").
@@ -44,6 +44,14 @@
 
 -define(PVT_TYPE, <<"vmbox">>).
 
+-define(ACCOUNT_VM_EXTENSION(AccountId),
+        kapps_account_config:get_global(AccountId
+                                       ,<<"callflow">>
+                                       ,[<<"voicemail">>, <<"extension">>]
+                                       ,<<"mp3">>
+                                       )
+       ).
+
 -spec new() -> doc().
 new() ->
     kz_json:from_list([{<<"pvt_type">>, type()}]).
@@ -56,11 +64,12 @@ type() -> ?PVT_TYPE.
 notification_emails(Box) ->
     notification_emails(Box, []).
 notification_emails(Box, Default) ->
-    case kz_json:get_value(?KEY_NOTIFY_EMAILS, Box) of
+    case kz_json:get_list_value(?KEY_NOTIFY_EMAILS, Box) of
         'undefined' ->
             case kz_json:get_value(?KEY_OLD_NOTIFY_EMAILS, Box, Default) of
                 Email when is_binary(Email) -> [Email];
-                Emails -> Emails
+                Emails when is_list(Emails) -> Emails;
+                _ -> []
             end;
         Emails -> Emails
     end.
@@ -78,24 +87,11 @@ owner_id(Box) ->
 owner_id(Box, Default) ->
     kz_json:get_value(?KEY_OWNER_ID, Box, Default).
 
--spec owner(doc()) -> kzd_user:doc() | 'undefined'.
--spec owner(doc(), ne_binary()) -> kzd_user:doc() | 'undefined'.
-owner(Box) ->
-    case owner_id(Box) of
-        'undefined' -> 'undefined';
-        OwnerId -> owner(Box, OwnerId)
-    end.
-
-owner(Box, OwnerId) ->
-    case kz_datamgr:open_cache_doc(kz_doc:account_db(Box), OwnerId) of
-        {'ok', OwnerJObj} -> OwnerJObj;
-        {'error', 'not_found'} -> 'undefined'
-    end.
-
--spec timezone(doc()) -> api_binary().
--spec timezone(doc(), Default) -> ne_binary() | Default.
+-spec timezone(doc()) -> ne_binary().
 timezone(Box) ->
     timezone(Box, 'undefined').
+
+-spec timezone(doc(), Default) -> ne_binary() | Default.
 timezone(Box, Default) ->
     case kz_json:get_value(?KEY_TIMEZONE, Box) of
         'undefined'   -> owner_timezone(Box, Default);
@@ -104,24 +100,11 @@ timezone(Box, Default) ->
     end.
 
 -spec owner_timezone(doc(), Default) -> ne_binary() | Default.
--spec owner_timezone(doc(), Default, kzd_user:doc()) -> ne_binary() | Default.
 owner_timezone(Box, Default) ->
-    case owner(Box) of
-        'undefined' -> account_timezone(Box, Default);
-        OwnerJObj -> owner_timezone(Box, Default, OwnerJObj)
+    case kzd_user:fetch(kz_doc:account_db(Box), owner_id(Box)) of
+        {'ok', OwnerJObj} -> kzd_user:timezone(OwnerJObj, Default);
+        {'error', _} -> kz_account:timezone(kz_doc:account_id(Box), Default)
     end.
-
-owner_timezone(Box, Default, OwnerJObj) ->
-    case kzd_user:timezone(OwnerJObj, 'undefined') of
-        'undefined'   -> account_timezone(Box, Default);
-        <<"inherit">> -> account_timezone(Box, Default);  %% UI-1808
-        TZ -> TZ
-    end.
-
--spec account_timezone(doc(), Default) -> ne_binary() | Default.
-account_timezone(Box, Default) ->
-    {'ok', AccountJObj} = kz_account:fetch(kz_doc:account_id(Box)),
-    kz_account:timezone(AccountJObj, Default).
 
 -spec skip_instructions(doc()) -> boolean().
 -spec skip_instructions(doc(), Default) -> boolean() | Default.
@@ -171,3 +154,8 @@ is_setup(Box) ->
     is_setup(Box, 'false').
 is_setup(Box, Default) ->
     kz_json:is_true(?KEY_IS_SETUP, Box, Default).
+
+-spec media_extension(doc()) -> ne_binary().
+media_extension(Box) ->
+    AccountId = kz_doc:account_id(Box),
+    kz_json:get_ne_binary_value(<<"media_extension">>, Box, ?ACCOUNT_VM_EXTENSION(AccountId)).

@@ -18,6 +18,7 @@
         ,validate/1, validate/2, validate/3
         ,put/1, put/2
         ,post/2
+        ,patch/2
         ,delete/2
         ]).
 
@@ -38,8 +39,8 @@
 -spec init() -> ok.
 init() ->
     _ = kz_datamgr:db_create(?KZ_OFFNET_DB),
-    _ = kz_datamgr:revise_doc_from_file(?KZ_SIP_DB, 'crossbar', "views/resources.json"),
-    _ = kz_datamgr:revise_doc_from_file(?KZ_OFFNET_DB, 'crossbar', "views/resources.json"),
+    _ = kz_datamgr:revise_doc_from_file(?KZ_SIP_DB, ?APP, "views/resources.json"),
+    _ = kz_datamgr:revise_doc_from_file(?KZ_OFFNET_DB, ?APP, "views/resources.json"),
 
     _Pid = maybe_start_jobs_listener(),
     lager:debug("started jobs listener: ~p", [_Pid]),
@@ -49,6 +50,7 @@ init() ->
                           ,{<<"*.validate.resources">>, 'validate'}
                           ,{<<"*.execute.put.resources">>, 'put'}
                           ,{<<"*.execute.post.resources">>, 'post'}
+                          ,{<<"*.execute.patch.resources">>, 'patch'}
                           ,{<<"*.execute.delete.resources">>, 'delete'}
 
                           ,{<<"*.allowed_methods.global_resources">>, 'allowed_methods'}
@@ -131,7 +133,7 @@ allowed_methods(?COLLECTION) ->
 allowed_methods(?JOBS) ->
     [?HTTP_GET, ?HTTP_PUT];
 allowed_methods(_ResourceId) ->
-    [?HTTP_GET, ?HTTP_POST, ?HTTP_DELETE].
+    [?HTTP_GET, ?HTTP_POST, ?HTTP_PATCH, ?HTTP_DELETE].
 
 allowed_methods(?JOBS, _JobId) ->
     [?HTTP_GET].
@@ -225,8 +227,19 @@ validate_resource(Context, Id, ?HTTP_POST) ->
         ?KZ_OFFNET_DB -> update(Id, Context);
         _AccountDb -> update_local(Context, Id)
     end;
+validate_resource(Context, Id, ?HTTP_PATCH) ->
+    validate_patch(read(Id, Context), Id);
 validate_resource(Context, Id, ?HTTP_DELETE) ->
     read(Id, Context).
+
+validate_patch(Context, Id) ->
+    case cb_context:resp_status(Context) of
+        'success' ->
+            PatchJObj = kz_doc:public_fields(cb_context:req_data(Context)),
+            JObj = kz_json:merge_jobjs(PatchJObj, cb_context:doc(Context)),
+            validate_resource(cb_context:set_req_data(Context, JObj), Id, ?HTTP_POST);
+        _Status -> Context
+    end.
 
 validate_collection(Context) ->
     lists:foldl(fun validate_collection_fold/2
@@ -284,7 +297,7 @@ validate_collection_resource(Resource, Context, ?HTTP_PUT) ->
                                                 {'ok', cb_context:context()} |
                                                 {'error', kz_json:object()}.
 validate_collection_resource_patch(PatchJObj, Context) ->
-    PatchedJObj = kz_json:merge_recursive(cb_context:doc(Context), kz_doc:public_fields(PatchJObj)),
+    PatchedJObj = kz_json:merge(cb_context:doc(Context), kz_doc:public_fields(PatchJObj)),
     Context1 = update(kz_doc:id(PatchedJObj)
                      ,cb_context:set_req_data(Context, PatchedJObj)
                      ),
@@ -303,6 +316,10 @@ validate_jobs(Context, ?HTTP_PUT) ->
 post(Context, ?COLLECTION) ->
     do_collection(Context, cb_context:account_db(Context));
 post(Context, Id) ->
+    do_post(Context, Id, cb_context:account_db(Context)).
+
+-spec patch(cb_context:context(), path_token()) -> cb_context:context().
+patch(Context, Id) ->
     do_post(Context, Id, cb_context:account_db(Context)).
 
 -spec do_collection(cb_context:context(), ne_binary()) -> cb_context:context().
@@ -394,11 +411,11 @@ read(Id, Context) ->
 
 -spec read_job(cb_context:context(), ne_binary()) -> cb_context:context().
 read_job(Context, ?MATCH_MODB_PREFIX(Year,Month,_) = JobId) ->
-    Modb = cb_context:account_modb(Context, kz_util:to_integer(Year), kz_util:to_integer(Month)),
-    leak_job_fields(crossbar_doc:load(JobId, cb_context:set_account_db(Context, Modb), ?TYPE_CHECK_OPTION(<<"resource">>)));
+    Modb = cb_context:account_modb(Context, kz_term:to_integer(Year), kz_term:to_integer(Month)),
+    leak_job_fields(crossbar_doc:load(JobId, cb_context:set_account_db(Context, Modb), ?TYPE_CHECK_OPTION(<<"resource_job">>)));
 read_job(Context, ?MATCH_MODB_PREFIX_M1(Year,Month,_) = JobId) ->
-    Modb = cb_context:account_modb(Context, kz_util:to_integer(Year), kz_util:to_integer(Month)),
-    leak_job_fields(crossbar_doc:load(JobId, cb_context:set_account_db(Context, Modb), ?TYPE_CHECK_OPTION(<<"resource">>)));
+    Modb = cb_context:account_modb(Context, kz_term:to_integer(Year), kz_term:to_integer(Month)),
+    leak_job_fields(crossbar_doc:load(JobId, cb_context:set_account_db(Context, Modb), ?TYPE_CHECK_OPTION(<<"resource_job">>)));
 read_job(Context, JobId) ->
     lager:debug("invalid job id format: ~s", [JobId]),
     crossbar_util:response_bad_identifier(JobId, Context).
@@ -461,7 +478,7 @@ databases(Context, CreatedFrom, CreatedTo) ->
 %%--------------------------------------------------------------------
 %% @private
 %% @doc
-%% Normalizes the resuts of a view
+%% Normalizes the results of a view
 %% @end
 %%--------------------------------------------------------------------
 -spec normalize_view_results(kz_json:object(), kz_json:objects()) -> kz_json:objects().
@@ -526,10 +543,10 @@ on_successful_local_validation(Id, Context) ->
 -spec on_successful_job_validation('undefined', cb_context:context()) -> cb_context:context().
 on_successful_job_validation('undefined', Context) ->
     {Year, Month, _} = erlang:date(),
-    Id = list_to_binary([kz_util:to_binary(Year)
-                        ,kz_util:pad_month(Month)
+    Id = list_to_binary([kz_term:to_binary(Year)
+                        ,kz_date:pad_month(Month)
                         ,"-"
-                        ,kz_util:rand_hex_binary(8)
+                        ,kz_binary:rand_hex(8)
                         ]),
 
     cb_context:set_doc(Context
@@ -561,7 +578,7 @@ reload_gateways() ->
 collection_process(Context) ->
     RespData = cb_context:resp_data(Context),
 
-    case kz_util:is_empty(kz_json:get_value(<<"errors">>, RespData)) of
+    case kz_term:is_empty(kz_json:get_value(<<"errors">>, RespData)) of
         'true' -> collection_process(Context, kz_json:get_value(?KEY_SUCCESS, RespData));
         'false' -> cb_context:set_resp_data(Context, kz_json:delete_key(?KEY_SUCCESS, RespData))
     end.

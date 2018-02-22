@@ -33,6 +33,7 @@
 
 -define(MOD_CONFIG_CAT, <<(?CONFIG_CAT)/binary, ".cdrs">>).
 -define(MAX_BULK, kapps_config:get_integer(?MOD_CONFIG_CAT, <<"maximum_bulk">>, 50)).
+-define(STALE_CDR, kapps_config:get_is_true(?MOD_CONFIG_CAT, <<"cdr_stale_view">>, false)).
 -define(CB_LIST_BY_USER, <<"cdrs/listing_by_owner">>).
 -define(CB_LIST, <<"cdrs/crossbar_listing">>).
 -define(CB_INTERACTION_LIST, <<"cdrs/interaction_listing">>).
@@ -132,14 +133,14 @@ to_json(Req0, Context) ->
 -spec pagination(payload()) -> payload().
 pagination({Req, Context}=Payload) ->
     PageSize = cb_context:fetch(Context, 'page_size', 0),
-    'ok' = cowboy_req:chunk(<<", \"page_size\": ", (kz_util:to_binary(PageSize))/binary>>, Req),
+    'ok' = cowboy_req:chunk(<<", \"page_size\": ", (kz_term:to_binary(PageSize))/binary>>, Req),
     IsInteraction = cb_context:fetch(Context, 'interaction', 'false'),
     case pagination_key(IsInteraction, 'next_start_key', Context) of
         'ok' -> 'ok';
-        Next -> cowboy_req:chunk(<<", \"next_start_key\": \"", (kz_util:to_binary(Next))/binary, "\"">>, Req)
+        Next -> cowboy_req:chunk(<<", \"next_start_key\": \"", (kz_term:to_binary(Next))/binary, "\"">>, Req)
     end,
     StartKey = pagination_key(IsInteraction, 'start_key', Context),
-    'ok' = cowboy_req:chunk(<<", \"start_key\": \"", (kz_util:to_binary(StartKey))/binary, "\"">>, Req),
+    'ok' = cowboy_req:chunk(<<", \"start_key\": \"", (kz_term:to_binary(StartKey))/binary, "\"">>, Req),
     Payload.
 
 -spec pagination_key(boolean(), atom(), cb_context:context()) ->
@@ -296,14 +297,8 @@ load_cdr_summary(Context, _Nouns) ->
 -spec load_interaction_cdr_summary(cb_context:context(), req_nouns()) ->
                                           cb_context:context().
 load_interaction_cdr_summary(Context, [_, {?KZ_ACCOUNTS_DB, [_]} | _]) ->
-    lager:debug("loading interaction cdrs for account ~s"
-               ,[cb_context:account_id(Context)]
-               ),
-    case create_view_options('undefined'
-                            ,fun create_interaction_view_options/4
-                            ,Context
-                            )
-    of
+    lager:debug("loading interaction cdrs for account ~s", [cb_context:account_id(Context)]),
+    case create_view_options(undefined, fun create_interaction_view_options/4, Context) of
         {'ok', ViewOptions} ->
             load_view(?CB_INTERACTION_LIST
                      ,props:filter_undefined(ViewOptions)
@@ -329,14 +324,8 @@ load_interaction_cdr_summary(Context, _Nouns) ->
 
 -spec load_cdr_summary(cb_context:context()) -> cb_context:context().
 load_cdr_summary(Context) ->
-    lager:debug("loading cdr summary for account ~s"
-               ,[cb_context:account_id(Context)]
-               ),
-    case create_view_options('undefined'
-                            ,fun create_summary_view_options/4
-                            ,Context
-                            )
-    of
+    lager:debug("loading cdr summary for account ~s", [cb_context:account_id(Context)]),
+    case create_view_options(undefined, fun create_summary_view_options/4, Context) of
         {'ok', ViewOptions} ->
             AccountId = cb_context:account_id(Context),
             DBs = chunked_dbs(AccountId, ViewOptions, fun view_option/2),
@@ -348,21 +337,15 @@ load_cdr_summary(Context) ->
 load_cdr_summary(Context, _, []) ->
     cb_context:set_resp_status(Context, 'success');
 load_cdr_summary(Context, ViewOptions, [Db|Dbs]) ->
-    Context1 = cb_context:set_account_db(Context, Db),
-    Context2 = crossbar_doc:load_view(
-                 ?CB_SUMMARY_VIEW
+    Context1 = crossbar_doc:load_view(?CB_SUMMARY_VIEW
                                      ,ViewOptions
-                                     ,Context1
+                                     ,cb_context:set_account_db(Context, Db)
                                      ,fun normalize_summary_results/2
-                ),
-    case cb_context:resp_status(Context2) of
+                                     ),
+    case cb_context:resp_status(Context1) of
         'success' ->
-            load_cdr_summary(
-              combine_cdr_summary(Context, Context2)
-                            ,ViewOptions
-                            ,Dbs
-             );
-        _Else -> Context2
+            load_cdr_summary(combine_cdr_summary(Context, Context1), ViewOptions, Dbs);
+        _Else -> Context1
     end.
 
 -spec combine_cdr_summary(cb_context:context(), cb_context:context()) -> cb_context:context().
@@ -440,6 +423,7 @@ create_interaction_view_options('undefined', Context, CreatedFrom, CreatedTo) ->
            ,{'group_level', 2}
            ,{'reduce', 'true'}
            ,'descending'
+            | maybe_add_stale_to_options(?STALE_CDR)
            ]};
 create_interaction_view_options(OwnerId, Context, CreatedFrom, CreatedTo) ->
     {'ok', [{'startkey', [OwnerId, CreatedTo]}
@@ -449,7 +433,12 @@ create_interaction_view_options(OwnerId, Context, CreatedFrom, CreatedTo) ->
            ,{'group_level', 3}
            ,{'reduce', 'true'}
            ,'descending'
+            | maybe_add_stale_to_options(?STALE_CDR)
            ]}.
+
+-spec maybe_add_stale_to_options(crossbar_doc:view_options()) -> crossbar_doc:view_options().
+maybe_add_stale_to_options(true) ->[ {stale, ok} ];
+maybe_add_stale_to_options(_) ->[].
 
 -spec create_summary_view_options(api_binary(), cb_context:context(), pos_integer(), pos_integer()) ->
                                          {'ok', crossbar_doc:view_options()}.
@@ -460,12 +449,7 @@ create_summary_view_options(_, _, CreatedFrom, CreatedTo) ->
            ,'descending'
            ]}.
 
-%%--------------------------------------------------------------------
-%% @private
-%% @doc
-%% @end
-%%--------------------------------------------------------------------
--spec pagination_page_size(cb_context:context()) ->pos_integer().
+-spec pagination_page_size(cb_context:context()) -> pos_integer().
 pagination_page_size(Context) ->
     case crossbar_doc:pagination_page_size(Context) of
         'undefined' -> 'undefined';
@@ -487,10 +471,9 @@ load_view(View, ViewOptions, Context) ->
     load_view(View, ViewOptions, fun view_option/2, Context).
 
 load_view(View, ViewOptions, Fun, Context) ->
-    AccountId = cb_context:account_id(Context),
-
+    ChunkedDbs = chunked_dbs(cb_context:account_id(Context), ViewOptions, Fun),
     ContextChanges =
-        [{fun cb_context:store/3, 'chunked_dbs', chunked_dbs(AccountId, ViewOptions, Fun)}
+        [{fun cb_context:store/3, 'chunked_dbs', ChunkedDbs}
         ,{fun cb_context:store/3, 'chunked_view_options', ViewOptions}
         ,{fun cb_context:store/3, 'chunked_view', View}
         ,{fun cb_context:set_resp_status/2, 'success'}
@@ -514,11 +497,17 @@ view_option(Key, ViewOptions) ->
 
 -spec interaction_view_option('endkey' | 'startkey', crossbar_doc:view_options()) ->
                                      gregorian_seconds().
-interaction_view_option(Key, ViewOptions) ->
+interaction_view_option('startkey' = Key, ViewOptions) ->
     case props:get_value(Key, ViewOptions) of
-        [_, Option, _] -> Option;
-        [Option, _] -> Option;
-        [Option] -> Option;
+        [_OwnerId, CreatedTo] -> CreatedTo;
+        [CreatedTo] -> CreatedTo;
+        Option -> Option
+    end;
+interaction_view_option('endkey' = Key, ViewOptions) ->
+    case props:get_value(Key, ViewOptions) of
+        [_OwnerId, CreatedFrom, _] -> CreatedFrom;
+        [CreatedFrom, _] when is_integer(CreatedFrom) -> CreatedFrom;
+        [_OwnerId, CreatedFrom] -> CreatedFrom;
         Option -> Option
     end.
 
@@ -558,10 +547,8 @@ fetch_view_options(Context) ->
 maybe_paginate_and_clean(Context, []) -> {Context, []};
 maybe_paginate_and_clean(Context, Ids) ->
     case cb_context:fetch(Context, 'is_csv') of
-        'true' ->
-            {Context, [Id || {Id, _} <- Ids]};
-        _ ->
-            paginate_and_clean(Context, Ids)
+        'true' -> {Context, [Id || {Id, _} <- Ids]};
+        _ -> paginate_and_clean(Context, Ids)
     end.
 
 -spec paginate_and_clean(cb_context:context(), ne_binaries()) ->
@@ -592,36 +579,26 @@ get_cdr_ids(Db, View, ViewOptions) ->
     _ = maybe_add_design_doc(Db),
     case kz_datamgr:get_results(Db, View, ViewOptions) of
         {'error', _R} ->
-            lager:debug("unable to fetch ~s from ~s: ~p"
-                       ,[View, Db, _R]
-                       ),
+            lager:debug("unable to fetch ~s from ~s: ~p", [View, Db, _R]),
             {'ok', []};
         {'ok', JObjs} ->
-            lager:debug("fetched cdr ids from ~s", [Db]),
-            {'ok', [{kz_doc:id(JObj), kz_json:get_value(<<"key">>, JObj)}
-                    || JObj <- JObjs
-                   ]}
+            lager:debug("fetched ~p cdr ids from ~s", [length(JObjs), Db]),
+            CDRs = [{kz_doc:id(JObj), kz_json:get_value(<<"key">>, JObj)} || JObj <- JObjs],
+            {'ok', CDRs}
     end.
 
--spec maybe_add_design_doc(ne_binary()) ->
-                                  'ok' |
-                                  {'error', 'not_found'}.
+-spec maybe_add_design_doc(ne_binary()) -> 'ok' | {'error', 'not_found'}.
 maybe_add_design_doc(Db) ->
     case kz_datamgr:lookup_doc_rev(Db, <<"_design/cdrs">>) of
-        {'error', 'not_found'} ->
-            lager:warning("adding cdr views to modb: ~s", [Db]),
-            kz_datamgr:revise_doc_from_file(Db
-                                           ,'kazoo_modb'
-                                           ,<<"cdrs.json">>
-                                           );
-        {'ok', _ } -> 'ok'
+        {'ok', _} -> 'ok';
+        {'error', 'not_found'} -> kazoo_modb:refresh_views(Db)
     end.
 
 -spec load_chunked_cdrs(ne_binary(), ne_binaries(), payload()) -> payload().
 load_chunked_cdrs(_, [], Payload) -> Payload;
 load_chunked_cdrs(Db, Ids, {_, Context}=Payload) ->
     {BulkIds, Remaining} =
-        case erlang:length(Ids) < ?MAX_BULK of
+        case length(Ids) < ?MAX_BULK of
             'true' -> {Ids, []};
             'false' -> lists:split(?MAX_BULK, Ids)
         end,
@@ -657,6 +634,7 @@ normalize_and_send('json', [JObj|JObjs], {Req, Context}) ->
             'ok' = cowboy_req:chunk(kz_json:encode(CDR), Req),
             normalize_and_send('json', JObjs, {Req, cb_context:store(Context, 'started_chunk', 'true')})
     end;
+
 normalize_and_send('csv', [], Payload) -> Payload;
 normalize_and_send('csv', [JObj|JObjs], {Req, Context}) ->
     case cb_context:fetch(Context, 'started_chunk') of
@@ -683,18 +661,18 @@ normalize_cdr(JObj, Context) ->
 normalize_cdr_to_csv(JObj, Context) ->
     Timestamp = kz_json:get_integer_value(<<"timestamp">>, JObj, 0),
 
-    CSV = kz_util:join_binary(
+    CSV = kz_binary:join(
             [F(JObj, Timestamp) || {_, F} <- csv_rows(Context)]
-                             ,<<",">>
+                        ,<<",">>
            ),
     <<CSV/binary, "\r\n">>.
 
 -spec normalize_cdr_to_csv_header(kz_json:object(), cb_context:context()) -> ne_binary().
 normalize_cdr_to_csv_header(_JObj, Context) ->
     CSV =
-        kz_util:join_binary(
+        kz_binary:join(
           [K || {K, _Fun} <- csv_rows(Context)]
-                           ,<<",">>
+                      ,<<",">>
          ),
 
     <<CSV/binary, "\r\n">>.
@@ -717,7 +695,7 @@ col_callee_id_number(JObj, _Timestamp) -> kz_json:get_value(<<"callee_id_number"
 col_callee_id_name(JObj, _Timestamp) -> kz_json:get_value(<<"callee_id_name">>, JObj, <<>>).
 col_duration_seconds(JObj, _Timestamp) -> kz_json:get_value(<<"duration_seconds">>, JObj, <<>>).
 col_billing_seconds(JObj, _Timestamp) -> kz_json:get_value(<<"billing_seconds">>, JObj, <<>>).
-col_timestamp(_JObj, Timestamp) -> kz_util:to_binary(Timestamp).
+col_timestamp(_JObj, Timestamp) -> kz_term:to_binary(Timestamp).
 col_hangup_cause(JObj, _Timestamp) -> kz_json:get_value(<<"hangup_cause">>, JObj, <<>>).
 col_other_leg_call_id(JObj, _Timestamp) -> kz_json:get_value(<<"other_leg_call_id">>, JObj, <<>>).
 col_owner_id(JObj, _Timestamp) -> kz_json:get_value([?KEY_CCV, <<"owner_id">>], JObj, <<>>).
@@ -733,23 +711,23 @@ col_authorizing_id(JObj, _Timestamp) ->
         {A, A} -> <<>>;
         {_A, B} -> B
     end.
-col_customer_cost(JObj, _Timestamp) -> kz_util:to_binary(customer_cost(JObj)).
+col_customer_cost(JObj, _Timestamp) -> kz_term:to_binary(customer_cost(JObj)).
 
 col_dialed_number(JObj, _Timestamp) -> dialed_number(JObj).
 col_calling_from(JObj, _Timestamp) -> calling_from(JObj).
 col_pretty_print(_JObj, Timestamp) -> pretty_print_datetime(Timestamp).
-col_unix_timestamp(_JObj, Timestamp) -> kz_util:to_binary(kz_util:gregorian_seconds_to_unix_seconds(Timestamp)).
-col_rfc1036(_JObj, Timestamp) -> list_to_binary([$", kz_util:rfc1036(Timestamp), $"]).
-col_iso8601(_JObj, Timestamp) -> list_to_binary([$", kz_util:iso8601(Timestamp), $"]).
+col_unix_timestamp(_JObj, Timestamp) -> kz_term:to_binary(kz_time:gregorian_seconds_to_unix_seconds(Timestamp)).
+col_rfc1036(_JObj, Timestamp) -> list_to_binary([$", kz_time:rfc1036(Timestamp), $"]).
+col_iso8601(_JObj, Timestamp) -> list_to_binary([$", kz_date:to_iso8601_extended(Timestamp), $"]).
 col_account_call_type(JObj, _Timestamp) -> kz_json:get_value([?KEY_CCV, <<"account_billing">>], JObj, <<>>).
-col_rate(JObj, _Timestamp) -> kz_util:to_binary(wht_util:units_to_dollars(kz_json:get_value([?KEY_CCV, <<"rate">>], JObj, 0))).
+col_rate(JObj, _Timestamp) -> kz_term:to_binary(wht_util:units_to_dollars(kz_json:get_value([?KEY_CCV, <<"rate">>], JObj, 0))).
 col_rate_name(JObj, _Timestamp) -> kz_json:get_value([?KEY_CCV, <<"rate_name">>], JObj, <<>>).
 col_bridge_id(JObj, _Timestamp) -> kz_json:get_value([?KEY_CCV, <<"bridge_id">>], JObj, <<>>).
 col_recording_url(JObj, _Timestamp) -> kz_json:get_value([<<"recording_url">>], JObj, <<>>).
 col_media_recordings(JObj, _Timestamp) -> format_recordings(JObj).
 col_call_priority(JObj, _Timestamp) -> kz_json:get_value([?KEY_CCV, <<"call_priority">>], JObj, <<>>).
 
-col_reseller_cost(JObj, _Timestamp) -> kz_util:to_binary(reseller_cost(JObj)).
+col_reseller_cost(JObj, _Timestamp) -> kz_term:to_binary(reseller_cost(JObj)).
 col_reseller_call_type(JObj, _Timestamp) -> kz_json:get_value([?KEY_CCV, <<"reseller_billing">>], JObj, <<>>).
 
 -spec pretty_print_datetime(kz_datetime() | integer()) -> ne_binary().
@@ -825,7 +803,7 @@ remove_qs_keys(Context) ->
 -spec load_cdr(ne_binary(), cb_context:context()) -> cb_context:context().
 load_cdr(?MATCH_MODB_PREFIX(Year,Month,_) = CDRId, Context) ->
     AccountId = cb_context:account_id(Context),
-    AccountDb = kazoo_modb:get_modb(AccountId, kz_util:to_integer(Year), kz_util:to_integer(Month)),
+    AccountDb = kazoo_modb:get_modb(AccountId, kz_term:to_integer(Year), kz_term:to_integer(Month)),
     Context1 = cb_context:set_account_db(Context, AccountDb),
     crossbar_doc:load({<<"cdr">>, CDRId}, Context1, ?TYPE_CHECK_OPTION(<<"cdr">>));
 load_cdr(CDRId, Context) ->
@@ -841,7 +819,7 @@ load_cdr(CDRId, Context) ->
 -spec load_legs(ne_binary(), cb_context:context()) -> cb_context:context().
 load_legs(<<Year:4/binary, Month:2/binary, "-", _/binary>> = DocId, Context) ->
     AccountId = cb_context:account_id(Context),
-    AccountDb = kazoo_modb:get_modb(AccountId, kz_util:to_integer(Year), kz_util:to_integer(Month)),
+    AccountDb = kazoo_modb:get_modb(AccountId, kz_term:to_integer(Year), kz_term:to_integer(Month)),
     Context1 = cb_context:set_account_db(Context, AccountDb),
     case kz_datamgr:open_cache_doc(AccountDb, {<<"cdr">>, DocId}) of
         {'ok', JObj} ->

@@ -38,6 +38,7 @@
 -export([transfer/3]).
 -export([handle_publisher_usurp/2]).
 -export([get_application_name/1]).
+-export([get_event_name/1]).
 -export([queue_name/1
         ,callid/1
         ,node/1
@@ -65,9 +66,9 @@
                ,other_leg_events = [] :: ne_binaries()
                ,is_node_up = 'true' :: boolean()
                ,failed_node_checks = 0 :: non_neg_integer()
-               ,node_down_tref :: reference()
-               ,sanity_check_tref :: reference()
-               ,ref = kz_util:rand_hex_binary(12) :: ne_binary()
+               ,node_down_tref :: api_reference()
+               ,sanity_check_tref :: api_reference()
+               ,ref = kz_binary:rand_hex(12) :: ne_binary()
                ,passive = 'false' :: boolean()
                }).
 -type state() :: #state{}.
@@ -138,7 +139,7 @@ to_json(Props) ->
 handle_publisher_usurp(JObj, Props) ->
     CallId = props:get_value('call_id', Props),
     Ref = props:get_value('reference', Props),
-    Node = kz_util:to_binary(props:get_value('node', Props)),
+    Node = kz_term:to_binary(props:get_value('node', Props)),
 
     lager:debug("received publisher usurp for ~s on ~s (if ~s != ~s)"
                ,[kz_json:get_value(<<"Call-ID">>, JObj)
@@ -189,7 +190,7 @@ init(Node, CallId) ->
     lager:debug("started call event publisher"),
     {'ok', #state{node=Node
                  ,call_id=CallId
-                 ,ref=kz_util:rand_hex_binary(12)
+                 ,ref=kz_binary:rand_hex(12)
                  }}.
 -spec register_event_process(atom(), ne_binary()) -> 'ok' | {'error', any()}.
 register_event_process(Node, CallId) ->
@@ -629,6 +630,9 @@ specific_call_channel_vars_props(<<"CHANNEL_DESTROY">>, Props) ->
     Vars = ecallmgr_util:custom_channel_vars(Props),
     lager:debug("checking interaction cache for ~s", [UUID]),
     case kz_cache:peek_local(?ECALLMGR_INTERACTION_CACHE, UUID) of
+        {'ok', 'undefined'} ->
+            lager:debug("interaction cache for ~s in null", [UUID]),
+            [{<<"Custom-Channel-Vars">>, kz_json:from_list(Vars)}];
         {'ok', CDR} ->
             NewVars = props:set_value(<<?CALL_INTERACTION_ID>>, CDR, Vars),
             lager:debug("found interaction cache ~s for ~s", [CDR, UUID]),
@@ -642,12 +646,13 @@ specific_call_channel_vars_props(_EventName, Props) ->
 
 -spec generic_call_event_props(kz_proplist()) -> kz_proplist().
 generic_call_event_props(Props) ->
-    Timestamp = kz_util:now_us(),
+    Timestamp = kz_time:now_us(),
     FSTimestamp = props:get_integer_value(<<"Event-Date-Timestamp">>, Props, Timestamp),
-    NormalizedFSTimestamp = kz_util:unix_seconds_to_gregorian_seconds(FSTimestamp div 1000000),
+    NormalizedFSTimestamp = kz_time:unix_seconds_to_gregorian_seconds(FSTimestamp div 1000000),
 
     [{<<"Timestamp">>, NormalizedFSTimestamp}
-    ,{<<"Msg-ID">>, kz_util:to_binary(FSTimestamp)}
+    ,{<<"Msg-ID">>, kz_term:to_binary(FSTimestamp)}
+    ,{<<"Origination-Call-ID">>, kzd_freeswitch:origination_call_id(Props)}
     ,{<<"Call-ID">>, get_call_id(Props)}
     ,{<<"Transfer-History">>, get_transfer_history(Props)}
     ,{<<"Hangup-Cause">>, get_hangup_cause(Props)}
@@ -691,8 +696,8 @@ generic_call_event_props(Props) ->
 publish_event(Props) ->
     %% call_control publishes channel create/destroy on the control
     %% events queue by calling create_event then this directly.
-    EventName = kz_util:to_lower_binary(props:get_value(<<"Event-Name">>, Props, <<>>)),
-    ApplicationName = kz_util:to_lower_binary(props:get_value(<<"Application-Name">>, Props, <<>>)),
+    EventName = kz_term:to_lower_binary(props:get_value(<<"Event-Name">>, Props, <<>>)),
+    ApplicationName = kz_term:to_lower_binary(props:get_value(<<"Application-Name">>, Props, <<>>)),
     case {ApplicationName, EventName} of
         {_, <<"dtmf">>} ->
             lager:debug("publishing received DTMF digit ~s"
@@ -705,7 +710,7 @@ publish_event(Props) ->
         {<<>>, _Event} ->
             lager:debug("publishing call event ~s", [_Event]);
         {ApplicationName, <<"channel_execute_complete">>} ->
-            ApplicationResponse = kz_util:to_lower_binary(props:get_value(<<"Application-Response">>, Props, <<>>)),
+            ApplicationResponse = kz_term:to_lower_binary(props:get_value(<<"Application-Response">>, Props, <<>>)),
             ApplicationData = props:get_value(<<"Raw-Application-Data">>, Props, <<>>),
             lager:debug("publishing call event ~s '~s(~s)' result: ~s", [EventName, ApplicationName, ApplicationData, ApplicationResponse]);
         {ApplicationName, _} ->
@@ -800,8 +805,11 @@ specific_call_event_props(<<"RECORD_STOP">>, _, Props) ->
                                                           ], Props)
      }
     ,{<<"Terminator">>, props:get_value(<<"variable_playback_terminator_used">>, Props)}
-    ,{<<"Length">>, props:get_value(<<"variable_record_ms">>, Props)}
+    ,{<<"Length">>, props:get_value(<<"variable_record_ms">>, Props, 0)}
     ,{<<"Silence-Terminated">>, silence_terminated(Props)}
+    ,{<<"Request">>, ecallmgr_util:get_sip_request(Props)}
+    ,{<<"To">>, ecallmgr_util:get_sip_to(Props)}
+    ,{<<"From">>, ecallmgr_util:get_sip_from(Props)}
     ];
 specific_call_event_props(<<"DETECTED_TONE">>, _, Props) ->
     [{<<"Detected-Tone">>, props:get_value(<<"Detected-Tone">>, Props)}];
@@ -912,9 +920,9 @@ fax_specific(Props) ->
 should_publish(<<"CHANNEL_EXECUTE_COMPLETE">>, <<"bridge">>, 'false') ->
     lager:debug("suppressing bridge execute complete in favour the kazoo masquerade of this event"),
     'false';
-should_publish(<<"CHANNEL_EXECUTE_COMPLETE">>, <<"set", _/binary>>, _) ->
-    'false';
 should_publish(<<"CHANNEL_EXECUTE_COMPLETE">>, <<"set">>, _) ->
+    'false';
+should_publish(<<"CHANNEL_EXECUTE_COMPLETE">>, <<"export">>, _) ->
     'false';
 should_publish(<<"CHANNEL_EXECUTE_COMPLETE">>, <<"intercept">>, 'false') ->
     lager:debug("suppressing intercept execute complete in favour the kazoo masquerade of this event"),
@@ -943,7 +951,7 @@ silence_terminated(Hits) when is_integer(Hits) -> Hits =:= 0;
 silence_terminated(Prop) when is_list(Prop) ->
     case props:get_value(<<"variable_silence_hits_exhausted">>, Prop) of
         'undefined' -> silence_terminated(props:get_integer_value(<<"variable_record_silence_hits">>, Prop));
-        Ex -> kz_util:is_true(Ex)
+        Ex -> kz_term:is_true(Ex)
     end.
 
 -spec is_channel_moving(kz_proplist()) -> boolean().
@@ -1023,7 +1031,7 @@ get_fax_success(Props) ->
 get_fax_t38_used(Props) ->
     case props:get_value(<<"variable_has_t38">>, Props) of
         'undefined' -> 'undefined';
-        Else -> kz_util:is_true(Else)
+        Else -> kz_term:is_true(Else)
     end.
 
 -spec get_fax_ecm_used(kz_proplist()) -> api_boolean().
@@ -1068,7 +1076,7 @@ create_trnsf_history_object([Epoch, CallId, <<"bl_xfer">> | Props]) ->
     %% This looks confusing but FS uses the same delimiter to in the array
     %% as it does for inline dialplan actions (like those created during partial attended)
     %% so we have to put it together to take it apart... I KNOW! ARRRG
-    Dialplan = lists:last(binary:split(kz_util:join_binary(Props, <<":">>), <<",">>)),
+    Dialplan = lists:last(binary:split(kz_binary:join(Props, <<":">>), <<",">>)),
     [Exten | _] = binary:split(Dialplan, <<"/">>, ['global']),
     Trans = [{<<"Call-ID">>, CallId}
             ,{<<"Type">>, <<"blind">>}
@@ -1101,7 +1109,7 @@ get_hangup_code(Props) ->
 get_billing_seconds(Props) ->
     case props:get_integer_value(<<"variable_billmsec">>, Props) of
         'undefined' -> props:get_value(<<"variable_billsec">>, Props);
-        Billmsec -> kz_util:to_binary(kz_util:ceiling(Billmsec / 1000))
+        Billmsec -> kz_term:to_binary(kz_term:ceiling(Billmsec / 1000))
     end.
 
 -spec swap_call_legs(kz_proplist() | kz_json:object()) -> kz_proplist().

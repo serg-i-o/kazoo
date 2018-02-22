@@ -1,5 +1,5 @@
 %%%-------------------------------------------------------------------
-%%% @copyright (C) 2017, 2600Hz
+%%% @copyright (C) 2015-2017, 2600Hz
 %%% @doc
 %%%
 %%% @end
@@ -9,7 +9,7 @@
 
 -behaviour(application).
 
--include_lib("kazoo/include/kz_types.hrl").
+-include_lib("kazoo_stdlib/include/kz_types.hrl").
 
 -export([start/2, stop/1]).
 

@@ -11,6 +11,7 @@
 -module(knm_bandwidth).
 -behaviour(knm_gen_carrier).
 
+-export([info/0]).
 -export([is_local/0]).
 -export([find_numbers/3]).
 -export([acquire_number/1]).
@@ -44,7 +45,10 @@
        ).
 
 -ifdef(TEST).
--define(BW_DEBUG(Format, Args), io:format(user, Format, Args)).
+-define(NPAN_RESPONSE, knm_util:fixture("bandwidth_numbersearch_response.xml")).
+-define(AREACODE_RESPONSE, knm_util:fixture("bandwidth_areacode_response.xml")).
+
+-define(BW_DEBUG(_Format, _Args), ok).
 -else.
 -define(BW_DEBUG, kapps_config:get_is_true(?KNM_BW_CONFIG_CAT, <<"debug">>, 'false')).
 -define(BW_DEBUG_FILE, "/tmp/bandwidth.com.xml").
@@ -66,6 +70,16 @@
 
 
 %%% API
+
+%%--------------------------------------------------------------------
+%% @public
+%% @doc
+%% @end
+%%--------------------------------------------------------------------
+-spec info() -> map().
+info() ->
+    #{?CARRIER_INFO_MAX_PREFIX => 3
+     }.
 
 %%--------------------------------------------------------------------
 %% @public
@@ -102,17 +116,17 @@ find_numbers(<<"+", Rest/binary>>, Quanity, Options) ->
 find_numbers(<<"1", Rest/binary>>, Quanity, Options) ->
     find_numbers(Rest, Quanity, Options);
 find_numbers(<<NPA:3/binary>>, Quanity, Options) ->
-    Props = [{'areaCode', [kz_util:to_list(NPA)]}
-            ,{'maxQuantity', [kz_util:to_list(Quanity)]}
+    Props = [{'areaCode', [kz_term:to_list(NPA)]}
+            ,{'maxQuantity', [kz_term:to_list(Quanity)]}
             ],
     case make_numbers_request('areaCodeNumberSearch', Props) of
         {'error', _}=E -> E;
         {'ok', Xml} -> process_numbers_search_resp(Xml, Options)
     end;
 find_numbers(Search, Quanity, Options) ->
-    NpaNxx = kz_util:truncate_right_binary(Search, 6),
-    Props = [{'npaNxx', [kz_util:to_list(NpaNxx)]}
-            ,{'maxQuantity', [kz_util:to_list(Quanity)]}
+    NpaNxx = kz_binary:truncate_right(Search, 6),
+    Props = [{'npaNxx', [kz_term:to_list(NpaNxx)]}
+            ,{'maxQuantity', [kz_term:to_list(Quanity)]}
             ],
     case make_numbers_request('npaNxxNumberSearch', Props) of
         {'error', _}=E -> E;
@@ -166,19 +180,19 @@ acquire_and_provision_number(Number) ->
     Hosts = case ?BW_ENDPOINTS of
                 'undefined' -> [];
                 Endpoint when is_binary(Endpoint) ->
-                    [{'endPoints', [{'host', [kz_util:to_list(Endpoint)]}]}];
+                    [{'endPoints', [{'host', [kz_term:to_list(Endpoint)]}]}];
                 Endpoints ->
-                    [{'endPoints', [{'host', [kz_util:to_list(E)]} || E <- Endpoints]}]
+                    [{'endPoints', [{'host', [kz_term:to_list(E)]} || E <- Endpoints]}]
             end,
-    OrderName = lists:flatten([?BW_ORDER_NAME_PREFIX, "-", integer_to_list(kz_util:current_tstamp())]),
-    AcquireFor = case kz_util:is_empty(AssignedTo) of
+    OrderName = lists:flatten([?BW_ORDER_NAME_PREFIX, "-", integer_to_list(kz_time:current_tstamp())]),
+    AcquireFor = case kz_term:is_empty(AssignedTo) of
                      'true' -> "no_assigned_account";
                      'false' -> binary_to_list(AssignedTo)
                  end,
     Props = [{'orderName', [OrderName]}
             ,{'extRefID', [binary_to_list(AuthBy)]}
             ,{'numberIDs', [{'id', [Id]}]}
-            ,{'subscriber', [kz_util:to_list(AcquireFor)]}
+            ,{'subscriber', [kz_term:to_list(AcquireFor)]}
              | Hosts
             ],
     case make_numbers_request('basicNumberOrder', Props) of
@@ -232,12 +246,11 @@ should_lookup_cnam() -> 'true'.
                                   {'error', any()}.
 
 -ifdef(TEST).
--include_lib("eunit/include/eunit.hrl").
 make_numbers_request('npaNxxNumberSearch', _Props) ->
-    {Xml, _} = xmerl_scan:string(?BANDWIDTH_NPAN_RESPONSE),
+    {Xml, _} = xmerl_scan:string(?NPAN_RESPONSE),
     verify_response(Xml);
 make_numbers_request('areaCodeNumberSearch', _Props) ->
-    {Xml, _} = xmerl_scan:string(?BANDWIDTH_AREACODE_RESPONSE),
+    {Xml, _} = xmerl_scan:string(?AREACODE_RESPONSE),
     verify_response(Xml).
 -else.
 make_numbers_request(Verb, Props) ->
@@ -314,19 +327,19 @@ number_order_response_to_json([]) ->
 number_order_response_to_json([Xml]) ->
     number_order_response_to_json(Xml);
 number_order_response_to_json(Xml) ->
-    Props = [{<<"order_id">>, get_cleaned("orderID/text()", Xml)}
-            ,{<<"order_number">>, get_cleaned("orderNumber/text()", Xml)}
-            ,{<<"order_name">>, get_cleaned("orderName/text()", Xml)}
-            ,{<<"ext_ref_id">>, get_cleaned("extRefID/text()", Xml)}
-            ,{<<"accountID">>, get_cleaned("accountID/text()", Xml)}
-            ,{<<"accountName">>, get_cleaned("accountName/text()", Xml)}
-            ,{<<"quantity">>, get_cleaned("quantity/text()", Xml)}
-            ,{<<"number">>, number_search_response_to_json(
-                              xmerl_xpath:string("telephoneNumbers/telephoneNumber", Xml)
-                             )
-             }
-            ],
-    kz_json:from_list(props:filter_undefined(Props)).
+    kz_json:from_list(
+      [{<<"order_id">>, get_cleaned("orderID/text()", Xml)}
+      ,{<<"order_number">>, get_cleaned("orderNumber/text()", Xml)}
+      ,{<<"order_name">>, get_cleaned("orderName/text()", Xml)}
+      ,{<<"ext_ref_id">>, get_cleaned("extRefID/text()", Xml)}
+      ,{<<"accountID">>, get_cleaned("accountID/text()", Xml)}
+      ,{<<"accountName">>, get_cleaned("accountName/text()", Xml)}
+      ,{<<"quantity">>, get_cleaned("quantity/text()", Xml)}
+      ,{<<"number">>, number_search_response_to_json(
+                        xmerl_xpath:string("telephoneNumbers/telephoneNumber", Xml)
+                       )
+       }
+      ]).
 
 %%--------------------------------------------------------------------
 %% @private
@@ -340,21 +353,21 @@ number_search_response_to_json([]) ->
 number_search_response_to_json([Xml]) ->
     number_search_response_to_json(Xml);
 number_search_response_to_json(Xml) ->
-    Props = [{<<"number_id">>, get_cleaned("numberID/text()", Xml)}
-            ,{<<"ten_digit">>, get_cleaned("tenDigit/text()", Xml)}
-            ,{<<"formatted_number">>, get_cleaned("formattedNumber/text()", Xml)}
-            ,{<<"e164">>, get_cleaned("e164/text()", Xml)}
-            ,{<<"npa_nxx">>, get_cleaned("npaNxx/text()", Xml)}
-            ,{<<"status">>, get_cleaned("status/text()", Xml)}
-            ,{<<"rate_center">>, rate_center_to_json(xmerl_xpath:string("rateCenter", Xml))}
-            ],
-    kz_json:from_list(props:filter_undefined(Props)).
+    kz_json:from_list(
+      [{<<"number_id">>, get_cleaned("numberID/text()", Xml)}
+      ,{<<"ten_digit">>, get_cleaned("tenDigit/text()", Xml)}
+      ,{<<"formatted_number">>, get_cleaned("formattedNumber/text()", Xml)}
+      ,{<<"e164">>, get_cleaned("e164/text()", Xml)}
+      ,{<<"npa_nxx">>, get_cleaned("npaNxx/text()", Xml)}
+      ,{<<"status">>, get_cleaned("status/text()", Xml)}
+      ,{<<"rate_center">>, rate_center_to_json(xmerl_xpath:string("rateCenter", Xml))}
+      ]).
 
 -spec get_cleaned(kz_deeplist(), xml_el()) -> api_binary().
 get_cleaned(Path, Xml) ->
-    case kz_util:get_xml_value(Path, Xml) of
+    case kz_xml:get_value(Path, Xml) of
         'undefined' -> 'undefined';
-        V -> kz_util:strip_binary(V, [$\s, $\n])
+        V -> kz_binary:strip(V, [$\s, $\n])
     end.
 
 %%--------------------------------------------------------------------
@@ -369,11 +382,11 @@ rate_center_to_json([]) ->
 rate_center_to_json([Xml]) ->
     rate_center_to_json(Xml);
 rate_center_to_json(Xml) ->
-    Props = [{<<"name">>, get_cleaned("name/text()", Xml)}
-            ,{<<"lata">>, get_cleaned("lata/text()", Xml)}
-            ,{<<"state">>, get_cleaned("state/text()", Xml)}
-            ],
-    kz_json:from_list(props:filter_undefined(Props)).
+    kz_json:from_list(
+      [{<<"name">>, get_cleaned("name/text()", Xml)}
+      ,{<<"lata">>, get_cleaned("lata/text()", Xml)}
+      ,{<<"state">>, get_cleaned("state/text()", Xml)}
+      ]).
 
 %%--------------------------------------------------------------------
 %% @private

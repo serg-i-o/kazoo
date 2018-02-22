@@ -6,6 +6,9 @@
         "default_to": {
             "default": "",
             "description": "notify.system_alert default to",
+            "items": {
+                "type": "string"
+            },
             "type": "string"
         },
         "enable_email_alerts": {
@@ -28,8 +31,5 @@
             "type": "string"
         }
     },
-    "required": [
-        "subscriber_url"
-    ],
     "type": "object"
 }

@@ -33,12 +33,11 @@
 
 -define(SIGNUP_DB, <<"signups">>).
 
--define(VIEW_FILE, <<"views/signup.json">>).
 -define(VIEW_ACTIVATION_KEYS, <<"signups/listing_by_key">>).
 -define(VIEW_ACTIVATION_REALM, <<"signups/listing_by_realm">>).
 -define(VIEW_ACTIVATION_CREATED, <<"signups/listing_by_created">>).
 
--define(SIGNUP_CONF, [code:priv_dir('crossbar'), "/signup/signup.conf"]).
+-define(SIGNUP_CONF, [code:priv_dir(?APP), "/signup/signup.conf"]).
 
 -record(state, {cleanup_interval = 5 * ?SECONDS_IN_HOUR :: integer() %% once every 5 hours (in seconds)
                ,signup_lifespan = ?SECONDS_IN_DAY :: integer() %% 24 hours (in seconds)
@@ -64,12 +63,7 @@ init() ->
     _ = crossbar_bindings:bind(<<"*.execute.put.signup">>, ?MODULE, 'put'),
 
     _ = kz_datamgr:db_create(?SIGNUP_DB),
-
-    _ = case kz_datamgr:update_doc_from_file(?SIGNUP_DB, 'crossbar', ?VIEW_FILE) of
-            {'error', _} -> kz_datamgr:load_doc_from_file(?SIGNUP_DB, 'crossbar', ?VIEW_FILE);
-            {'ok', _} -> 'ok'
-        end,
-
+    _ = kz_datamgr:revise_doc_from_file(?SIGNUP_DB, ?APP, <<"views/signup.json">>),
     _ = supervisor:start_child('crossbar_sup', crossbar_sup:child_spec(?MODULE)),
     ok.
 
@@ -232,15 +226,17 @@ validate_account('undefined', _) ->
     lager:debug("signup did not contain an account definition"),
     {[<<"account">>], 'undefined'};
 validate_account(Account, Context) ->
-    case is_unique_realm(kz_json:get_value(<<"realm">>, Account))
-        andalso crossbar_maintenance:create_account(cb_context:set_req_data(Context, Account)) of
+    try is_unique_realm(kz_json:get_value(<<"realm">>, Account))
+             andalso crossbar_maintenance:create_account(cb_context:set_req_data(Context, Account))
+    of
         'false' ->
             {[<<"duplicate realm">>], 'undefined'};
         {'ok', Context1} ->
             'success' = cb_context:resp_status(Context1),
             lager:debug("signup account is valid"),
-            {[], cb_context:doc(Context1)};  %% doc = AccountJObj
-        {'error', Errors} ->
+            {[], cb_context:doc(Context1)}  %% doc = AccountJObj
+    catch
+        'throw':Errors ->
             {Errors, 'undefined'}
     end.
 
@@ -275,7 +271,7 @@ validate_user(User, Context) ->
 %%--------------------------------------------------------------------
 -spec create_activation_key() -> ne_binary().
 create_activation_key() ->
-    ActivationKey = kz_util:to_hex_binary(crypto:strong_rand_bytes(32)),
+    ActivationKey = kz_term:to_hex_binary(crypto:strong_rand_bytes(32)),
     lager:debug("created new activation key ~s", [ActivationKey]),
     ActivationKey.
 
@@ -417,7 +413,7 @@ send_activation_email(Context
     From = case kz_template:render(FromTmpl, Props) of
                {'ok', F} -> F;
                _ ->
-                   <<"no_reply@", (kz_util:to_binary(net_adm:localhost()))/binary>>
+                   <<"no_reply@", (kz_term:to_binary(net_adm:localhost()))/binary>>
            end,
     Email = {<<"multipart">>, <<"alternative">> %% Content Type / Sub Type
             ,[ %% Headers
@@ -474,7 +470,7 @@ create_body(_, _, Body) ->
 %%--------------------------------------------------------------------
 %% @private
 %% @doc
-%% create a proplist to provide to the templates during render
+%% create a kz_proplist() to provide to the templates during render
 %% @end
 %%--------------------------------------------------------------------
 -spec template_props(cb_context:context()) -> [{ne_binary(), kz_proplist() | ne_binary()},...].
@@ -483,7 +479,7 @@ template_props(Context) ->
     Data = cb_context:req_data(Context),
     RawHost = Context#cb_context.raw_host,
     Port = Context#cb_context.port,
-    ApiHost = list_to_binary(["http://", RawHost, ":", kz_util:to_list(Port), "/"]),
+    ApiHost = list_to_binary(["http://", RawHost, ":", kz_term:to_list(Port), "/"]),
     %% remove the redundant request data
     Req = kz_json:delete_keys([<<"account">>, <<"user">>], Data),
 
@@ -530,12 +526,12 @@ is_unique_realm(Realm) ->
 -spec cleanup_signups(#state{}) -> 'ok'.
 cleanup_signups(#state{signup_lifespan=Lifespan}) ->
     lager:debug("cleaning up signups"),
-    Expiration = calendar:datetime_to_gregorian_seconds(calendar:universal_time()) + Lifespan,
-    case kz_datamgr:get_results(?SIGNUP_DB, ?VIEW_ACTIVATION_CREATED, [{'startkey', 0}
-                                                                      ,{'endkey', Expiration}
-                                                                      ,'include_docs'
-                                                                      ])
-    of
+    Expiration = kz_time:current_tstamp() + Lifespan,
+    ViewOptions = [{'startkey', 0}
+                  ,{'endkey', Expiration}
+                  ,'include_docs'
+                  ],
+    case kz_datamgr:get_results(?SIGNUP_DB, ?VIEW_ACTIVATION_CREATED, ViewOptions) of
         {'ok', Expired} ->
             _ = kz_datamgr:del_docs(?SIGNUP_DB
                                    ,[kz_json:get_value(<<"doc">>, JObj) || JObj <- Expired]
@@ -575,7 +571,7 @@ init_state() ->
             #state{}
     end.
 
--spec get_configs() -> {'ok', proplist()} |
+-spec get_configs() -> {'ok', kz_proplist()} |
                        {'error', file:posix() | 'badarg' | 'terminated' | 'system_limit'
                         | {integer(), module(), any()}
                        }.
@@ -602,7 +598,7 @@ compile_template(Template, Name) when not is_binary(Template) ->
         case string:substr(Template, 1, 1) of
             "/" -> Template;
             _ ->
-                lists:concat([code:priv_dir('crossbar'), "/signup/", Template])
+                lists:concat([code:priv_dir(?APP), "/signup/", Template])
         end,
     lager:debug("sourcing template from file at ~s", [Path]),
     do_compile_template(Path, Name);

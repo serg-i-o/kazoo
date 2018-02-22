@@ -182,10 +182,10 @@ handle_config_req(Node, Id, <<"acl.conf">>, _Props) ->
             {'ok', Resp} = ecallmgr_fs_xml:not_found(),
             freeswitch:fetch_reply(Node, Id, 'configuration', iolist_to_binary(Resp))
     end;
+
 handle_config_req(Node, Id, <<"sofia.conf">>, _Props) ->
     kz_util:put_callid(Id),
-
-    case kz_util:is_true(ecallmgr_config:get(<<"sofia_conf">>)) of
+    case ecallmgr_config:is_true(<<"sofia_conf">>) of
         'false' ->
             lager:info("sofia conf disabled"),
             {'ok', Resp} = ecallmgr_fs_xml:not_found(),
@@ -193,7 +193,7 @@ handle_config_req(Node, Id, <<"sofia.conf">>, _Props) ->
         'true' ->
             Profiles = ecallmgr_config:fetch(<<"fs_profiles">>, kz_json:new()),
             DefaultProfiles = default_sip_profiles(Node),
-            try ecallmgr_fs_xml:sip_profiles_xml(kz_json:merge_recursive(DefaultProfiles, Profiles)) of
+            try ecallmgr_fs_xml:sip_profiles_xml(kz_json:merge(DefaultProfiles, Profiles)) of
                 {'ok', ConfigXml} ->
                     lager:debug("sending sofia XML to ~s: ~s", [Node, ConfigXml]),
                     freeswitch:fetch_reply(Node, Id, 'configuration', erlang:iolist_to_binary(ConfigXml))
@@ -204,6 +204,7 @@ handle_config_req(Node, Id, <<"sofia.conf">>, _Props) ->
                     freeswitch:fetch_reply(Node, Id, 'configuration', iolist_to_binary(Resp))
             end
     end;
+
 handle_config_req(Node, Id, <<"conference.conf">>, Data) ->
     kz_util:put_callid(Id),
     fetch_conference_config(Node, Id, kzd_freeswitch:event_name(Data), Data);
@@ -234,17 +235,17 @@ generate_acl_xml(SysconfResp) ->
 
 -spec default_sip_profiles(atom()) -> kz_json:object().
 default_sip_profiles(Node) ->
-    Gateways = case kz_util:is_true(ecallmgr_config:get(<<"process_gateways">>, 'false')) of
+    Gateways = case ecallmgr_config:is_true(<<"process_gateways">>) of
                    'false' -> kz_json:new();
                    'true' ->
                        SysconfResp = ecallmgr_config:fetch(<<"gateways">>, kz_json:new()),
                        _ = maybe_kill_node_gateways(SysconfResp, Node),
                        SysconfResp
                end,
-    JObj = kz_json:from_list([{kz_util:to_binary(?DEFAULT_FS_PROFILE)
+    JObj = kz_json:from_list([{kz_term:to_binary(?DEFAULT_FS_PROFILE)
                               ,kz_json:from_list(default_sip_profile())}
                              ]),
-    kz_json:set_value([kz_util:to_binary(?DEFAULT_FS_PROFILE), <<"Gateways">>]
+    kz_json:set_value([kz_term:to_binary(?DEFAULT_FS_PROFILE), <<"Gateways">>]
                      ,Gateways
                      ,JObj
                      ).
@@ -368,13 +369,13 @@ kill_gateway(GatewayName, Node) ->
     Args = ["profile "
            ,?DEFAULT_FS_PROFILE
            ," killgw "
-           ,kz_util:to_list(GatewayName)
+           ,kz_term:to_list(GatewayName)
            ],
     freeswitch:api(Node, 'sofia', lists:flatten(Args)).
 
 get_node_gateways(Node) ->
     {'ok', Response} = freeswitch:api(Node, 'sofia', "xmlstatus gateway"),
-    {Xml, _} = xmerl_scan:string(kz_util:to_list(Response)),
+    {Xml, _} = xmerl_scan:string(kz_term:to_list(Response)),
     ecallmgr_fs_xml:sofia_gateways_xml_to_json(Xml).
 
 -spec fix_conference_profile(kz_json:object()) -> kz_json:object().
@@ -416,7 +417,7 @@ conference_sounds(Profile) ->
     kz_json:foldl(fun conference_sound/3, Profile, Profile).
 
 conference_sound(Key, Value, Profile) ->
-    maybe_convert_sound(kz_util:binary_reverse(Key), Key, Value, Profile).
+    maybe_convert_sound(kz_binary:reverse(Key), Key, Value, Profile).
 
 maybe_convert_sound(<<"dnuos-", _/binary>>, Key, Value, Profile) ->
     MediaName = ecallmgr_util:media_path(Value),

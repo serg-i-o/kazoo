@@ -62,7 +62,6 @@ start_link(Node) -> start_link(Node, []).
 start_link(Node, Options) ->
     gen_server:start_link(?SERVER, [Node, Options], []).
 
-
 %%%===================================================================
 %%% gen_server callbacks
 %%%===================================================================
@@ -80,7 +79,7 @@ init([Node, Options]) ->
     lager:info("starting new fs conference event listener for ~s", [Node]),
     gen_server:cast(self(), 'bind_to_events'),
     ecallmgr_fs_conferences:sync_node(Node),
-    Events = ecallmgr_config:get(<<"publish_conference_event">>, ?CONFERENCE_EVENTS),
+    Events = ecallmgr_config:get_ne_binaries(<<"publish_conference_event">>, ?CONFERENCE_EVENTS),
     {'ok', #state{node=Node
                  ,options=Options
                  ,events=Events
@@ -117,7 +116,9 @@ handle_call(_Request, _From, State) ->
 %%--------------------------------------------------------------------
 -spec handle_cast(any(), state()) -> handle_cast_ret_state(state()).
 handle_cast('bind_to_events', #state{node=Node}=State) ->
-    case gproc:reg({'p', 'l', {'event', Node, <<"conference::maintenance">>}}) of
+    case gproc:reg({'p', 'l', ?FS_EVENT_REG_MSG(Node, <<"conference::maintenance">>)}) =:= 'true'
+        andalso gproc:reg({'p', 'l', ?FS_OPTION_MSG(Node)}) =:= 'true'
+    of
         'true' -> {'noreply', State};
         'false' -> {'stop', 'gproc_badarg', State}
     end;
@@ -181,7 +182,7 @@ code_change(_OldVsn, State, _Extra) ->
 %%%===================================================================
 %%% Internal functions
 %%%===================================================================
--spec init_props(kz_proplist(), kz_proplist()) -> kz_proplist().
+-spec init_props(kzd_freeswitch:data(), kz_proplist()) -> kzd_freeswitch:data().
 init_props(Props, Options) ->
     case props:get_is_true(<<"Publish-Channel-State">>, Props) of
         'undefined' ->
@@ -192,14 +193,14 @@ init_props(Props, Options) ->
         _Value -> Props
     end.
 
--spec handle_conference_event(atom(), ne_binaries(), kz_proplist(), kz_proplist()) -> 'ok'.
+-spec handle_conference_event(atom(), ne_binaries(), kzd_freeswitch:data(), kz_proplist()) -> 'ok'.
 handle_conference_event(Node, Events, [_UUID | FSProps], Options) ->
     Props = init_props(FSProps, Options),
     Action = props:get_value(<<"Action">>, Props),
     process_event(Action, Props, Node),
     maybe_publish_event(Action, Props, Node, Events).
 
--spec process_event(ne_binary(), kz_proplist(), atom()) -> any().
+-spec process_event(ne_binary(), kzd_freeswitch:data(), atom()) -> any().
 process_event(<<"conference-create">>, Props, Node) ->
     ecallmgr_fs_conferences:create(Props, Node),
     ConferenceId = props:get_value(<<"Conference-Name">>, Props),
@@ -208,9 +209,10 @@ process_event(<<"conference-create">>, Props, Node) ->
 process_event(<<"conference-destroy">>= Action, Props, Node) ->
     UUID = props:get_value(<<"Conference-Unique-ID">>, Props),
     case ecallmgr_fs_conferences:conference(UUID) of
-        {'ok', #conference{}=Conference} ->
+        {'ok', #conference{name=ConferenceId}=Conference} ->
             publish_event(Action, Conference, Props, Node),
-            ecallmgr_fs_conferences:destroy(UUID);
+            ecallmgr_fs_conferences:destroy(UUID),
+            ecallmgr_conference_sup:stop_conference_control(Node, ConferenceId, UUID);
         {'error', 'not_found'} ->
             lager:debug("received conference destroy for inexistant conference ~s", [UUID])
     end;
@@ -256,7 +258,7 @@ publish_event(Action, Props, Node) ->
 
 publish_event(Action, #conference{handling_locally=IsLocal} = Conference, Props, _Node) ->
     case props:is_true(<<"Force-Publish-Event-State">>, Props, 'false')
-        orelse (props:is_true(<<"Publish-Event-State">>, Props, 'true')
+        orelse (props:is_true(<<"Publish-Channel-State">>, Props, 'true')
                 andalso IsLocal)
     of
         'true' -> publish_event(conference_event(Action, Conference, Props));

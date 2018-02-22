@@ -32,8 +32,8 @@
          code_change/3]).
 
 -record(state, {name                    :: atom()
-               ,leader                 :: sign()
-               ,role                   :: role()
+               ,leader                 :: sign() | undefined
+               ,role                   :: role() | undefined
                ,elected = 0            :: integer()
                ,restarted = 0          :: integer()
                ,callback_module        :: atom()
@@ -49,7 +49,9 @@
               ,sync                    :: any()
               }).
 
--record(?MODULE, {from, msg}).
+-record(?MODULE, {from :: sign()
+                 ,msg :: join | {leader, sign()} | {sync} | {from_leader, any()}
+                 }).
 
 -type role() :: 'candidate' | 'leader'.
 -type state() :: #state{}.
@@ -611,7 +613,7 @@ send(#sign{name = Name, node = Node}, Msg) ->
     send({Name, Node}, Msg);
 send(Route, Msg) when is_binary(Route) ->
     lager:debug("amqp message ~p: ~p", [Msg, Route]),
-    Props = [{<<"Message">>, kz_util:to_hex_binary(erlang:term_to_binary(Msg))}
+    Props = [{<<"Message">>, kz_term:to_hex_binary(erlang:term_to_binary(Msg))}
              | kz_api:default_headers(<<"leader">>, <<"message">>, ?APP_NAME, ?APP_VERSION)
             ],
     kapi_leader:publish_req(Route, Props).

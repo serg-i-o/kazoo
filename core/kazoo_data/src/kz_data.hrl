@@ -1,19 +1,21 @@
 -ifndef(KZ_DATA_HRL).
--include_lib("kazoo/include/kz_types.hrl"). % get the kazoo types
--include_lib("kazoo/include/kz_log.hrl").
--include_lib("kazoo/include/kz_databases.hrl").
+
+-include_lib("kazoo_stdlib/include/kz_types.hrl").
+-include_lib("kazoo_stdlib/include/kz_log.hrl").
+-include_lib("kazoo_stdlib/include/kz_databases.hrl").
 -include_lib("kazoo/include/kz_system_config.hrl").
 
 -define(CACHE_NAME, 'kazoo_data_cache').
 -define(KAZOO_DATA_PLAN_CACHE, 'kazoo_data_plan_cache').
 
--define(CONFIG_CAT, <<"datamgr">>).
+-define(APP, kazoo_data).
 -define(APP_NAME, <<"datamgr">>).
 -define(APP_VERSION, <<"4.0.0">>).
+-define(CONFIG_CAT, ?APP_NAME).
 
--record(data_connection, {id = {kz_util:current_tstamp(), kz_util:rand_hex_binary(4)}
+-record(data_connection, {id = {kz_time:current_tstamp(), kz_binary:rand_hex(4)}
                          ,app :: atom() | '$1'
-                         ,props = #{} :: #{} | '_'
+                         ,props = #{} :: map() | '_'
                          ,server :: any() | '$2'
                          ,connected = 'false' :: boolean() | '_'
                          ,ready = 'false' :: boolean()
@@ -33,8 +35,8 @@
 
 -record(copy_doc, {source_dbname  :: ne_binary()
                   ,source_doc_id  :: ne_binary()
-                  ,dest_dbname = 'undefined' :: api_binary()
-                  ,dest_doc_id = 'undefined' :: api_binary()
+                  ,dest_dbname :: api_binary()
+                  ,dest_doc_id :: api_binary()
                   }).
 -type copy_doc() :: #copy_doc{}.
 
@@ -76,6 +78,7 @@
                        'inclusive_end' |
                        'reduce' |
                        'override_existing_document' |
+                       {max_bulk_read, pos_integer()} |
                        {'transform',transform_fun()} |
                        {'end_docid', binary()} |
                        {'endkey', key_range()} |
@@ -90,16 +93,26 @@
                        {'start_docid', binary()} |
                        {'startkey', key_range()}.
 
--type view_options() :: list(view_option()).
+-type view_options() :: [view_option()].
 
 -type view_listing() :: {ne_binary(), kz_json:object()}.
 -type views_listing() :: [view_listing()].
 
--type db_classifications() :: 'account' | 'modb' | 'acdc' |
-                              'numbers' | 'aggregate' | 'system' |
-                              'resource_selectors' | 'deprecated' | 'undefined'.
+-type db_classification() :: 'account' |
+                             'acdc' |
+                             'aggregate' |
+                             'deprecated' |
+                             'external' |
+                             'modb' |
+                             'numbers' |
+                             'provisioner' |
+                             'ratedeck' |
+                             'resource_selectors' |
+                             'system' |
+                             'undefined'.
 
--type db_create_options() :: [{'q',integer()} | {'n',integer()}].
+-type db_create_options() :: [{'q',integer()} | {'n',integer()} | 'ensure_other_dbs'].
+-type db_delete_options() :: ['ensure_other_dbs'].
 
 -type ddoc() :: ne_binary() | 'all_docs' | 'design_docs'.
 
@@ -126,8 +139,6 @@
                         ]).
 
 -define(DELETE_KEYS, [<<"_rev">>, <<"id">>, <<"_attachments">>, <<"pvt_attachments">>]).
-
--define(MAX_BULK_INSERT, 2000).
 
 -define(KZ_DATA_HRL, 'true').
 -endif.

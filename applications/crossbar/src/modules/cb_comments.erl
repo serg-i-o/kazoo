@@ -399,7 +399,7 @@ only_return_comment(Context, Id) ->
 %% @end
 %%--------------------------------------------------------------------
 -spec id_to_number(ne_binary()) -> pos_integer().
-id_to_number(Id) -> kz_util:to_integer(Id) + 1.
+id_to_number(Id) -> kz_term:to_integer(Id) + 1.
 
 %%--------------------------------------------------------------------
 %% @private
@@ -420,4 +420,4 @@ send_port_comment_notification(Context, Id) ->
           ,{<<"Version">>, cb_context:api_version(Context)}
            | kz_api:default_headers(?APP_NAME, ?APP_VERSION)
           ],
-    kz_amqp_worker:cast(Req, fun kapi_notifications:publish_port_comment/1).
+    kapps_notify_publisher:cast(Req, fun kapi_notifications:publish_port_comment/1).

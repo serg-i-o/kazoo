@@ -16,7 +16,7 @@
         ]).
 
 -include("crossbar.hrl").
--include_lib("kazoo_json/include/kazoo_json.hrl").
+-include_lib("kazoo_stdlib/include/kazoo_json.hrl").
 
 -define(LIST_CONSUMED, <<"allotments/consumed">>).
 -define(PVT_TYPE, <<"limits">>).
@@ -200,9 +200,9 @@ get_consumed_mode(Context) ->
 -spec maybe_req_seconds(cb_context:context(), api_binary()) -> api_seconds().
 maybe_req_seconds(Context, Key) ->
     T = cb_context:req_value(Context, Key),
-    case kz_util:is_empty(T) of
+    case kz_term:is_empty(T) of
         'true' -> 'undefined';
-        'false' -> kz_util:to_integer(T)
+        'false' -> kz_term:to_integer(T)
     end.
 
 -spec on_successful_validation(cb_context:context()) -> cb_context:context().
@@ -255,13 +255,13 @@ maybe_handle_load_failure(Context, 404) ->
     NewLimits = kz_json:from_list([{<<"pvt_type">>, ?PVT_TYPE}
                                   ,{<<"_id">>, ?PVT_TYPE}
                                   ]),
-    JObj = kz_json_schema:add_defaults(kz_json:merge_jobjs(NewLimits, kz_json:public_fields(Data))
+    JObj = kz_json_schema:add_defaults(kz_json:merge_jobjs(NewLimits, kz_doc:public_fields(Data))
                                       ,<<"limits">>
                                       ),
 
     cb_context:setters(Context
                       ,[{fun cb_context:set_resp_status/2, 'success'}
-                       ,{fun cb_context:set_resp_data/2, kz_json:public_fields(JObj)}
+                       ,{fun cb_context:set_resp_data/2, kz_doc:public_fields(JObj)}
                        ,{fun cb_context:set_doc/2, crossbar_doc:update_pvt_parameters(JObj, Context)}
                        ]);
 maybe_handle_load_failure(Context, _RespCode) -> Context.

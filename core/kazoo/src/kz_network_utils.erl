@@ -13,6 +13,8 @@
 -export([is_ipv4/1
         ,is_ipv6/1
         ,is_ip/1
+        ,is_ip_family_supported/1
+        ,default_binding_all_ip/0
         ]).
 -export([to_cidr/1
         ,to_cidr/2
@@ -53,8 +55,8 @@
 -include_lib("kernel/include/inet.hrl").
 -include_lib("kernel/src/inet_dns.hrl").
 
--include("include/kz_types.hrl").
--include("include/kz_log.hrl").
+-include_lib("kazoo_stdlib/include/kz_types.hrl").
+-include_lib("kazoo_stdlib/include/kz_log.hrl").
 
 -define(LOOKUP_TIMEOUT, 500).
 -define(LOOKUP_OPTIONS, [{'timeout', ?LOOKUP_TIMEOUT}]).
@@ -98,7 +100,7 @@ get_hostname() ->
 %%--------------------------------------------------------------------
 -spec is_ipv4(text()) -> boolean().
 is_ipv4(Address) when is_binary(Address) ->
-    is_ipv4(kz_util:to_list(Address));
+    is_ipv4(kz_term:to_list(Address));
 is_ipv4(Address) when is_list(Address) ->
     case inet_parse:ipv4strict_address(Address) of
         {'ok', _} -> 'true';
@@ -107,7 +109,7 @@ is_ipv4(Address) when is_list(Address) ->
 
 -spec is_ipv6(text()) -> boolean().
 is_ipv6(Address) when is_binary(Address) ->
-    is_ipv6(kz_util:to_list(Address));
+    is_ipv6(kz_term:to_list(Address));
 is_ipv6(Address) when is_list(Address) ->
     case inet_parse:ipv6strict_address(Address) of
         {'ok', _} -> 'true';
@@ -121,6 +123,81 @@ is_ip(Address) ->
 
 %%--------------------------------------------------------------------
 %% @public
+%% @doc Detects if specified IP family is supported by system
+%% (Need 'ping' command installed on the system.
+%%  ping is part of iputils package)
+%% @end
+%%--------------------------------------------------------------------
+-spec is_ip_family_supported(inet:address_family()) -> boolean().
+is_ip_family_supported(Family) ->
+    listen_to_ping(Family, ping_cmd_option(Family), 1).
+
+-spec listen_to_ping(inet:address_family(), string(), integer()) -> boolean().
+listen_to_ping(_Family, _Cmd, Try) when Try < 0 ->
+    lager:warning("max reties to run ping command"),
+    'false';
+listen_to_ping(Family, Cmd, Try) ->
+    Options = ['exit_status'
+              ,'use_stdio'
+              ,'stderr_to_stdout'
+              ],
+    Port = erlang:open_port({spawn, Cmd}, Options),
+    listen_to_ping(Family, Cmd, Port, Try, []).
+
+-spec listen_to_ping(inet:address_family(), string(), port(), integer(), list()) -> boolean().
+listen_to_ping(Family, Cmd, Port, Try, Acc) ->
+    IsIPv6 = Family =:= 'inet6'
+        andalso Cmd =:= ping_cmd_option(Family),
+    receive
+        {Port, {'data', Msg}} -> listen_to_ping(Family, Cmd, Port, Try, Acc ++ Msg);
+        {Port, {'exit_status', 0}} ->
+            case Acc of
+                "PING"++_ -> 'true';
+                _ ->
+                    lager:warning("ping command '~s' failed: ~p", [Cmd, Acc]),
+                    'false'
+            end;
+        {Port, {'exit_status', _}} ->
+            case Acc of
+                "ping: illegal"++_ when IsIPv6 -> listen_to_ping(Family, ping_cmd_option(ping6), Try - 1); %% BSD ping
+                "ping: invalid"++_ when IsIPv6 -> listen_to_ping(Family, ping_cmd_option(ping6), Try - 1); %% GNU ping
+                _ ->
+                    lager:warning("either ping/ping6 command is missing or it returns error: ~p", [Acc]),
+                    'false'
+            end
+    end.
+
+-spec ping_cmd_option(inet:address_family() | 'ping6') -> string().
+ping_cmd_option('inet6') -> "ping -6 -c 1 localhost";
+ping_cmd_option('ping6') -> "ping6 -c 1 localhost";
+ping_cmd_option(_) -> "ping -c 1 localhost".
+
+%%--------------------------------------------------------------------
+%% @public
+%% @doc Default binding IP address (bind on all interfaces) based
+%%      on supported IP family
+%% @end
+%%--------------------------------------------------------------------
+-spec default_binding_all_ip() -> string().
+default_binding_all_ip() ->
+    default_binding_all_ip(is_ip_family_supported('inet')
+                          ,is_ip_family_supported('inet6')
+                          ).
+
+-spec default_binding_all_ip(boolean(), boolean()) -> string().
+default_binding_all_ip('true', 'true') -> prefered_inet('inet');
+default_binding_all_ip('true', 'false') -> prefered_inet('inet');
+default_binding_all_ip('false', 'true') -> prefered_inet('inet6');
+default_binding_all_ip('false', 'false') -> prefered_inet('system').
+
+-spec prefered_inet('inet' | 'inet6' | 'system') -> string().
+prefered_inet('inet') -> "0.0.0.0";
+prefered_inet('inet6') -> "::";
+prefered_inet('system') ->
+    kapps_config:get_string(<<"kapps_controller">>, <<"default_apps_ip_address_to_bind">>, "0.0.0.0").
+
+%%--------------------------------------------------------------------
+%% @public
 %% @doc
 %%
 %% @end
@@ -130,12 +207,12 @@ to_cidr(IP) -> to_cidr(IP, <<"32">>).
 
 -spec to_cidr(ne_binary(), ne_binary()) -> ne_binary().
 to_cidr(IP, Prefix) when not is_binary(IP) ->
-    to_cidr(kz_util:to_binary(IP), Prefix);
+    to_cidr(kz_term:to_binary(IP), Prefix);
 to_cidr(IP, Prefix) when not is_binary(Prefix) ->
-    to_cidr(IP, kz_util:to_binary(Prefix));
+    to_cidr(IP, kz_term:to_binary(Prefix));
 to_cidr(IP, Prefix) ->
     case is_ipv4(IP)
-        andalso kz_util:to_integer(Prefix) =< 32
+        andalso kz_term:to_integer(Prefix) =< 32
     of
         'true' ->
             lager:debug("adjusting ip from ~s to ~s/~s~n", [IP, IP, Prefix]),
@@ -146,12 +223,15 @@ to_cidr(IP, Prefix) ->
 
 -spec verify_cidr(text(), text()) -> boolean().
 verify_cidr(IP, CIDR) when is_binary(IP) ->
-    verify_cidr(kz_util:to_list(IP), CIDR);
+    verify_cidr(kz_term:to_list(IP), CIDR);
 verify_cidr(IP, CIDR) when is_binary(CIDR) ->
-    verify_cidr(IP, kz_util:to_list(CIDR));
+    verify_cidr(IP, kz_term:to_list(CIDR));
 verify_cidr(IP, CIDR) ->
     Block = inet_cidr:parse(CIDR),
-    inet_cidr:contains(Block, inet:parse_address(IP)).
+    case inet:parse_address(IP) of
+        {'ok', IPTuple} -> inet_cidr:contains(Block, IPTuple);
+        {'error', _} -> 'false'
+    end.
 
 %%     %% As per the docs... "This operation should only be used for test purposes"
 %%     %% so, ummm ya, but probably cheaper then my expand bellow followed by a list
@@ -165,15 +245,15 @@ verify_cidr(IP, CIDR) ->
 
 %% -spec expand_cidr(text()) -> ne_binaries().
 %% expand_cidr(CIDR) when is_binary(CIDR) ->
-%%     expand_cidr(kz_util:to_list(CIDR));
+%%     expand_cidr(kz_term:to_list(CIDR));
 %% expand_cidr(CIDR) ->
 %%     %% EXTREMELY wastefull/naive approach, should never be used, but if you
 %%     %% must we keep it in a class C
 %%     case orber_acl:range(CIDR, 'inet') of
 %%         {'error', _} -> [];
 %%         {'ok', Start, End} ->
-%%             [A1, B1, C1, D1] = lists:map(fun kz_util:to_integer/1, string:tokens(Start, ".")),
-%%             [A2, B2, C2, D2] = lists:map(fun kz_util:to_integer/1, string:tokens(End, ".")),
+%%             [A1, B1, C1, D1] = lists:map(fun kz_term:to_integer/1, string:tokens(Start, ".")),
+%%             [A2, B2, C2, D2] = lists:map(fun kz_term:to_integer/1, string:tokens(End, ".")),
 %%             'true' = ((A2 + B2 + C2 + D2) - (A1 + B1 + C1 + D1)) =< 510,
 %%             [iptuple_to_binary({A,B,C,D})
 %%              || A <- lists:seq(A1, A2),
@@ -207,7 +287,7 @@ find_nameservers(Domain) ->
 
 -spec find_nameservers(ne_binary(), options()) -> [string()].
 find_nameservers(Domain, Options) ->
-    case inet_res:lookup(kz_util:to_list(Domain), 'in', 'ns', Options) of
+    case inet_res:lookup(kz_term:to_list(Domain), 'in', 'ns', Options) of
         [] ->
             find_nameservers_parent(
               binary:split(Domain, <<".">>, ['global'])
@@ -220,16 +300,16 @@ find_nameservers(Domain, Options) ->
 find_nameservers_parent([], _) -> [];
 find_nameservers_parent([_, _]=Parts, Options) ->
     Domain =
-        kz_util:to_list(
-          kz_util:join_binary(Parts, <<".">>)
+        kz_term:to_list(
+          kz_binary:join(Parts, <<".">>)
          ),
-    inet_res:lookup(kz_util:to_list(Domain), 'in', 'ns', Options);
+    inet_res:lookup(kz_term:to_list(Domain), 'in', 'ns', Options);
 find_nameservers_parent([_|Parts], Options) ->
     Domain =
-        kz_util:to_list(
-          kz_util:join_binary(Parts, <<".">>)
+        kz_term:to_list(
+          kz_binary:join(Parts, <<".">>)
          ),
-    case inet_res:lookup(kz_util:to_list(Domain), 'in', 'ns', Options) of
+    case inet_res:lookup(kz_term:to_list(Domain), 'in', 'ns', Options) of
         [] -> find_nameservers_parent(Parts, Options);
         Nameservers -> Nameservers
     end.
@@ -261,7 +341,7 @@ maybe_is_ip(Address, Options) ->
 -spec maybe_resolve_srv_records(ne_binary(), options()) -> ne_binaries().
 maybe_resolve_srv_records(Address, Options) ->
     Domain = <<"_sip._udp.", Address/binary>>,
-    case inet_res:lookup(kz_util:to_list(Domain), 'in', 'srv', Options) of
+    case inet_res:lookup(kz_term:to_list(Domain), 'in', 'srv', Options) of
         [] -> maybe_resolve_a_records([Address], Options);
         SRVs -> maybe_resolve_a_records([D || {_, _, _, D} <- SRVs], Options)
     end.
@@ -276,7 +356,7 @@ maybe_resolve_a_records(Domains, Options) ->
 maybe_resolve_fold(Domain, IPs, Options) ->
     case is_ip(Domain) of
         'true' -> [Domain];
-        'false' -> resolve_a_record(kz_util:to_list(Domain), IPs, Options)
+        'false' -> resolve_a_record(kz_term:to_list(Domain), IPs, Options)
     end.
 
 -spec resolve_a_record(string(), ne_binaries(), options()) -> ne_binaries().
@@ -301,41 +381,46 @@ resolve_a_record_fold(IPTuple, I) ->
 %%--------------------------------------------------------------------
 -spec iptuple_to_binary(inet:ip4_address() | inet:ipv6_address()) -> ne_binary().
 iptuple_to_binary({A,B,C,D}) ->
-    <<(kz_util:to_binary(A))/binary, "."
-      ,(kz_util:to_binary(B))/binary, "."
-      ,(kz_util:to_binary(C))/binary, "."
-      ,(kz_util:to_binary(D))/binary
+    <<(kz_term:to_binary(A))/binary, "."
+      ,(kz_term:to_binary(B))/binary, "."
+      ,(kz_term:to_binary(C))/binary, "."
+      ,(kz_term:to_binary(D))/binary
     >>;
+
+%% IPv4 mapped to IPv6
+%% https://tools.ietf.org/html/rfc4038#section-4.2
+iptuple_to_binary({0, 0, 0, 0, 0, 16#FFFF, AB, CD}) ->
+    <<A:8, B:8>> = <<AB:16>>,
+    <<C:8, D:8>> = <<CD:16>>,
+    iptuple_to_binary({A,B,C,D});
 iptuple_to_binary({_I1, _I2, _I3, _I4, _I5, _I6, _I7, _I8}=T) ->
-    kz_util:join_binary([to_hex(I) || I <- tuple_to_list(T)], <<":">>).
+    kz_binary:join([to_hex(I) || I <- tuple_to_list(T)], <<":">>).
 
 -spec to_hex(integer()) -> binary().
 to_hex(I) ->
-    kz_util:to_lower_binary(integer_to_binary(I, 16)).
+    kz_term:to_lower_binary(integer_to_binary(I, 16)).
 
 -spec srvtuple_to_binary(srvtuple()) -> ne_binary().
 srvtuple_to_binary({Priority, Weight, Port, Domain}) ->
-    <<(kz_util:to_binary(Priority))/binary, " "
-      ,(kz_util:to_binary(Weight))/binary, " "
-      ,(kz_util:to_binary(Port))/binary, " "
-      ,(kz_util:strip_right_binary(kz_util:to_binary(Domain), $.))/binary
+    <<(kz_term:to_binary(Priority))/binary, " "
+      ,(kz_term:to_binary(Weight))/binary, " "
+      ,(kz_term:to_binary(Port))/binary, " "
+      ,(kz_binary:strip_right(kz_term:to_binary(Domain), $.))/binary
     >>.
 
 -spec naptrtuple_to_binary(naptrtuple()) -> ne_binary().
 naptrtuple_to_binary({Order, Preference, Flags, Services, Regexp, Domain}) ->
-    <<(kz_util:to_binary(Order))/binary, " "
-      ,(kz_util:to_binary(Preference))/binary, " "
-      ,"\"", (kz_util:to_upper_binary(Flags))/binary, "\" "
-      ,"\"", (kz_util:to_upper_binary(Services))/binary, "\" "
-      ,"\"", (kz_util:to_binary(Regexp))/binary, "\" "
-      ,(kz_util:strip_right_binary(kz_util:to_binary(Domain), $.))/binary
+    <<(kz_term:to_binary(Order))/binary, " "
+      ,(kz_term:to_binary(Preference))/binary, " "
+      ,"\"", (kz_term:to_upper_binary(Flags))/binary, "\" "
+      ,"\"", (kz_term:to_upper_binary(Services))/binary, "\" "
+      ,"\"", (kz_term:to_binary(Regexp))/binary, "\" "
+      ,(kz_binary:strip_right(kz_term:to_binary(Domain), $.))/binary
     >>.
 
 -spec mxtuple_to_binary(mxtuple()) -> ne_binary().
-mxtuple_to_binary({Priority, Domain}) ->
-    <<(kz_util:to_binary(Priority))/binary, " "
-      ,(kz_util:strip_right_binary(kz_util:to_binary(Domain), $.))/binary
-    >>.
+mxtuple_to_binary({_Priority, Domain}) ->
+    <<(kz_binary:strip_right(kz_term:to_binary(Domain), $.))/binary>>.
 
 %%--------------------------------------------------------------------
 %% @public
@@ -371,7 +456,7 @@ lookup_dns(Hostname, Type) ->
 -spec lookup_dns(ne_binary(), atom(), options()) ->
                         {'ok', [inet_res:dns_data()]}.
 lookup_dns(Hostname, Type, Options) ->
-    {'ok', inet_res:lookup(kz_util:to_list(Hostname), 'in', Type, Options)}.
+    {'ok', inet_res:lookup(kz_term:to_list(Hostname), 'in', Type, Options)}.
 
 %%--------------------------------------------------------------------
 %% @public

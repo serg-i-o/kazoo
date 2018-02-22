@@ -29,7 +29,7 @@
         ,save/2
         ]).
 
--include_lib("kazoo/include/kz_log.hrl").
+-include_lib("kazoo_stdlib/include/kz_log.hrl").
 -include("kz_documents.hrl").
 
 -define(KEY_AUDIT, <<"audit">>).
@@ -49,7 +49,7 @@
 -type doc() :: kz_json:object().
 -export_type([doc/0]).
 
--spec audit_account_ids(doc()) -> kz_json:path().
+-spec audit_account_ids(doc()) -> kz_json:keys() | [].
 audit_account_ids(JObj) ->
     kz_json:get_keys(?KEY_AUDIT, JObj).
 
@@ -117,7 +117,7 @@ set_authenticating_user(JObj, User) ->
 -spec set_audit_account(doc(), ne_binary(), kz_json:object()) -> doc().
 set_audit_account(JObj, AccountId, AuditJObj) ->
     OldAudit = audit_account_id(JObj, AccountId, kz_json:new()),
-    NewAudit = kz_json:merge_recursive(OldAudit, AuditJObj),
+    NewAudit = kz_json:merge(OldAudit, AuditJObj),
     kz_json:set_value([?KEY_AUDIT, AccountId], NewAudit, JObj).
 
 -spec save(kz_services:services(), doc()) -> 'ok'.
@@ -207,13 +207,11 @@ save_audit_log(Services, AuditLog, ResellerId) ->
 update_audit_log(Services, AuditLog) ->
     AccountId = kz_services:account_id(Services),
     JObj = kz_services:services_json(Services),
-
     AccountAudit = kz_json:from_list(
                      props:filter_empty(
                        [{?KEY_ACCOUNT_QUANTITIES, kzd_services:quantities(JObj)}
                        ,{?KEY_DIFF_QUANTITIES, kz_services:diff_quantities(Services)}
                        ,{?KEY_CASCADE_QUANTITIES, kz_services:cascade_quantities(Services)}
-                       ,{<<"account_name">>, kz_services:account_name(AccountId)}
-                       ])
-                    ),
+                       ,{<<"account_name">>, kz_account:fetch_name(AccountId)}
+                       ])),
     set_audit_account(AuditLog, AccountId, AccountAudit).

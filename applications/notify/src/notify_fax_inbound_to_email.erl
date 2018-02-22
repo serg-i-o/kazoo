@@ -36,6 +36,10 @@ handle_req(JObj, _Props) ->
 
     lager:debug("new fax left, sending to email if enabled"),
 
+    RespQ = kz_api:server_id(JObj),
+    MsgId = kz_api:msg_id(JObj),
+    notify_util:send_update(RespQ, MsgId, <<"pending">>),
+
     AccountId = kz_json:get_value(<<"Account-ID">>, JObj),
     FaxId = kz_json:get_value(<<"Fax-ID">>, JObj),
     lager:debug("account-id: ~s, fax-id: ~s", [AccountId, FaxId]),
@@ -64,14 +68,10 @@ handle_req(JObj, _Props) ->
     {'ok', HTMLBody} = notify_util:render_template(CustomHtmlTemplate, ?DEFAULT_HTML_TMPL, Props),
     {'ok', Subject} = notify_util:render_template(CustomSubjectTemplate, ?DEFAULT_SUBJ_TMPL, Props),
 
-    try build_and_send_email(TxtBody, HTMLBody, Subject, Emails, props:filter_empty(Props)) of
-        _ -> lager:debug("built and sent")
-    catch
-        C:R ->
-            lager:debug("failed: ~s:~p", [C, R]),
-            ST = erlang:get_stacktrace(),
-            kz_util:log_stacktrace(ST)
-    end.
+    notify_util:maybe_send_update(build_and_send_email(TxtBody, HTMLBody, Subject, Emails, props:filter_empty(Props))
+                                 ,RespQ
+                                 ,MsgId
+                                 ).
 
 %%--------------------------------------------------------------------
 %% @private
@@ -81,7 +81,7 @@ handle_req(JObj, _Props) ->
 %%--------------------------------------------------------------------
 -spec create_template_props(kz_json:object(), kz_json:objects(), kz_json:object()) -> kz_proplist().
 create_template_props(Event, [FaxDoc | _Others]=_Docs, Account) ->
-    Now = kz_util:current_tstamp(),
+    Now = kz_time:current_tstamp(),
 
     CIDName = kz_json:get_value(<<"Caller-ID-Name">>, Event),
     CIDNum = kz_json:get_value(<<"Caller-ID-Number">>, Event),
@@ -91,7 +91,7 @@ create_template_props(Event, [FaxDoc | _Others]=_Docs, Account) ->
     FromE164 = kz_json:get_value(<<"From-User">>, Event),
     DateCalled = kz_json:get_integer_value(<<"Fax-Timestamp">>, Event, Now),
     DateTime = calendar:gregorian_seconds_to_datetime(DateCalled),
-    Timezone = kz_util:to_list(kz_json:get_value([<<"rx_result">>,<<"timezone">>], FaxDoc, <<"UTC">>)),
+    Timezone = kz_term:to_list(kz_json:get_value([<<"rx_result">>,<<"timezone">>], FaxDoc, <<"UTC">>)),
     ClockTimezone = kapps_config:get_string(<<"servers">>, <<"clock_timezone">>, <<"UTC">>),
     [{<<"account">>, notify_util:json_to_template_props(Account)}
     ,{<<"service">>, notify_util:get_service_props(Event, Account, ?MOD_CONFIG_CAT)}
@@ -124,9 +124,9 @@ fax_values(Event) ->
 %% process the AMQP requests
 %% @end
 %%--------------------------------------------------------------------
--spec build_and_send_email(iolist(), iolist(), iolist(), ne_binary() | ne_binaries(), kz_proplist()) -> any().
+-spec build_and_send_email(iolist(), iolist(), iolist(), ne_binary() | ne_binaries(), kz_proplist()) -> send_email_return().
 build_and_send_email(TxtBody, HTMLBody, Subject, To, Props) when is_list(To) ->
-    _ = [build_and_send_email(TxtBody, HTMLBody, Subject, T, Props) || T <- To];
+    [build_and_send_email(TxtBody, HTMLBody, Subject, T, Props) || T <- To];
 build_and_send_email(_TxtBody, _HTMLBody, _Subject, 'undefined', _Props) ->
     'ok';
 build_and_send_email(TxtBody, HTMLBody, Subject, To, Props) ->

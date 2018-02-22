@@ -18,6 +18,7 @@
         ,charges/1, charges/2, charge/2, charge/3
         ]).
 -export([ok/2, ko/3]).
+-export([add_oks/2]).
 -export([assigned_to/1
         ,prev_assigned_to/1
         ,to_json/1
@@ -42,7 +43,9 @@
 
 -export([pipe/2]).
 -export([do/2]).
+-export([do_in_wrap/2]).
 -export([merge_okkos/2, merge_okkos/1]).
+-export([from_jobjs/1]).
 
 -include("knm.hrl").
 
@@ -81,7 +84,8 @@
 -type t_pn() :: t(knm_phone_number:knm_phone_number()).
 
 -opaque collection() :: t().
--export_type([collection/0]).
+-opaque pn_collection() :: t_pn().
+-export_type([collection/0, pn_collection/0]).
 
 -type options() :: knm_number_options:options().
 -type plan() :: kz_service_plans:plan() | undefined.
@@ -97,8 +101,10 @@
              ,charges/0
              ]).
 
--type applier() :: fun((t()) -> t()).
+-type applier() :: applier(t()).
+-type applier(A) :: fun((A) -> A).
 -type appliers() :: [applier()].
+-type appliers(A) :: [applier(A)].
 
 %% @private
 -spec num(knm_number:knm_number()) -> num().
@@ -194,12 +200,18 @@ charge(K, V, T=#{charges := Vs}) -> T#{charges => [{K, V} | Vs]}.
 
 %% @public
 -spec ok(ok() | oks(), t()) -> t().
-ok(Numbers, T) when is_list(Numbers) ->
-    T#{ok => Numbers};
-ok(Number, T) -> T#{ok => [Number | maps:get(ok, T)]}.
+ok(Numbers, T) when is_list(Numbers) -> T#{ok => Numbers};
+ok(Number, T) when not is_list(Number) ->
+    T#{ok => [Number | maps:get(ok, T)]}.
 
 %% @public
--spec ko(num() | knm_number:knm_number() | nums(), ko(), t()) -> t().
+-spec add_oks(oks(), t()) -> t().
+%%FIXME: unify with ok/2.
+add_oks(Numbers, T=#{ok := OKs}) when is_list(Numbers) ->
+    T#{ok => Numbers ++ OKs}.
+
+%% @public
+-spec ko(num() | knm_number:knm_number() | nums() | [knm_number:knm_number()], ko(), t()) -> t().
 ko(?NE_BINARY=Num, Reason, T) ->
     lager:debug("number ~s error: ~p", [Num, Reason]),
     KOs = maps:get(ko, T),
@@ -242,28 +254,72 @@ do_get_pn(Nums, Options, Error) ->
     {Yes, No} = are_reconcilable(Nums),
     do(fun knm_phone_number:fetch/1, new(Options, Yes, No, Error)).
 
+%% @public (used by knm_number_crawler)
+-spec from_jobjs(kz_json:objects()) -> t_pn().
+from_jobjs(JObjs) ->
+    Options = knm_number_options:default(),
+    PNs = [knm_phone_number:from_json_with_options(Doc, Options)
+           || JObj <- JObjs,
+              Doc <- [kz_json:get_value(<<"doc">>, JObj)],
+              kz_doc:type(Doc) =:= <<"number">>
+          ],
+    new(Options, PNs, []).
+
+-ifdef(TEST).
+-define(OPTIONS_FOR_LOAD(Nums, Options),
+        case knm_number_options:ported_in(Options) of
+            false -> Options;
+            true ->
+                case Nums of
+                    [?TEST_PORT_IN2_NUM] -> [{module_name, <<"knm_telnyx">>}|Options];
+                    [?TEST_AVAILABLE_NUM] -> [{module_name, <<"knm_bandwidth2">>}|Options];
+                    _ -> [{module_name, ?PORT_IN_MODULE_NAME}|Options]
+                end
+        end).
+-else.
+-define(OPTIONS_FOR_LOAD(_Nums, Options),
+        case knm_number_options:ported_in(Options) of
+            false -> Options;
+            true -> [{module_name, ?PORT_IN_MODULE_NAME}|Options]
+        end).
+-endif.
+
 %%--------------------------------------------------------------------
 %% @public
 %% @doc
 %% Attempts to create new numbers in DB or modify existing ones.
 %% Note: `assign_to' number option MUST be set.
+%% Note: creating numbers with `ported_in` option set to true will
+%%   attempt to create them with state in_service.
 %% @end
 %%--------------------------------------------------------------------
 -spec create(ne_binaries(), knm_number_options:options()) -> ret().
 create(Nums, Options) ->
-    ?MATCH_ACCOUNT_RAW(AccountId) = knm_number_options:assign_to(Options), %%FIXME: can crash
-    T0 = do_get_pn(Nums, Options, knm_errors:to_json(not_reconcilable)),
+    T0 = pipe(do_get_pn(Nums
+                       ,?OPTIONS_FOR_LOAD(Nums, props:delete(state, Options))
+                       ,knm_errors:to_json(not_reconcilable)
+                       )
+             ,[fun fail_if_assign_to_is_not_an_account_id/1
+              ]),
     case take_not_founds(T0) of
         {#{ok := []}, []} -> T0;
         {T1, NotFounds} ->
-            ToState = knm_number:state_for_create(AccountId, Options),
-            lager:debug("picked state ~s for ~s for ~p", [ToState, AccountId, Nums]),
-            NewOptions = [{'state', ToState} | Options],
-            ret(pipe(maybe_create(NotFounds, options(NewOptions, T1))
-                    ,[fun knm_number:new/1
-                     ,fun knm_number_states:to_options_state/1
-                     ,fun save_numbers/1
-                     ]))
+            try knm_number:state_for_create(Options) of
+                ToState ->
+                    lager:debug("picked state ~s for ~s for ~p", [ToState, knm_number_options:assign_to(Options), Nums]),
+                    NewOptions = [{state, ToState} | Options],
+                    ret(pipe(maybe_create(NotFounds, options(NewOptions, T1))
+                            ,[fun knm_number:new/1
+                             ,fun knm_number_states:to_options_state/1
+                             ,fun save_numbers/1
+                             ]))
+            catch throw:{error,unauthorized} ->
+                    Reason = knm_errors:to_json(unauthorized, undefined, state_for_create),
+                    F = fun (T=#{todo := PNs}) ->
+                                ko([knm_phone_number:number(PN) || PN <- PNs], Reason, T)
+                        end,
+                    ret(do(F, ko(NotFounds, Reason, T1)))
+            end
     end.
 
 %%--------------------------------------------------------------------
@@ -277,11 +333,12 @@ move(Nums, MoveTo) ->
     move(Nums, MoveTo, knm_number_options:default()).
 
 move(Nums, ?MATCH_ACCOUNT_RAW(MoveTo), Options0) ->
-    Options = [{'assign_to', MoveTo} | Options0],
+    Options = [{assign_to, MoveTo} | Options0],
     {TFound, NotFounds} = take_not_founds(do_get(Nums, Options)),
-    {TDiscovered, NotExisting} = take_not_founds(do(fun discover/1, new(Options, NotFounds))),
-    TNew = do_move_not_founds(NotExisting, Options),
-    T = merge_okkos([TFound, TDiscovered, TNew]),
+    Updates = knm_number_options:to_phone_number_setters(Options0),
+    TUpdated = do_in_wrap(fun (T) -> knm_phone_number:setters(T, Updates) end, TFound),
+    TDiscovered = do(fun discover/1, new(Options, NotFounds)),
+    T = merge_okkos(TUpdated, TDiscovered),
     ret(do(fun move_to/1, T)).
 
 %%--------------------------------------------------------------------
@@ -300,7 +357,11 @@ update(Nums, Routines) ->
 update([?NE_BINARY|_]=Nums, Routines, Options) ->
     Reason = not_reconcilable,  %% FIXME: unify to atom OR knm_error.
     do_update(do_get_pn(Nums, Options, Reason), Routines);
-update(Ns, Routines, Options) ->
+update(Ns, Updates, Options) ->
+    Routines = [{fun knm_phone_number:set_is_dirty/2, false}
+                | knm_number_options:to_phone_number_setters(Options)
+                ++ Updates
+               ],
     T0 = new(Options, Ns),
     T1 = do_in_wrap(fun (T) -> knm_phone_number:setters(T, Routines) end, T0),
     ret(do(fun save_numbers/1, T1)).
@@ -329,10 +390,10 @@ release(Nums) ->
 
 release(Nums, Options) ->
     ret(pipe(do_get_pn(Nums, Options)
-            ,[fun knm_phone_number:release/1
+            ,[fun try_release/1
              ,fun knm_number:new/1
              ,fun knm_providers:delete/1
-             ,fun unwind_or_disconnect/1
+             ,fun unwind_maybe_disconnect/1
              ,fun save_phone_numbers/1
              ])).
 
@@ -345,10 +406,7 @@ release(Nums, Options) ->
 %%--------------------------------------------------------------------
 -spec delete(ne_binaries(), knm_number_options:options()) -> ret().
 delete(Nums, Options) ->
-    AuthBy = knm_number_options:auth_by(Options),
-    case ?KNM_DEFAULT_AUTH_BY =:= AuthBy
-        orelse kz_util:is_system_admin(AuthBy)
-    of
+    case knm_phone_number:is_admin(knm_number_options:auth_by(Options)) of
         false ->
             Error = knm_errors:to_json(unauthorized),
             ret(new(Options, [], Nums, Error));
@@ -367,18 +425,15 @@ delete(Nums, Options) ->
 %%--------------------------------------------------------------------
 -spec reconcile(ne_binaries(), knm_number_options:options()) -> ret().
 reconcile(Nums, Options0) ->
-    case knm_number_options:assign_to(Options0) =:= undefined of
-        true ->
-            Error = knm_errors:to_json(assign_failure, undefined, field_undefined),
-            ret(new(Options0, [], Nums, Error));
-        false ->
-            Options = [{'auth_by', ?KNM_DEFAULT_AUTH_BY} | Options0],
-            {T0, NotFounds} = take_not_founds(do_get(Nums, Options)),
-            %% Ensures state to be IN_SERVICE
-            Ta = do_move_not_founds(NotFounds, Options),
-            Tb = do(fun (T) -> reconcile_number(T, Options) end, T0),
-            ret(merge_okkos(Ta, Tb))
-    end.
+    Options = [{'auth_by', ?KNM_DEFAULT_AUTH_BY} | Options0],
+    T0 = pipe(do_get(Nums, Options)
+             ,[fun fail_if_assign_to_is_not_an_account_id/1
+              ]),
+    {T1, NotFounds} = take_not_founds(T0),
+    %% Ensures state to be IN_SERVICE
+    Ta = do_move_not_founds(NotFounds, Options),
+    Tb = do(fun (T) -> reconcile_number(T, Options) end, T1),
+    ret(merge_okkos(Ta, Tb)).
 
 %%--------------------------------------------------------------------
 %% @public
@@ -388,7 +443,10 @@ reconcile(Nums, Options0) ->
 %%--------------------------------------------------------------------
 -spec reserve(ne_binaries(), knm_number_options:options()) -> ret().
 reserve(Nums, Options) ->
-    ret(do(fun to_reserved/1, do_get(Nums, Options))).
+    ret(pipe(do_get(Nums, Options)
+            ,[fun fail_if_assign_to_is_not_an_account_id/1
+             ,fun to_reserved/1
+             ])).
 
 %%--------------------------------------------------------------------
 %% @public
@@ -456,8 +514,12 @@ account_listing(AccountDb=?MATCH_ACCOUNT_ENCODED(_,_,_)) ->
             [{kz_doc:id(JObj), kz_json:get_value(<<"value">>, JObj)}
              || JObj <- JObjs
             ];
-        {'error', _R} ->
-            lager:debug("error listing numbers for ~s: ~p", [AccountDb, _R])
+        {'error', 'not_found'=_R} ->
+            lager:error("error listing numbers for ~s: ~p", [AccountDb, _R]),
+            [];
+        {'error', R} ->
+            lager:error("error listing numbers for ~s: ~p", [AccountDb, R]),
+            throw(R)
     end.
 
 
@@ -492,10 +554,10 @@ new(Options, ToDos, KOs, Reason) ->
 %% Apply something to "todo" if not empty,
 %% if empty use "ok" as the new "todo".
 %% If "ok" is empty, return.
-%% Exported ONLY for knm_number_states use.
+%% Exported ONLY for inside-app use.
 %% @end
 -spec pipe(t(), appliers()) -> t();
-          (t_pn(), appliers()) -> t_pn().
+          (t_pn(), appliers(t_pn())) -> t_pn().
 pipe(T, []) -> T;
 pipe(T=#{todo := [], ok := []}, _) -> T;
 pipe(T=#{todo := [], ok := OK}, Fs) ->
@@ -517,12 +579,15 @@ do(F, T=#{todo := [], ok := OK}) ->
     %% For calls not from pipe/2
     do(F, T#{todo => OK, ok => []});
 do(F, T) ->
-    lager:debug("applying ~p", [F]),
+    ?LOG_DEBUG("applying ~p", [F]),
     NewT = F(T),
     NewT#{todo => []}.
 
 %% @private
--spec do_in_wrap(applier(), t()) -> t().
+%% @doc
+%% Exported ONLY for knm_number_states use.
+%% @end
+-spec do_in_wrap(applier(t_pn()), t()) -> t().
 do_in_wrap(_, T=#{todo := [], ok := []}) -> T;
 do_in_wrap(F, T=#{todo := [], ok := OK}) ->
     %% For calls not from pipe/2
@@ -556,15 +621,21 @@ id(T=#{todo := Todo}) -> ok(Todo, T).
 -spec ret(t()) -> ret().
 ret(#{ok := OKs
      ,ko := KOs
-     ,services := Services
      ,charges := Charges
      ,options := Options
+     ,services := Services0
      }) ->
     #{ok => OKs
      ,ko => KOs %%FIXME Convert to error format
-     ,services => Services
      ,charges => Charges
      ,options => Options
+     ,services =>
+          case Services0 =:= undefined
+              andalso knm_number_options:dry_run(Options)
+          of
+              false -> Services0;
+              true -> kz_services:new()
+          end
      }.
 
 %% @public
@@ -609,7 +680,7 @@ take_not_founds(T=#{ko := KOs}) ->
     Nums = [Num || {Num,not_found} <- NumsNotFound],
     {T#{ko := maps:from_list(NewKOs)}, Nums}.
 
--spec maybe_create(ne_binaries(), t_pn()) -> t_pn().
+-spec maybe_create(nums(), t_pn()) -> t_pn().
 maybe_create(NotFounds, T) ->
     Ta = do(fun knm_number:ensure_can_create/1, new(options(T), NotFounds)),
     Tb = pipe(T, [fun knm_number:ensure_can_load_to_create/1
@@ -627,8 +698,8 @@ update_for_create(T=#{todo := _PNs, options := Options}) ->
 -spec update_for_reconcile(t_pn(), knm_number_options:options()) -> t_pn().
 update_for_reconcile(T, Options) ->
     S = [{fun knm_phone_number:set_assigned_to/2, knm_number_options:assign_to(Options)}
-        ,{fun knm_phone_number:set_auth_by/2,     knm_number_options:auth_by(Options)}
-        ,{fun knm_phone_number:update_doc/2,      knm_number_options:public_fields(Options)}
+        ,{fun knm_phone_number:set_auth_by/2, knm_number_options:auth_by(Options)}
+        ,{fun knm_phone_number:update_doc/2, knm_number_options:public_fields(Options)}
         ,{fun knm_phone_number:set_state/2, ?NUMBER_STATE_IN_SERVICE}
          | case props:is_defined(module_name, Options) of
                false -> [];
@@ -653,7 +724,7 @@ reconcile_number(T0, Options) ->
     pipe(do_in_wrap(F1, T0), [fun save_phone_numbers/1]).
 
 do_move_not_founds(Nums, Options) ->
-    pipe(new(Options, Nums)
+    pipe(new([{state, ?NUMBER_STATE_IN_SERVICE} | Options], Nums)
         ,[fun knm_phone_number:new/1
          ,fun knm_number:new/1
          ]).
@@ -681,40 +752,85 @@ to_reserved(T) ->
          ,fun save_numbers/1
          ]).
 
-unwind_or_disconnect(T) ->
+-spec fail_if_assign_to_is_not_an_account_id(t()) -> t();
+                                            (t_pn()) -> t_pn().
+fail_if_assign_to_is_not_an_account_id(T=#{todo := NsOrPNs, options := Options}) ->
+    case knm_number_options:assign_to(Options) of
+        ?MATCH_ACCOUNT_RAW(_) -> ok(NsOrPNs, T);
+        _ ->
+            Reason = knm_errors:to_json(assign_failure, undefined, field_undefined),
+            NsOrNums = case knm_phone_number:is_phone_number(hd(NsOrPNs)) of
+                           false -> NsOrPNs;
+                           true -> [knm_phone_number:number(PN) || PN <- NsOrPNs]
+                       end,
+            ko(NsOrNums, Reason, T)
+    end.
+
+-spec try_release(t_pn()) -> t_pn().
+try_release(T) ->
+    pipe(T
+        ,[fun can_release/1
+         ,fun knm_phone_number:is_authorized/1
+         ,fun reset_features/1
+         ]).
+
+-spec can_release(t_pn()) -> t_pn().
+can_release(T0=#{todo := PNs}) ->
+    ToState = knm_config:released_state(),
+    F = fun (PN, T) ->
+                FromState = knm_phone_number:state(PN),
+                case can_release(FromState, knm_phone_number:module_name(PN)) of
+                    true -> ok(PN, T);
+                    false ->
+                        {error,A,B,C} = (catch knm_errors:invalid_state_transition(undefined, FromState, ToState)),
+                        Reason = knm_errors:to_json(A, B, C),
+                        ko(knm_phone_number:number(PN), Reason, T)
+                end
+        end,
+    lists:foldl(F, T0, PNs).
+
+-spec can_release(ne_binary(), ne_binary()) -> boolean().
+can_release(?NUMBER_STATE_RELEASED, _) -> true;
+can_release(?NUMBER_STATE_RESERVED, _) -> true;
+can_release(?NUMBER_STATE_PORT_IN, _) -> true;
+can_release(?NUMBER_STATE_IN_SERVICE, _) -> true;
+can_release(_, ?CARRIER_LOCAL) -> true;
+can_release(_, _) -> false.
+
+-spec reset_features(t_pn()) -> t_pn().
+reset_features(T) ->
+    Routines = [fun knm_phone_number:reset_features/1
+               ,fun knm_phone_number:reset_doc/1
+               ],
+    knm_phone_number:setters(T, Routines).
+
+-spec unwind_maybe_disconnect(t()) -> t().
+unwind_maybe_disconnect(T) ->
     #{ok := Ns} = T0 = do_in_wrap(fun knm_phone_number:unwind_reserve_history/1, T),
-    {ToDisconnect, ToUnwind} = lists:partition(fun is_history_empty/1, Ns),
-    Ta = do_in_wrap(fun unwind/1, ok(ToUnwind, T0)),
+    {ToDisconnect, DontDisconnect} = lists:partition(fun should_disconnect/1, Ns),
+    Ta = ok(DontDisconnect, T0),
     Tb = pipe(ok(ToDisconnect, T0)
              ,[fun knm_carriers:disconnect/1
               ,fun delete_maybe_age/1
               ]),
     merge_okkos(Ta, Tb).
 
-unwind(T0=#{todo := PNs}) ->
-    BaseRoutines = [{fun knm_phone_number:set_state/2, ?NUMBER_STATE_RESERVED}],
-    F = fun (PN, T) ->
-                [NewAssignedTo|_] = knm_phone_number:reserve_history(PN),
-                Routines = [{fun knm_phone_number:set_assigned_to/2, NewAssignedTo} | BaseRoutines],
-                {ok, NewPN} = knm_phone_number:setters(PN, Routines),
-                ok(NewPN, T)
-        end,
-    lists:foldl(F, T0, PNs).
+-spec should_disconnect(knm_number:knm_number()) -> boolean().
+should_disconnect(N) ->
+    undefined =:= knm_phone_number:assigned_to(knm_number:phone_number(N)).
 
-delete_maybe_age(T=#{todo := _Ns, options := Options}) ->
-    case knm_config:should_permanently_delete(
-           knm_number_options:should_delete(Options))
-    of
+-spec delete_maybe_age(t()) -> t().
+delete_maybe_age(T) ->
+    case knm_config:should_permanently_delete() of
         true -> delete_permanently(T);
         false ->
             {DeleteNs, OtherNs} = split_on(fun is_carrier_local_or_mdn/1, T),
             merge_okkos(delete_permanently(DeleteNs), maybe_age(OtherNs))
     end.
 
-delete_permanently(T=#{options := Options}) ->
-    lager:debug("deleting permanently"),
-    NewOptions = [{state, ?NUMBER_STATE_DELETED} | Options],
-    do(fun knm_number_states:to_options_state/1, options(NewOptions, T)).
+-spec delete_permanently(t()) -> t().
+delete_permanently(T) ->
+    do_in_wrap(fun knm_phone_number:delete/1, T).
 
 split_on(Pred, T=#{todo := Ns}) ->
     {Yes, No} = lists:partition(Pred, Ns),
@@ -737,9 +853,6 @@ maybe_age(T=#{todo := Ns}) ->
                    ,options(NewOptions, T#{todo => Yes})),
             merge_okkos(Ta, Tb)
     end.
-
-is_history_empty(N) ->
-    [] =:= knm_phone_number:reserve_history(knm_number:phone_number(N)).
 
 is_state_available(N) ->
     ?NUMBER_STATE_AVAILABLE =:= knm_phone_number:state(knm_number:phone_number(N)).

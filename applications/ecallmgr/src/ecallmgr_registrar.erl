@@ -70,30 +70,30 @@
 -define(REG_CONSUME_OPTIONS, []).
 -define(EXPIRES_MISSING_VALUE, 0).
 
--record(state, {started = kz_util:current_tstamp()
+-record(state, {started = kz_time:current_tstamp()
                ,queue :: api_binary()
                }).
 -type state() :: #state{}.
 
 -record(registration, {id :: {ne_binary(), ne_binary()} | '_' | '$1'
-                      ,username :: ne_binary() | '_'
-                      ,realm :: ne_binary() | '_' | '$1'
-                      ,network_port :: ne_binary() | '_'
-                      ,network_ip :: ne_binary() | '_'
+                      ,username :: api_ne_binary() | '_'
+                      ,realm :: api_ne_binary() | '_' | '$1'
+                      ,network_port :: api_ne_binary() | '_'
+                      ,network_ip :: api_ne_binary() | '_'
                       ,to_host = ?DEFAULT_REALM :: ne_binary() | '_'
                       ,to_user = <<"nouser">> :: ne_binary() | '_'
                       ,from_host = ?DEFAULT_REALM :: ne_binary() | '_'
                       ,from_user = <<"nouser">> :: ne_binary() | '_'
-                      ,call_id :: ne_binary() | '_'
-                      ,user_agent :: ne_binary() | '_'
+                      ,call_id :: api_ne_binary() | '_'
+                      ,user_agent :: api_ne_binary() | '_'
                       ,expires = ?EXPIRES_MISSING_VALUE :: non_neg_integer() | '_' | '$1'
-                      ,contact :: ne_binary() | '_'
+                      ,contact :: api_ne_binary() | '_'
                       ,previous_contact :: api_binary() | '_'
-                      ,original_contact :: ne_binary() | '_'
-                      ,last_registration = kz_util:current_tstamp() :: gregorian_seconds() | '_' | '$2'
-                      ,initial_registration = kz_util:current_tstamp() :: gregorian_seconds() | '_'
-                      ,registrar_node :: ne_binary() | '_'
-                      ,registrar_hostname :: ne_binary() | '_'
+                      ,original_contact :: api_ne_binary() | '_'
+                      ,last_registration = kz_time:current_tstamp() :: gregorian_seconds() | '_' | '$2'
+                      ,initial_registration = kz_time:current_tstamp() :: gregorian_seconds() | '_'
+                      ,registrar_node :: api_ne_binary() | '_'
+                      ,registrar_hostname :: api_ne_binary() | '_'
                       ,suppress_unregister = 'true' :: boolean() | '_'
                       ,register_overwrite_notify = 'false' :: boolean() | '_'
                       ,account_db :: api_binary() | '_'
@@ -101,10 +101,13 @@
                       ,authorizing_id :: api_binary() | '_'
                       ,authorizing_type :: api_binary() | '_'
                       ,owner_id :: api_binary() | '_'
+                      ,presence_id :: api_binary() | '_'
                       ,initial = 'true' :: boolean() | '_'
                       ,account_realm :: api_binary() | '_' | '$2'
                       ,account_name :: api_binary() | '_'
                       ,proxy :: api_binary() | '_'
+                      ,proxy_ip :: api_binary() | '_'
+                      ,proxy_port :: api_integer() | '_'
                       ,bridge_uri :: api_binary() | '_'
                       ,source_ip :: api_binary() | '_'
                       ,source_port :: api_binary() | '_'
@@ -163,13 +166,13 @@ handle_fs_reg(Node, Props) ->
     Req = lists:foldl(fun(<<"Contact">>=K, Acc) ->
                               [{K, get_fs_contact(Props)} | Acc];
                          (K, Acc) ->
-                              case props:get_first_defined([kz_util:to_lower_binary(K), K], Props) of
+                              case props:get_first_defined([kz_term:to_lower_binary(K), K], Props) of
                                   'undefined' -> Acc;
                                   V -> [{K, V} | Acc]
                               end
                       end
-                     ,[{<<"Event-Timestamp">>, round(kz_util:current_tstamp())}
-                      ,{<<"FreeSWITCH-Nodename">>, kz_util:to_binary(Node)}
+                     ,[{<<"Event-Timestamp">>, round(kz_time:current_tstamp())}
+                      ,{<<"FreeSWITCH-Nodename">>, kz_term:to_binary(Node)}
                        | kz_api:default_headers(?APP_NAME, ?APP_VERSION)
                       ]
                      ,kapi_registration:success_keys()),
@@ -204,8 +207,8 @@ lookup_contact(<<_/binary>> = Realm, <<_/binary>> = Username) ->
                                      {'ok', ne_binary()} |
                                      {'error', 'not_found'}.
 lookup_original_contact(Realm, Username) ->
-    case kz_util:is_empty(Realm)
-        orelse kz_util:is_empty(Username)
+    case kz_term:is_empty(Realm)
+        orelse kz_term:is_empty(Username)
     of
         'true' -> {'error', 'not_found'};
         'false' ->
@@ -248,9 +251,9 @@ summary() ->
 
 -spec summary(text()) -> 'ok'.
 summary(Realm) when not is_binary(Realm) ->
-    summary(kz_util:to_binary(Realm));
+    summary(kz_term:to_binary(Realm));
 summary(Realm) ->
-    R = kz_util:to_lower_binary(Realm),
+    R = kz_term:to_lower_binary(Realm),
     MatchSpec =
         [{#registration{realm = '$1'
                        ,account_realm = '$2'
@@ -278,12 +281,12 @@ details() ->
 
 -spec details(text()) -> 'ok'.
 details(User) when not is_binary(User) ->
-    details(kz_util:to_binary(User));
+    details(kz_term:to_binary(User));
 details(User) ->
     case binary:split(User, <<"@">>) of
         [Username, Realm] -> details(Username, Realm);
         _Else ->
-            Realm = kz_util:to_lower_binary(User),
+            Realm = kz_term:to_lower_binary(User),
             MatchSpec =
                 [{#registration{realm = '$1'
                                ,account_realm = '$2'
@@ -302,9 +305,9 @@ details(User) ->
 
 -spec details(text(), text()) -> 'ok'.
 details(Username, Realm) when not is_binary(Username) ->
-    details(kz_util:to_binary(Username), Realm);
+    details(kz_term:to_binary(Username), Realm);
 details(Username, Realm) when not is_binary(Realm) ->
-    details(Username, kz_util:to_binary(Realm));
+    details(Username, kz_term:to_binary(Realm));
 details(Username, Realm) ->
     Id =  registration_id(Username, Realm),
     MatchSpec =
@@ -325,7 +328,7 @@ flush() ->
 
 -spec flush(text()) -> 'ok'.
 flush(Realm) when not is_binary(Realm)->
-    flush(kz_util:to_binary(Realm));
+    flush(kz_term:to_binary(Realm));
 flush(Realm) ->
     case binary:split(Realm, <<"@">>) of
         [Username, Realm] -> flush(Username, Realm);
@@ -336,9 +339,9 @@ flush(Realm) ->
 flush('undefined', Realm) ->
     flush(Realm);
 flush(Username, Realm) when not is_binary(Realm) ->
-    flush(Username, kz_util:to_binary(Realm));
+    flush(Username, kz_term:to_binary(Realm));
 flush(Username, Realm) when not is_binary(Username) ->
-    flush(kz_util:to_binary(Username), Realm);
+    flush(kz_term:to_binary(Username), Realm);
 flush(Username, Realm) ->
     gen_server:cast(?SERVER, {'flush', Username, Realm}).
 
@@ -422,7 +425,7 @@ handle_cast('flush', State) ->
     {'noreply', State};
 handle_cast({'flush', Realm}, State) ->
     kz_util:put_callid(?LOG_SYSTEM_ID),
-    R = kz_util:to_lower_binary(Realm),
+    R = kz_term:to_lower_binary(Realm),
     MatchSpec = [{#registration{realm = '$1'
                                ,account_realm = '$2'
                                ,_ = '_'
@@ -486,7 +489,7 @@ handle_info(_Info, State) ->
 %%--------------------------------------------------------------------
 -spec handle_event(kz_json:object(), state()) -> gen_listener:handle_event_return().
 handle_event(_JObj, #state{started=Started}) ->
-    {'reply', [{'registrar_age', kz_util:current_tstamp() - Started}]}.
+    {'reply', [{'registrar_age', kz_time:current_tstamp() - Started}]}.
 
 %%--------------------------------------------------------------------
 %% @private
@@ -656,7 +659,7 @@ fetch_original_contact(Username, Realm) ->
 
 -spec expire_objects() -> 'ok'.
 expire_objects() ->
-    Now = kz_util:current_tstamp(),
+    Now = kz_time:current_tstamp(),
     MatchSpec = [{#registration{expires = '$1'
                                ,last_registration = '$2'
                                , _ = '_'
@@ -677,7 +680,7 @@ expire_object({[#registration{id=Id}=Reg], Continuation}) ->
 -spec maybe_resp_to_query(kz_json:object(), integer()) -> 'ok'.
 maybe_resp_to_query(JObj, RegistrarAge) ->
     case kz_json:get_value(<<"Node">>, JObj)
-        =:= kz_util:to_binary(node())
+        =:= kz_term:to_binary(node())
         andalso kz_json:get_value(<<"App-Name">>, JObj)
         =:= ?APP_NAME
     of
@@ -693,7 +696,7 @@ maybe_resp_to_query(JObj, RegistrarAge) ->
 -spec build_query_spec(kz_json:object(), boolean()) -> ets:match_spec().
 build_query_spec(JObj, CountOnly) ->
     {SelectFormat, QueryFormat} =
-        case kz_util:to_lower_binary(kz_json:get_value(<<"Realm">>, JObj)) of
+        case kz_term:to_lower_binary(kz_json:get_value(<<"Realm">>, JObj)) of
             <<"all">> -> {#registration{_='_'}, {'=:=', 'undefined', 'undefined'}};
             Realm -> build_query_spec_maybe_username(Realm, JObj)
         end,
@@ -779,7 +782,7 @@ filter(Fields, JObj) ->
 
 -spec registration_id(ne_binary(), ne_binary()) -> {ne_binary(), ne_binary()}.
 registration_id(Username, Realm) ->
-    {kz_util:to_lower_binary(Username), kz_util:to_lower_binary(Realm)}.
+    {kz_term:to_lower_binary(Username), kz_term:to_lower_binary(Realm)}.
 
 -spec create_registration(kz_json:object()) -> registration().
 create_registration(JObj) ->
@@ -787,6 +790,8 @@ create_registration(JObj) ->
     Realm = kz_json:get_value(<<"Realm">>, JObj),
     Reg = existing_or_new_registration(Username, Realm),
     Proxy = kz_json:get_value(<<"Proxy-Path">>, JObj, Reg#registration.proxy),
+    ProxyIP = kz_json:get_value(<<"Proxy-IP">>, JObj, Reg#registration.proxy_ip),
+    ProxyPort = kz_json:get_integer_value(<<"Proxy-Port">>, JObj, Reg#registration.proxy_port),
     OriginalContact =
         kz_json:get_first_defined([<<"Original-Contact">>
                                   ,<<"Contact">>
@@ -817,6 +822,8 @@ create_registration(JObj) ->
       Reg#registration{username=Username
                       ,realm=Realm
                       ,proxy=Proxy
+                      ,proxy_ip=ProxyIP
+                      ,proxy_port=ProxyPort
                       ,expires=Expires
                       ,registrar_node=RegistrarNode
                       ,registrar_hostname=RegistrarHostname
@@ -849,7 +856,7 @@ augment_registration(Reg, JObj) ->
                             ,Reg#registration.account_id
                             ),
     SuppressUnregister =
-        kz_util:is_true(
+        kz_term:is_true(
           case kz_json:find(<<"Suppress-Unregister-Notifications">>, [JObj, CCVs]) of
               'undefined' ->
                   kz_json:find(<<"Suppress-Unregister-Notify">>
@@ -860,7 +867,7 @@ augment_registration(Reg, JObj) ->
           end
          ),
     OverwriteNotify =
-        kz_util:is_true(
+        kz_term:is_true(
           kz_json:find(<<"Register-Overwrite-Notify">>
                       ,[JObj, CCVs]
                       ,Reg#registration.register_overwrite_notify
@@ -883,6 +890,10 @@ augment_registration(Reg, JObj) ->
                                           ,[JObj, CCVs]
                                           ,Reg#registration.owner_id
                                           )
+                    ,presence_id=kz_json:find(<<"Presence-ID">>
+                                             ,[JObj, CCVs]
+                                             ,Reg#registration.presence_id
+                                             )
                     ,authorizing_id=kz_json:find(<<"Authorizing-ID">>
                                                 ,[JObj, CCVs]
                                                 ,Reg#registration.authorizing_id
@@ -909,23 +920,44 @@ bridge_uri(Contact, Proxy, Username, Realm) ->
     [#uri{}=UriContact] = kzsip_uri:uris(Contact),
     [#uri{}=UriProxy] = kzsip_uri:uris(Proxy),
     Scheme = UriContact#uri.scheme,
-    Transport = props:get_value(<<"transport">>, UriContact#uri.opts),
+    Options = #{uri_contact => UriContact
+               ,uri_proxy => UriProxy
+               },
+    BridgeUriOptions = bridge_uri_options(Options),
     BridgeUri = #uri{scheme=Scheme
                     ,user=Username
                     ,domain=Realm
-                    ,opts=props:filter_undefined(
-                            [{<<"transport">>, Transport}
-                            ,{<<"fs_path">>, kzsip_uri:ruri(UriProxy)}
-                            ]
-                           )
+                    ,opts=BridgeUriOptions
                     },
     kzsip_uri:ruri(BridgeUri).
+
+-spec bridge_uri_options(map()) -> kz_proplist().
+bridge_uri_options(Options) ->
+    Routines = [fun bridge_uri_transport/2
+               ,fun bridge_uri_path/2
+               ],
+    lists:foldl(fun(Fun, Acc) -> Fun(Options, Acc) end, [], Routines).
+
+-spec bridge_uri_transport(map(), kz_proplist()) -> kz_proplist().
+bridge_uri_transport(#{uri_contact := UriContact}, Acc) ->
+    case application:get_env(?APP, 'use_transport_for_fs_path', 'false') of
+        'true' ->
+            case props:get_value(<<"transport">>, UriContact#uri.opts) of
+                'undefined' -> Acc;
+                Transport -> [{<<"transport">>, Transport} | Acc]
+            end;
+        'false' -> Acc
+    end.
+
+-spec bridge_uri_path(map(), kz_proplist()) -> kz_proplist().
+bridge_uri_path(#{uri_proxy := UriProxy}, Acc) ->
+    [{<<"fs_path">>, kzsip_uri:ruri(UriProxy)} | Acc].
 
 -spec existing_or_new_registration(ne_binary(), ne_binary()) -> registration().
 existing_or_new_registration(Username, Realm) ->
     case ets:lookup(?MODULE, registration_id(Username, Realm)) of
         [#registration{contact=Contact}=Reg] ->
-            Reg#registration{last_registration=kz_util:current_tstamp()
+            Reg#registration{last_registration=kz_time:current_tstamp()
                             ,previous_contact=Contact
                             };
         _Else ->
@@ -946,8 +978,8 @@ initial_registration(#registration{}=Reg) ->
 maybe_query_authn(#registration{account_id=AccountId
                                ,authorizing_id=AuthorizingId
                                }=Reg) ->
-    case kz_util:is_empty(AccountId)
-        orelse kz_util:is_empty(AuthorizingId)
+    case kz_term:is_empty(AccountId)
+        orelse kz_term:is_empty(AuthorizingId)
     of
         'true' -> query_authn(Reg);
         'false' -> Reg
@@ -984,16 +1016,15 @@ fetch_authn(#registration{username=Username
           ,{<<"Orig-Port">>, NetworkPort}
           ,{<<"Auth-User">>, Username}
           ,{<<"Auth-Realm">>, Realm}
-          ,{<<"Media-Server">>, kz_util:to_binary(Node)}
+          ,{<<"Media-Server">>, kz_term:to_binary(Node)}
           ,{<<"Method">>, <<"REGISTER">>}
           ,{<<"Call-ID">>, CallId}
            | kz_api:default_headers(?APP_NAME, ?APP_VERSION)
           ],
-    ReqResp = kz_amqp_worker:call(
-                props:filter_undefined(Req)
+    ReqResp = kz_amqp_worker:call(props:filter_undefined(Req)
                                  ,fun kapi_authn:publish_req/1
                                  ,fun kapi_authn:resp_v/1
-               ),
+                                 ),
     case ReqResp of
         {'error', _} -> Reg;
         {'ok', JObj} ->
@@ -1040,6 +1071,7 @@ update_registration(#registration{authorizing_id=AuthorizingId
                                  ,suppress_unregister=SuppressUnregister
                                  ,register_overwrite_notify=RegisterOverwrite
                                  ,owner_id=OwnerId
+                                 ,presence_id=PresenceId
                                  ,id=Id
                                  ,account_realm=AccountRealm
                                  ,account_name=AccountName
@@ -1049,6 +1081,7 @@ update_registration(#registration{authorizing_id=AuthorizingId
             ,{#registration.authorizing_id, AuthorizingId}
             ,{#registration.authorizing_type, AuthorizingType}
             ,{#registration.owner_id, OwnerId}
+            ,{#registration.presence_id, PresenceId}
             ,{#registration.suppress_unregister, SuppressUnregister}
             ,{#registration.register_overwrite_notify, RegisterOverwrite}
             ,{#registration.account_realm, AccountRealm}
@@ -1147,6 +1180,8 @@ to_props(Reg) ->
       ,{<<"Original-Contact">>, Reg#registration.original_contact}
       ,{<<"Previous-Contact">>, Reg#registration.previous_contact}
       ,{<<"Proxy-Path">>, Reg#registration.proxy}
+      ,{<<"Proxy-IP">>, Reg#registration.proxy_ip}
+      ,{<<"Proxy-Port">>, Reg#registration.proxy_port}
       ,{<<"Expires">>, Reg#registration.expires}
       ,{<<"Account-ID">>, Reg#registration.account_id}
       ,{<<"Account-DB">>, Reg#registration.account_db}
@@ -1157,6 +1192,7 @@ to_props(Reg) ->
       ,{<<"Suppress-Unregister-Notify">>, Reg#registration.suppress_unregister}
       ,{<<"Register-Overwrite-Notify">>, Reg#registration.register_overwrite_notify}
       ,{<<"Owner-ID">>, Reg#registration.owner_id}
+      ,{<<"Presence-ID">>, Reg#registration.presence_id}
       ,{<<"Registrar-Node">>, Reg#registration.registrar_node}
       ,{<<"Registrar-Hostname">>, Reg#registration.registrar_hostname}
       ,{<<"Bridge-RURI">>, Reg#registration.bridge_uri}
@@ -1201,25 +1237,22 @@ print_summary({[#registration{username=Username
                              ,expires=Expires
                              ,last_registration=LastRegistration
                              ,call_id=CallId
+                             ,proxy=Proxy
+                             ,proxy_ip=ProxyIP
+                             ,proxy_port=ProxyPort
                              }
                ]
               ,Continuation
               }
              ,Count) ->
     User = <<Username/binary, "@", Realm/binary>>,
-    Remaining = (LastRegistration + Expires) - kz_util:current_tstamp(),
+    Remaining = (LastRegistration + Expires) - kz_time:current_tstamp(),
     Props = breakup_contact(Contact),
     Hostport = props:get_first_defined(['received', 'hostport'], Props),
-    _ = case props:get_value('fs_path', Props) of
-            'undefined' ->
-                io:format("| ~-45s | ~-22s | ~-22s | ~-32s | ~-4B |~n"
-                         ,[User, Hostport, <<>>, CallId, Remaining]
-                         );
-            Path ->
-                io:format("| ~-45s | ~-22s | ~-22s | ~-32s | ~-4B |~n"
-                         ,[User, Hostport, Path, CallId, Remaining]
-                         )
-        end,
+    Path = proxy_path(Proxy, ProxyIP, ProxyPort),
+    io:format("| ~-45s | ~-22s | ~-22s | ~-32s | ~-4B |~n"
+             ,[User, Hostport, Path, CallId, Remaining]
+             ),
     print_summary(ets:select(Continuation), Count + 1).
 
 -spec print_details(ets_continuation()) -> 'ok'.
@@ -1241,10 +1274,10 @@ print_details({[#registration{}=Reg], Continuation}, Count) ->
 print_property(<<"Expires">> =Key, Value, #registration{expires=Expires
                                                        ,last_registration=LastRegistration
                                                        }) ->
-    Remaining = (LastRegistration + Expires) - kz_util:current_tstamp(),
-    io:format("~-19s: ~b/~s~n", [Key, Remaining, kz_util:to_binary(Value)]);
+    Remaining = (LastRegistration + Expires) - kz_time:current_tstamp(),
+    io:format("~-19s: ~b/~s~n", [Key, Remaining, kz_term:to_binary(Value)]);
 print_property(Key, Value, _) ->
-    io:format("~-19s: ~s~n", [Key, kz_util:to_binary(Value)]).
+    io:format("~-19s: ~s~n", [Key, kz_term:to_binary(Value)]).
 
 -type contact_param() :: {'uri', ne_binary()} |
                          {'hostport', ne_binary()} |
@@ -1260,12 +1293,24 @@ breakup_contact(Contact) when is_binary(Contact) ->
     Hostport = get_contact_hostport(Uri),
     find_contact_parameters(Parameters, [{'uri', Uri}, {'hostport', Hostport}]);
 breakup_contact(Contact) ->
-    breakup_contact(kz_util:to_binary(Contact)).
+    breakup_contact(kz_term:to_binary(Contact)).
+
+-spec proxy_path(api_binary(), api_binary(), api_integer()) -> binary().
+proxy_path('undefined', 'undefined', 'undefined') -> <<>>;
+proxy_path('undefined', 'undefined', Port) -> proxy_path('undefined', <<>>, Port);
+proxy_path('undefined', IP, 'undefined') -> IP;
+proxy_path('undefined', IP, Port) -> <<IP/binary, ":", (kz_term:to_binary(Port))/binary>>;
+proxy_path(Proxy, _, Port) ->
+    Proxy1 = binary:replace(Proxy, <<"sip:">>, <<>>),
+    case binary:match(Proxy1, <<":">>) of
+        'nomatch' -> <<Proxy1/binary, ":", (kz_term:to_binary(Port))/binary>>;
+        _ -> Proxy1
+    end.
 
 -spec find_contact_parameters(ne_binaries(), kz_proplist()) -> kz_proplist().
 find_contact_parameters([], Props) -> Props;
 find_contact_parameters([<<"transport=", Transport/binary>>|Parameters], Props) ->
-    find_contact_parameters(Parameters, [{'transport', kz_util:to_lower_binary(Transport)}|Props]);
+    find_contact_parameters(Parameters, [{'transport', kz_term:to_lower_binary(Transport)}|Props]);
 find_contact_parameters([<<"fs_path=", FsPath/binary>>|Parameters], Props) ->
     find_contact_parameters(Parameters, [{'fs_path', FsPath}|Props]);
 find_contact_parameters([<<"received=", Received/binary>>|Parameters], Props) ->

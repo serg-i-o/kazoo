@@ -1,5 +1,5 @@
 %%%-------------------------------------------------------------------
-%%% @copyright (C) 2017, 2600Hz INC
+%%% @copyright (C) 2016-2017, 2600Hz INC
 %%% @doc
 %%% Utilities for tasks validation & stuff.
 %%% @end
@@ -12,10 +12,12 @@
         ,all/1
         ,read/1
         ,new/7
+        ,new_id/0
         ]).
 
 -export([mandatory/1
         ,optional/1
+        ,possible_fields/1
         ,input_mime/1
         ]).
 
@@ -26,19 +28,19 @@
         ]).
 
 -export([is_processing/1
+        ,status/1
         ]).
 
 -include("kazoo_tasks.hrl").
 
 -define(TASK_ID_SIZE, 15).
--define(A_TASK_ID, kz_util:rand_hex_binary(?TASK_ID_SIZE)).
--type task_id() :: <<_:(8*2*?TASK_ID_SIZE)>>.
+-type id() :: <<_:(8*2*?TASK_ID_SIZE)>>.
 
 -type task() :: #{worker_pid => api_pid()
                  ,worker_node => api_ne_binary()
                  ,account_id => ne_binary()
                  ,auth_account_id => ne_binary()
-                 ,id => task_id()
+                 ,id => id()
                  ,category => ne_binary()
                  ,action => ne_binary()
                  ,file_name => api_ne_binary()
@@ -48,21 +50,44 @@
                  ,total_rows => api_pos_integer() %% CSV rows (undefined for a noinput task)
                  ,total_rows_failed => api_non_neg_integer() %% Rows that crashed or didn't return ok
                  ,total_rows_succeeded => api_non_neg_integer() %% Rows that returned 'ok'
+                 ,was_stopped => api_boolean() %% true if stopped, undefined of false otherwise
                  }.
 
 -type input() :: api_ne_binary() | kz_json:objects().
 
+-type output_header() :: kz_csv:header() | {replace, kz_csv:header()}.
+
+-type columns() :: sets:set(ne_binary()).
+
 -type help_error() :: {'error', 'unknown_category_action'}.
 
--export_type([task_id/0
+-type return() :: 'ok' | api_ne_binary() |
+                  kz_csv:row() | [kz_csv:row()] |
+                  kz_csv:mapped_row() | [kz_csv:mapped_row()].
+
+-type iterator() :: 'init' | 'stop' | any().
+
+-type extra_args() :: #{account_id => ne_binary()
+                       ,auth_account_id => ne_binary()
+                       }.
+
+-type args() :: map().
+
+-export_type([id/0
              ,input/0
+             ,output_header/0
+             ,columns/0
              ,help_error/0
+             ,return/0
+             ,iterator/0
+             ,extra_args/0
+             ,args/0
+             ,task/0
              ]).
 
 -define(API_MANDATORY, <<"mandatory">>).
 -define(API_OPTIONAL, <<"optional">>).
 -define(API_INPUT_MIME, <<"expected_content">>).
-
 
 %%%===================================================================
 %%% API
@@ -76,6 +101,10 @@ mandatory(APIJObj) ->
 optional(APIJObj) ->
     kz_json:get_list_value(?API_OPTIONAL, APIJObj, []).
 
+-spec possible_fields(kz_json:object()) -> ne_binaries().
+possible_fields(APIJObj) ->
+    mandatory(APIJObj) ++ optional(APIJObj).
+
 -spec input_mime(kz_json:object()) -> ne_binary().
 input_mime(APIJObj) ->
     kz_json:get_ne_binary_value(?API_INPUT_MIME, APIJObj, ?NIL_MIME).
@@ -86,8 +115,7 @@ input_mime(APIJObj) ->
 %% @end
 %%--------------------------------------------------------------------
 -spec all() -> kz_json:objects().
-all() ->
-    view([]).
+all() -> view([]).
 
 %%--------------------------------------------------------------------
 %% @public
@@ -95,9 +123,10 @@ all() ->
 %% @end
 %%--------------------------------------------------------------------
 -spec all(ne_binary()) -> kz_json:objects().
-all(AccountId=?NE_BINARY) ->
-    view([{'startkey', [AccountId]}
-         ,{'endkey', [AccountId, kz_json:new()]}
+all(?MATCH_ACCOUNT_RAW(AccountId)) ->
+    view([{startkey, [AccountId, kz_time:current_tstamp(), kz_json:new()]}
+         ,{endkey, [AccountId]}
+         ,descending
          ]).
 
 %%--------------------------------------------------------------------
@@ -105,8 +134,8 @@ all(AccountId=?NE_BINARY) ->
 %% @doc
 %% @end
 %%--------------------------------------------------------------------
--spec read(task_id()) -> {'ok', kz_json:object()} |
-                         {'error', 'not_found'}.
+-spec read(id()) -> {ok, kz_json:object()} |
+                    {error, not_found}.
 read(TaskId=?NE_BINARY) ->
     case task_by_id(TaskId) of
         [Task] -> {'ok', to_public_json(Task)};
@@ -139,13 +168,13 @@ new(?MATCH_ACCOUNT_RAW(AuthAccountId), ?MATCH_ACCOUNT_RAW(AccountId)
                     JObj = kz_json:from_list(props:filter_empty(maps:to_list(Errors))),
                     {'error', JObj};
                 _ ->
-                    InputName = case kz_util:is_empty(CSVName) of
+                    InputName = case kz_term:is_empty(CSVName) of
                                     'true' -> 'undefined';
-                                    'false' -> kz_util:to_binary(CSVName)
+                                    'false' -> kz_term:to_binary(CSVName)
                                 end,
                     lager:debug("creating ~s.~s task (~p)", [Category, Action, TotalRows]),
                     lager:debug("using auth ~s and account ~s", [AuthAccountId, AccountId]),
-                    TaskId = ?A_TASK_ID,
+                    TaskId = new_id(),
                     Task = #{worker_pid => 'undefined'
                             ,worker_node => 'undefined'
                             ,account_id => AccountId
@@ -154,7 +183,7 @@ new(?MATCH_ACCOUNT_RAW(AuthAccountId), ?MATCH_ACCOUNT_RAW(AccountId)
                             ,category => Category
                             ,action => Action
                             ,file_name => InputName
-                            ,created => kz_util:current_tstamp()
+                            ,created => kz_time:current_tstamp()
                             ,started => 'undefined'
                             ,finished => 'undefined'
                             ,total_rows => TotalRows
@@ -166,6 +195,10 @@ new(?MATCH_ACCOUNT_RAW(AuthAccountId), ?MATCH_ACCOUNT_RAW(AccountId)
                     Ok
             end
     end.
+
+-spec new_id() -> id().
+new_id() ->
+    kz_binary:rand_hex(?TASK_ID_SIZE).
 
 %%%===================================================================
 %%% Internal functions
@@ -188,7 +221,7 @@ help(Category, Action) ->
     of
         {'ok', JObj} ->
             Help = kz_json:get_value([<<"Help">>, Category, Action], JObj),
-            case kz_util:is_empty(Help) of
+            case kz_term:is_empty(Help) of
                 false -> Help;
                 true -> {error, unknown_category_action}
             end;
@@ -261,19 +294,13 @@ are_mandatories_unset(IsMandatory, Row) ->
 
 -spec view(list()) -> kz_json:objects().
 view(ViewOptions) ->
-    case kz_datamgr:get_results(?KZ_TASKS_DB, ?KZ_TASKS_BY_ACCOUNT, ViewOptions) of
+    case kz_datamgr:get_results(?KZ_TASKS_DB, ?KZ_TASKS_BY_CREATED, ViewOptions) of
         {'ok', []} -> [];
-        {'ok', JObjs} ->
-            Found = [kz_json:get_value(<<"value">>, JObj) || JObj <- JObjs],
-            lists:sort(fun compare_tasks/2, Found);
+        {'ok', JObjs} -> [kz_json:get_value(<<"value">>, JObj) || JObj <- JObjs];
         {'error', _R} ->
             lager:debug("error viewing tasks (~p): ~p", [ViewOptions, _R]),
             []
     end.
-
--spec compare_tasks(kz_json:object(), kz_json:object()) -> boolean().
-compare_tasks(JObjA, JObjB) ->
-    kz_doc:created(JObjA) =< kz_doc:created(JObjB).
 
 -spec save_new_task(task()) -> {'ok', kz_json:object()} |
                                {'error', any()}.
@@ -285,7 +312,7 @@ save_new_task(Task = #{id := _TaskId}) ->
             E
     end.
 
--spec task_by_id(task_id()) -> [task()].
+-spec task_by_id(id()) -> [task()].
 task_by_id(TaskId) ->
     case kz_datamgr:open_cache_doc(?KZ_TASKS_DB, TaskId) of
         {'ok', JObj} -> [from_json(JObj)];
@@ -297,7 +324,7 @@ task_by_id(TaskId) ->
 
 -spec from_json(kz_json:object()) -> task().
 from_json(Doc) ->
-    #{worker_pid => 'undefined'
+    #{worker_pid => undefined
      ,worker_node => kzd_task:node(Doc)
      ,account_id => kzd_task:account_id(Doc)
      ,auth_account_id => kzd_task:auth_account_id(Doc)
@@ -311,6 +338,7 @@ from_json(Doc) ->
      ,total_rows => kzd_task:total_count(Doc)
      ,total_rows_failed => kzd_task:failure_count(Doc)
      ,total_rows_succeeded => kzd_task:success_count(Doc)
+     ,was_stopped => ?STATUS_STOPPED =:= kzd_task:status(Doc)
      }.
 
 -spec to_json(task()) -> kz_json:object().
@@ -329,66 +357,69 @@ to_json(#{id := TaskId
          ,total_rows_succeeded := TotalSucceeded
          } = Task) ->
     kz_json:from_list(
-      props:filter_undefined(
-        [{<<"_id">>, TaskId}
-        ,{?PVT_TYPE, kzd_task:type()}
-        ,{?PVT_WORKER_NODE, Node}
-        ,{?PVT_ACCOUNT_ID, AccountId}
-        ,{?PVT_AUTH_ACCOUNT_ID, AuthAccountId}
-        ,{?PVT_CATEGORY, Category}
-        ,{?PVT_ACTION, Action}
-        ,{?PVT_FILENAME, InputName}
-        ,{?PVT_CREATED, Created}
-        ,{?PVT_MODIFIED, kz_util:current_tstamp()}
-        ,{?PVT_STARTED_AT, Started}
-        ,{?PVT_FINISHED_AT, Finished}
-        ,{?PVT_TOTAL_ROWS, TotalRows}
-        ,{?PVT_TOTAL_ROWS_FAILED, TotalFailed}
-        ,{?PVT_TOTAL_ROWS_SUCCEEDED, TotalSucceeded}
-        ,{?PVT_STATUS, status(Task)}
-        ])).
+      [{<<"_id">>, TaskId}
+      ,{?PVT_TYPE, kzd_task:type()}
+      ,{?PVT_WORKER_NODE, Node}
+      ,{?PVT_ACCOUNT_ID, AccountId}
+      ,{?PVT_AUTH_ACCOUNT_ID, AuthAccountId}
+      ,{?PVT_CATEGORY, Category}
+      ,{?PVT_ACTION, Action}
+      ,{?PVT_FILENAME, InputName}
+      ,{?PVT_CREATED, Created}
+      ,{?PVT_MODIFIED, kz_time:current_tstamp()}
+      ,{?PVT_STARTED_AT, Started}
+      ,{?PVT_FINISHED_AT, Finished}
+      ,{?PVT_TOTAL_ROWS, TotalRows}
+      ,{?PVT_TOTAL_ROWS_FAILED, TotalFailed}
+      ,{?PVT_TOTAL_ROWS_SUCCEEDED, TotalSucceeded}
+      ,{?PVT_STATUS, status(Task)}
+      ]).
 
 -spec to_public_json(task()) -> kz_json:object().
 to_public_json(Task) ->
     Doc = to_json(Task),
-    JObj =
-        kz_json:from_list(
-          props:filter_undefined(
-            [{<<"id">>, kzd_task:id(Doc)}
-            ,{<<"node">>, kzd_task:node(Doc)}
-            ,{<<"account_id">>, kzd_task:account_id(Doc)}
-            ,{<<"auth_account_id">>, kzd_task:auth_account_id(Doc)}
-            ,{<<"category">>, kzd_task:category(Doc)}
-            ,{<<"action">>, kzd_task:action(Doc)}
-            ,{<<"file_name">>, kzd_task:file_name(Doc)}
-            ,{<<"created">>, kz_doc:created(Doc)}
-            ,{<<"start_timestamp">>, kzd_task:start_timestamp(Doc)}
-            ,{<<"end_timestamp">>, kzd_task:end_timestamp(Doc)}
-            ,{<<"total_count">>, kzd_task:total_count(Doc)}
-            ,{<<"failure_count">>, kzd_task:failure_count(Doc)}
-            ,{<<"success_count">>, kzd_task:success_count(Doc)}
-            ,{<<"status">>, kzd_task:status(Doc)}
-            ])),
-    kz_json:set_value(<<"_read_only">>, JObj, kz_json:new()).
+    kz_json:from_list_recursive(
+      [{<<"_read_only">>
+       ,[{<<"id">>, kzd_task:id(Doc)}
+        ,{<<"node">>, kzd_task:node(Doc)}
+        ,{<<"account_id">>, kzd_task:account_id(Doc)}
+        ,{<<"auth_account_id">>, kzd_task:auth_account_id(Doc)}
+        ,{<<"category">>, kzd_task:category(Doc)}
+        ,{<<"action">>, kzd_task:action(Doc)}
+        ,{<<"file_name">>, kzd_task:file_name(Doc)}
+        ,{<<"created">>, kz_doc:created(Doc)}
+        ,{<<"start_timestamp">>, kzd_task:start_timestamp(Doc)}
+        ,{<<"end_timestamp">>, kzd_task:end_timestamp(Doc)}
+        ,{<<"total_count">>, kzd_task:total_count(Doc)}
+        ,{<<"failure_count">>, kzd_task:failure_count(Doc)}
+        ,{<<"success_count">>, kzd_task:success_count(Doc)}
+        ,{<<"status">>, kzd_task:status(Doc)}
+        ]
+       }
+      ]).
 
 
 %%--------------------------------------------------------------------
 %% @public
-%% @doc Whether task has been started and is still running.
+%% @doc
+%% Whether task has been started and is still running.
 %% @end
 %%--------------------------------------------------------------------
 -spec is_processing(task()) -> boolean().
 is_processing(#{started := Started
                ,finished := Finished
-               })
-  when Started  /= 'undefined',
-       Finished == 'undefined' ->
-    'true';
-is_processing(_Task) ->
-    'false'.
+               }=Task)
+  when Started  =/= undefined,
+       Finished =:= undefined ->
+    not maps:get(was_stopped, Task, false);
+is_processing(_) ->
+    false.
 
 %% @private
--spec status(task()) -> api_binary().
+-spec status(task()) -> ne_binary().
+status(#{was_stopped := true}) ->
+    ?STATUS_STOPPED;
+
 status(#{started := 'undefined'}) ->
     ?STATUS_PENDING;
 status(#{started := Started

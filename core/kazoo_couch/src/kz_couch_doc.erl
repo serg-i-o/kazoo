@@ -22,9 +22,6 @@
 
 -include("kz_couch.hrl").
 
-%% Throttle how many docs we bulk insert to BigCouch
--define(MAX_BULK_INSERT, 2000).
-
 -type copy_function() :: fun((server(), ne_binary(), kz_json:object(), kz_proplist()) ->
                                     {'ok', kz_json:object()} | couchbeam_error()).
 -export_type([copy_function/0]).
@@ -39,7 +36,6 @@
 -spec get_db(server(), ne_binary()) -> db().
 get_db(#server{}=Conn, DbName) ->
     kz_couch_util:get_db(Conn, DbName).
-
 
 %% Document related functions --------------------------------------------------
 
@@ -75,7 +71,7 @@ save_docs(#server{}=Conn, DbName, Docs, Options) ->
                             couchbeam_error().
 lookup_doc_rev(#server{}=Conn, DbName, DocId) ->
     case do_fetch_rev(get_db(Conn, DbName), DocId) of
-        ?NE_BINARY = Rev -> {'ok', Rev};
+        ?NE_BINARY=Rev -> {'ok', Rev};
         {'error', _}=E -> E
     end.
 
@@ -122,7 +118,7 @@ do_ensure_saved(#db{}=Db, Doc, Opts) ->
                           ne_binary() |
                           couchbeam_error().
 do_fetch_rev(#db{}=Db, DocId) ->
-    case kz_util:is_empty(DocId) of
+    case kz_term:is_empty(DocId) of
         'true' -> {'error', 'empty_doc_id'};
         'false' -> ?RETRY_504(couchbeam:lookup_doc_rev(Db, DocId))
     end.
@@ -131,7 +127,7 @@ do_fetch_rev(#db{}=Db, DocId) ->
                           {'ok', kz_json:object()} |
                           couchbeam_error().
 do_fetch_doc(#db{}=Db, DocId, Options) ->
-    case kz_util:is_empty(DocId) of
+    case kz_term:is_empty(DocId) of
         'true' -> {'error', 'empty_doc_id'};
         'false' -> ?RETRY_504(couchbeam:open_doc(Db, DocId, Options))
     end.
@@ -154,7 +150,7 @@ do_save_docs(#db{}=Db, Docs, Options) ->
                           {'ok', kz_json:objects()} |
                           couchbeam_error().
 do_save_docs(#db{}=Db, Docs, Options, Acc) ->
-    try lists:split(?MAX_BULK_INSERT, Docs) of
+    try lists:split(?COUCH_MAX_BULK_INSERT, Docs) of
         {Save, Cont} ->
             case perform_save_docs(Db, Save, Options) of
                 {'error', _}=E -> E;
@@ -189,10 +185,10 @@ copy_doc(#server{}=Conn, #kz_copy_doc{source_dbname = SourceDb
                                      ,dest_dbname='undefined'
                                      }=CopySpec, Options) ->
     copy_doc(Conn, CopySpec#kz_copy_doc{dest_dbname=SourceDb
-                                       ,dest_doc_id=kz_util:rand_hex_binary(16)
+                                       ,dest_doc_id=kz_binary:rand_hex(16)
                                        }, Options);
 copy_doc(#server{}=Conn, #kz_copy_doc{dest_doc_id='undefined'}=CopySpec, Options) ->
-    copy_doc(Conn, CopySpec#kz_copy_doc{dest_doc_id=kz_util:rand_hex_binary(16)}, Options);
+    copy_doc(Conn, CopySpec#kz_copy_doc{dest_doc_id=kz_binary:rand_hex(16)}, Options);
 copy_doc(#server{}=Conn, CopySpec, Options) ->
     SaveFun = default_copy_function(props:is_defined(?COPY_DOC_OVERRIDE_PROPERTY, Options)),
     copy_doc(Conn, CopySpec, SaveFun, props:delete(?COPY_DOC_OVERRIDE_PROPERTY, Options)).
@@ -239,7 +235,7 @@ copy_attachments(#server{}=Conn, CopySpec, {[JObj | JObjs], [Key | Keys]}) ->
     case kz_couch_attachments:fetch_attachment(Conn, SourceDbName, SourceDocId, Key) of
         {'ok', Contents} ->
             ContentType = kz_json:get_value([<<"content_type">>], JObj),
-            Opts = [{'headers', [{'content_type', kz_util:to_list(ContentType)}]}],
+            Opts = [{'headers', [{'content_type', kz_term:to_list(ContentType)}]}],
             case kz_couch_attachments:put_attachment(Conn, DestDbName, DestDocId, Key, Contents, Opts) of
                 {'ok', _AttachmentDoc} ->
                     copy_attachments(Conn, CopySpec, {JObjs, Keys});

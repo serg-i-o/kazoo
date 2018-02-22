@@ -21,23 +21,25 @@
 -include("konami.hrl").
 
 -spec handle(kz_json:object(), kapps_call:call()) ->
-                    {'continue', kapps_call:call()} |
-                    no_return().
+                    {'continue', kapps_call:call()}.
+-spec handle(kz_json:object(), kapps_call:call(), ne_binary()) ->
+                    kapps_call:call().
 handle(Data, Call) ->
-    handle(Data, Call, get_action(kz_json:get_value(<<"action">>, Data))),
-    {'continue', Call}.
+    Call1 = handle(Data, Call, get_action(kz_json:get_ne_binary_value(<<"action">>, Data))),
+    {'continue', Call1}.
 
 handle(Data, Call, <<"start">>) ->
     lager:debug("starting recording, see you on the other side"),
-    kz_media:start_recording(Call, Data);
+    kapps_call:start_recording(Data, Call);
 handle(Data, Call, <<"stop">> = Action) ->
-    Format = kz_media_recording:get_format(kz_json:get_value(<<"format">>, Data)),
-    MediaName = kz_media_recording:get_media_name(kapps_call:call_id(Call), Format),
+    Format = kzc_recording:get_format(kz_json:get_value(<<"format">>, Data)),
+    MediaName = kzc_recording:get_media_name(kapps_call:call_id(Call), Format),
 
     _ = kapps_call_command:record_call([{<<"Media-Name">>, MediaName}], Action, Call),
-    lager:debug("sent command to stop recording").
+    lager:debug("sent command to stop recording"),
+    Call.
 
--spec get_action(api_binary()) -> ne_binary().
+-spec get_action(api_ne_binary()) -> ne_binary().
 get_action('undefined') -> <<"start">>;
 get_action(<<"stop">>) -> <<"stop">>;
 get_action(_) -> <<"start">>.
@@ -48,7 +50,7 @@ number_builder(DefaultJObj) ->
 
     {'ok', [Number]} = io:fread("What number should invoke 'record_call'? ", "~d"),
 
-    K = [<<"numbers">>, kz_util:to_binary(Number)],
+    K = [<<"numbers">>, kz_term:to_binary(Number)],
 
     case number_builder_check(kz_json:get_value(K, DefaultJObj)) of
         'undefined' -> kz_json:delete_key(K, DefaultJObj);
@@ -77,7 +79,7 @@ number_builder_check_option(NumberJObj, _Option) ->
 -spec number_builder_action(kz_json:object()) -> kz_json:object().
 number_builder_action(NumberJObj) ->
     {'ok', [Action]} = io:fread("What action: 'start' or 'stop': ", "~s"),
-    number_builder_time_limit(NumberJObj, kz_util:to_binary(Action)).
+    number_builder_time_limit(NumberJObj, kz_term:to_binary(Action)).
 
 -spec number_builder_time_limit(kz_json:object(), ne_binary()) -> kz_json:object().
 number_builder_time_limit(NumberJObj, Action) ->
@@ -87,12 +89,12 @@ number_builder_time_limit(NumberJObj, Action) ->
 -spec number_builder_format(kz_json:object(), ne_binary(), pos_integer()) -> kz_json:object().
 number_builder_format(NumberJObj, Action, TimeLimit) ->
     {'ok', [Format]} = io:fread("What format would you like the recording? ('wav' or 'mp3'): ", "~3s"),
-    number_builder_url(NumberJObj, Action, TimeLimit, kz_util:to_binary(Format)).
+    number_builder_url(NumberJObj, Action, TimeLimit, kz_term:to_binary(Format)).
 
 -spec number_builder_url(kz_json:object(), ne_binary(), pos_integer(), ne_binary()) -> kz_json:object().
 number_builder_url(NumberJObj, Action, TimeLimit, Format) ->
     {'ok', [URL]} = io:fread("What URL to send the recording to at the end: ", "~s"),
-    metaflow_jobj(NumberJObj, Action, TimeLimit, Format, kz_util:to_binary(URL)).
+    metaflow_jobj(NumberJObj, Action, TimeLimit, Format, kz_term:to_binary(URL)).
 
 -spec metaflow_jobj(kz_json:object(), ne_binary(), pos_integer(), ne_binary(), ne_binary()) -> kz_json:object().
 metaflow_jobj(NumberJObj, Action, TimeLimit, Format, URL) ->

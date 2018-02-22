@@ -7,7 +7,6 @@
 %%%-------------------------------------------------------------------
 -module(kz_media_util).
 
-
 -export([recording_url/2]).
 -export([base_url/2, base_url/3]).
 -export([convert_stream_type/1
@@ -29,19 +28,23 @@
         ]).
 -export([store_path_from_doc/1, store_path_from_doc/2]).
 
+-export_type([normalized_media/0
+             ,normalization_options/0
+             ]).
+
 -include("kazoo_media.hrl").
 
 -define(USE_HTTPS, kapps_config:get_is_true(?CONFIG_CAT, <<"use_https">>, 'false')).
 -define(AUTH_PLAYBACK, kapps_config:get_is_true(?CONFIG_CAT, <<"authenticated_playback">>, 'false')).
--define(AUTH_USERNAME, kapps_config:get_binary(?CONFIG_CAT, <<"proxy_username">>, kz_util:rand_hex_binary(8))).
--define(AUTH_PASSWORD, kapps_config:get_binary(?CONFIG_CAT, <<"proxy_password">>, kz_util:rand_hex_binary(8))).
+-define(AUTH_USERNAME, kapps_config:get_binary(?CONFIG_CAT, <<"proxy_username">>, kz_binary:rand_hex(8))).
+-define(AUTH_PASSWORD, kapps_config:get_binary(?CONFIG_CAT, <<"proxy_password">>, kz_binary:rand_hex(8))).
 -define(USE_AUTH_STORE, kapps_config:get_is_true(?CONFIG_CAT, <<"authenticated_store">>, 'true')).
 
 -define(NORMALIZE_EXE, kapps_config:get_binary(?CONFIG_CAT, <<"normalize_executable">>, <<"sox">>)).
 -define(NORMALIZE_SOURCE_ARGS, kapps_config:get_binary(?CONFIG_CAT, <<"normalize_source_args">>, <<>>)).
 -define(NORMALIZE_DEST_ARGS, kapps_config:get_binary(?CONFIG_CAT, <<"normalize_destination_args">>, <<"-r 8000">>)).
 
--define(NORMALIZATION_FORMAT, kapps_config:get(<<"crossbar.media">>, <<"normalization_format">>, <<"mp3">>)).
+-define(NORMALIZATION_FORMAT, kapps_config:get_ne_binary(<<"crossbar.media">>, <<"normalization_format">>, <<"mp3">>)).
 
 -define(USE_ACCOUNT_OVERRIDES, kapps_config:get_is_true(?CONFIG_CAT, <<"support_account_overrides">>, 'true')).
 
@@ -54,22 +57,33 @@
 %%  normalized file only, pass the {'output', 'file'} as option.
 %% @end
 %%--------------------------------------------------------------------
--type normalized_media() :: {'ok', iodata()} | {'error', any()}.
+-type normalized_media() :: {'ok', binary()} |
+                            {'ok', file:filename_all()} |
+                            {'error', file:posix()}.
 
--spec normalize_media(ne_binary(), ne_binary(), binary()) -> normalized_media().
+-type normalization_option() :: {'extra_args', iodata()} |
+                                {'from_args', binary()} |
+                                {'out_file', file:filename_all()} |
+                                {'output', 'binary' | 'file'} |
+                                {'to_args', binary()}.
+-type normalization_options() :: [normalization_option()].
+
+-spec normalize_media(ne_binary(), ne_binary(), binary()) ->
+                             normalized_media().
+-spec normalize_media(ne_binary(), ne_binary(), binary(), normalization_options()) ->
+                             normalized_media().
 normalize_media(FromFormat, FromFormat, FileContents) ->
     {'ok', FileContents};
 normalize_media(FromFormat, ToFormat, FileContents) ->
-    normalize_media(FromFormat, ToFormat, FileContents, []).
+    normalize_media(FromFormat, ToFormat, FileContents, default_normalization_options(ToFormat)).
 
--spec normalize_media(ne_binary(), ne_binary(), binary(), kz_proplist()) -> normalized_media().
 normalize_media(FromFormat, ToFormat, FileContents, Options) ->
     FileName = tmp_file(FromFormat),
     case file:write_file(FileName, FileContents) of
-        ok ->
+        'ok' ->
             Result = normalize_media_file(FromFormat, ToFormat, FileName, Options),
             kz_util:delete_file(FileName),
-            {'ok', Result};
+            Result;
         {'error', _}=Error -> Error
     end.
 
@@ -82,13 +96,24 @@ normalize_media(FromFormat, ToFormat, FileContents, Options) ->
 %%  normalized file only, pass the {'output', 'file'} as option.
 %% @end
 %%--------------------------------------------------------------------
--spec normalize_media_file(ne_binary(), ne_binary(), binary()) -> normalized_media().
+-spec normalize_media_file(ne_binary(), ne_binary(), file:filename_all()) ->
+                                  normalized_media().
 normalize_media_file(FromFormat, FromFormat, FromFile) ->
     {'ok', FromFile};
 normalize_media_file(FromFormat, ToFormat, FromFile) ->
-    normalize_media_file(FromFormat, ToFormat, FromFile, []).
+    normalize_media_file(FromFormat, ToFormat, FromFile, default_normalization_options(ToFormat)).
 
--spec normalize_media_file(ne_binary(), ne_binary(), binary(), kz_proplist()) -> normalized_media().
+-spec default_normalization_options(ne_binary()) -> normalization_options().
+default_normalization_options(ToFormat) ->
+    [{'from_args', ?NORMALIZE_SOURCE_ARGS}
+    ,{'to_args', ?NORMALIZE_DEST_ARGS}
+    ,{'extra_args', ""}
+    ,{'out_file', tmp_file(ToFormat)}
+    ,{'output', 'binary'}
+    ].
+
+-spec normalize_media_file(ne_binary(), ne_binary(), file:filename_all(), normalization_options()) ->
+                                  normalized_media().
 normalize_media_file(FromFormat, ToFormat, FromFile, Options) ->
     FromArgs = props:get_value('from_args', Options, ?NORMALIZE_SOURCE_ARGS),
     ToArgs = props:get_value('to_args', Options, ?NORMALIZE_DEST_ARGS),
@@ -104,7 +129,8 @@ normalize_media_file(FromFormat, ToFormat, FromFile, Options) ->
     lager:debug("normalize media with command: ~p", [Command]),
     return_command_result(run_command(Command), ToFile, OutputType).
 
--spec return_command_result({'ok', any()} | {'error', any()}, ne_binary(), 'binary' | 'file') -> normalized_media().
+-spec return_command_result({'ok', any()} | {'error', any()}, file:filename_all(), 'binary' | 'file') ->
+                                   normalized_media().
 return_command_result({'ok', _}, FileName, 'binary') ->
     case file:read_file(FileName) of
         {'ok', _}=OK ->
@@ -332,9 +358,9 @@ detect_format_options(File) ->
 %% @doc
 %% @end
 %%--------------------------------------------------------------------
--spec tmp_file(ne_binary()) -> ne_binary().
+-spec tmp_file(ne_binary()) -> file:filename_all().
 tmp_file(Ext) ->
-    <<"/tmp/", (kz_util:rand_hex_binary(16))/binary, ".", Ext/binary>>.
+    filename:join(["/tmp", list_to_binary([kz_binary:rand_hex(16), ".", Ext])]).
 
 -spec recording_url(ne_binary(), kz_json:object()) -> ne_binary().
 recording_url(CallId, Data) ->
@@ -342,7 +368,7 @@ recording_url(CallId, Data) ->
     %%   the filename, otherwise continue to append as we do today.
     %%   If this is updated be sure and fix the similar code in ecallmgr_call_events!
     Format = kz_json:get_value(<<"format">>, Data, <<"mp3">>),
-    Url = kz_util:strip_right_binary(kz_json:get_value(<<"url">>, Data, <<>>), $/),
+    Url = kz_binary:strip_right(kz_json:get_value(<<"url">>, Data, <<>>), $/),
     <<Url/binary, "/call_recording_", CallId/binary, ".", Format/binary>>.
 
 -spec max_recording_time_limit() -> ?SECONDS_IN_HOUR.
@@ -388,14 +414,14 @@ build_url(H, P, [], []) ->
                  'true' -> <<"https">>;
                  'false' -> <<"http">>
              end,
-    list_to_binary([Scheme, "://", kz_util:to_binary(H), ":", kz_util:to_binary(P), "/"]);
+    list_to_binary([Scheme, "://", kz_term:to_binary(H), ":", kz_term:to_binary(P), "/"]);
 build_url(H, P, User, Pwd) ->
     Scheme = case ?USE_HTTPS of
                  'true' -> <<"https">>;
                  'false' -> <<"http">>
              end,
     list_to_binary([Scheme, "://", User, ":", Pwd
-                   ,"@", kz_util:to_binary(H), ":", kz_util:to_binary(P), "/"
+                   ,"@", kz_term:to_binary(H), ":", kz_term:to_binary(P), "/"
                    ]).
 
 -spec convert_stream_type(ne_binary()) -> ne_binary().
@@ -404,7 +430,7 @@ convert_stream_type(<<"store">>) -> <<"store">>;
 convert_stream_type(_) -> <<"single">>.
 
 -spec media_path(api_binary()) -> api_binary().
--spec media_path(api_binary(), api_binary() | kapps_call:call()) -> api_binary().
+-spec media_path(api_binary(), api_ne_binary()) -> api_binary().
 media_path(Path) -> media_path(Path, 'undefined').
 
 media_path('undefined', _AccountId) -> 'undefined';
@@ -418,9 +444,7 @@ media_path(Path, AccountId) when is_binary(AccountId) ->
     case binary:match(Path, <<"/">>) of
         'nomatch' -> <<$/, AccountId/binary, $/, Path/binary>>;
         _Else -> Path
-    end;
-media_path(Path, Call) ->
-    media_path(Path, kapps_call:account_id(Call)).
+    end.
 
 %%--------------------------------------------------------------------
 %% @public
@@ -438,7 +462,7 @@ prompt_path('undefined', PromptId) ->
 prompt_path(Db, <<"/system_media/", PromptId/binary>>) ->
     prompt_path(Db, PromptId);
 prompt_path(Db, PromptId) ->
-    kz_util:join_binary([<<>>, Db, PromptId], <<"/">>).
+    kz_binary:join([<<>>, Db, PromptId], <<"/">>).
 
 -spec prompt_id(ne_binary()) -> ne_binary().
 -spec prompt_id(ne_binary(), api_binary()) -> ne_binary().
@@ -449,14 +473,16 @@ prompt_id(<<"/system_media/", PromptId/binary>>, Lang) ->
 prompt_id(PromptId, 'undefined') -> PromptId;
 prompt_id(PromptId, <<>>) -> PromptId;
 prompt_id(PromptId, Lang) ->
-    <<Lang/binary, "/", PromptId/binary>>.
+    filename:join([Lang, PromptId]).
 
--spec get_prompt(ne_binary()) -> api_binary().
--spec get_prompt(ne_binary(), api_binary() | kapps_call:call()) ->
-                        api_binary().
--spec get_prompt(ne_binary(), api_binary(), api_binary() | kapps_call:call()) ->
-                        api_binary().
--spec get_prompt(ne_binary(), api_binary(), api_binary(), boolean()) -> api_binary().
+-spec get_prompt(ne_binary()) ->
+                        api_ne_binary().
+-spec get_prompt(ne_binary(), api_ne_binary()) ->
+                        api_ne_binary().
+-spec get_prompt(ne_binary(), api_ne_binary(), api_ne_binary()) ->
+                        api_ne_binary().
+-spec get_prompt(ne_binary(), api_ne_binary(), api_ne_binary(), boolean()) ->
+                        api_ne_binary().
 
 get_prompt(Name) ->
     get_prompt(Name, 'undefined').
@@ -464,107 +490,104 @@ get_prompt(Name) ->
 get_prompt(Name, 'undefined') ->
     get_prompt(Name, default_prompt_language(), 'undefined');
 get_prompt(Name, <<_/binary>> = Lang) ->
-    get_prompt(Name, Lang, 'undefined');
-get_prompt(Name, Call) ->
-    Lang = kapps_call:language(Call),
-    get_prompt(Name, Lang, Call).
+    get_prompt(Name, Lang, 'undefined').
 
-get_prompt(<<"prompt://", _/binary>> = PromptId, _Lang, _Call) ->
+get_prompt(<<"prompt://", _/binary>> = PromptId, _Lang, _AccountId) ->
     lager:debug("prompt is already encoded: ~s", [PromptId]),
     PromptId;
-get_prompt(<<"/system_media/", Name/binary>>, Lang, Call) ->
-    get_prompt(Name, Lang, Call);
+get_prompt(<<"/system_media/", Name/binary>>, Lang, AccountId) ->
+    get_prompt(Name, Lang, AccountId);
 get_prompt(PromptId, Lang, 'undefined') ->
-    kz_util:join_binary([<<"prompt:/">>, ?KZ_MEDIA_DB, PromptId, Lang], <<"/">>);
+    kz_binary:join([<<"prompt:/">>, ?KZ_MEDIA_DB, PromptId, Lang], <<"/">>);
 get_prompt(PromptId, Lang, <<_/binary>> = AccountId) ->
-    get_prompt(PromptId, Lang, AccountId, ?USE_ACCOUNT_OVERRIDES);
-get_prompt(PromptId, Lang, Call) ->
-    get_prompt(PromptId, Lang, kapps_call:account_id(Call)).
+    get_prompt(PromptId, Lang, AccountId, ?USE_ACCOUNT_OVERRIDES).
 
 get_prompt(<<"prompt://", _/binary>> = PromptId, _Lang, _AccountId, _UseOverride) ->
     lager:debug("prompt is already encoded: ~s", [PromptId]),
     PromptId;
 get_prompt(PromptId, Lang, AccountId, 'true') ->
     lager:debug("using account override for ~s in account ~s", [PromptId, AccountId]),
-    kz_util:join_binary([<<"prompt:/">>, AccountId, PromptId, Lang], <<"/">>);
+    kz_binary:join([<<"prompt:/">>, AccountId, PromptId, Lang], <<"/">>);
 get_prompt(PromptId, Lang, _AccountId, 'false') ->
     lager:debug("account overrides not enabled; ignoring account prompt for ~s", [PromptId]),
-    kz_util:join_binary([<<"prompt:/">>, ?KZ_MEDIA_DB, PromptId, Lang], <<"/">>).
+    kz_binary:join([<<"prompt:/">>, ?KZ_MEDIA_DB, PromptId, Lang], <<"/">>).
 
--spec get_account_prompt(ne_binary(), api_binary(), kapps_call:call()) -> api_binary().
--spec get_account_prompt(ne_binary(), api_binary(), kapps_call:call(), ne_binary()) -> api_binary().
+-spec get_account_prompt(ne_binary(), api_ne_binary(), ne_binary()) ->
+                                api_ne_binary().
+-spec get_account_prompt(ne_binary(), api_ne_binary(), ne_binary(), ne_binary()) ->
+                                api_ne_binary().
 %% tries account default, then system
-get_account_prompt(Name, 'undefined', Call) ->
+get_account_prompt(Name, 'undefined', AccountId) ->
     PromptId = prompt_id(Name),
     lager:debug("getting account prompt for '~s'", [PromptId]),
-    case lookup_prompt(kapps_call:account_db(Call), PromptId) of
-        {'error', 'not_found'} -> get_prompt(Name, prompt_language(kapps_call:account_id(Call)), 'undefined');
-        {'ok', _} -> prompt_path(kapps_call:account_id(Call), PromptId)
+    case lookup_prompt(kz_util:format_account_db(AccountId), PromptId) of
+        {'error', 'not_found'} -> get_prompt(Name, prompt_language(AccountId), 'undefined');
+        {'ok', _} -> prompt_path(AccountId, PromptId)
     end;
 %% Tries "en", "fr", etc, then fails to default account/system prompt
-get_account_prompt(Name, <<_Primary:2/binary>> = Lang, Call) ->
+get_account_prompt(Name, <<_Primary:2/binary>> = Lang, AccountId) ->
     PromptId = prompt_id(Name, Lang),
     lager:debug("getting account prompt for '~s'", [PromptId]),
-    case lookup_prompt(kapps_call:account_db(Call), PromptId) of
-        {'error', 'not_found'} -> get_account_prompt(Name, 'undefined', Call, Lang);
-        {'ok', _} -> prompt_path(kapps_call:account_id(Call), PromptId)
+    case lookup_prompt(kz_util:format_account_db(AccountId), PromptId) of
+        {'error', 'not_found'} -> get_account_prompt(Name, 'undefined', AccountId, Lang);
+        {'ok', _} -> prompt_path(AccountId, PromptId)
     end;
 %% First tries "en-US" or "fr-CA", etc, then tries "en", "fr", etc.
-get_account_prompt(Name, <<Primary:2/binary, "-", _SubTag:2/binary>> = Lang, Call) ->
+get_account_prompt(Name, <<Primary:2/binary, "-", _SubTag:2/binary>> = Lang, AccountId) ->
     PromptId = prompt_id(Name, Lang),
     lager:debug("getting account prompt for '~s'", [PromptId]),
-    case lookup_prompt(kapps_call:account_db(Call), PromptId) of
-        {'error', 'not_found'} -> get_account_prompt(Name, Primary, Call, Lang);
-        {'ok', _} -> prompt_path(kapps_call:account_id(Call), PromptId)
+    case lookup_prompt(kz_util:format_account_db(AccountId), PromptId) of
+        {'error', 'not_found'} -> get_account_prompt(Name, Primary, AccountId, Lang);
+        {'ok', _} -> prompt_path(AccountId, PromptId)
     end;
 %% First tries "en-us_fr-fr", then "en-us"
-get_account_prompt(Name, <<Primary:5/binary, "_", _Secondary:5/binary>> = Lang, Call) ->
+get_account_prompt(Name, <<Primary:5/binary, "_", _Secondary:5/binary>> = Lang, AccountId) ->
     PromptId = prompt_id(Name, Lang),
     lager:debug("getting account prompt for '~s'", [PromptId]),
-    case lookup_prompt(kapps_call:account_db(Call), PromptId) of
-        {'error', 'not_found'} -> get_account_prompt(Name, Primary, Call, Lang);
-        {'ok', _} -> prompt_path(kapps_call:account_id(Call), PromptId)
+    case lookup_prompt(kz_util:format_account_db(AccountId), PromptId) of
+        {'error', 'not_found'} -> get_account_prompt(Name, Primary, AccountId, Lang);
+        {'ok', _} -> prompt_path(AccountId, PromptId)
     end;
 %% Matches anything else, then tries account default
-get_account_prompt(Name, Lang, Call) ->
+get_account_prompt(Name, Lang, AccountId) ->
     PromptId = prompt_id(Name, Lang),
     lager:debug("getting account prompt for '~s'", [PromptId]),
 
-    case lookup_prompt(kapps_call:account_db(Call), PromptId) of
-        {'error', 'not_found'} -> get_account_prompt(Name, 'undefined', Call);
-        {'ok', _} -> prompt_path(kapps_call:account_id(Call), PromptId)
+    case lookup_prompt(kz_util:format_account_db(AccountId), PromptId) of
+        {'error', 'not_found'} -> get_account_prompt(Name, 'undefined', AccountId);
+        {'ok', _} -> prompt_path(AccountId, PromptId)
     end.
 
-get_account_prompt(Name, 'undefined', Call, OriginalLang) ->
+get_account_prompt(Name, 'undefined', AccountId, OriginalLang) ->
     PromptId = prompt_id(Name),
     lager:debug("getting account prompt for '~s'", [PromptId]),
-    case lookup_prompt(kapps_call:account_db(Call), PromptId) of
+    case lookup_prompt(kz_util:format_account_db(AccountId), PromptId) of
         {'error', 'not_found'} -> get_prompt(Name, OriginalLang, 'undefined');
-        {'ok', _} -> prompt_path(kapps_call:account_id(Call), PromptId)
+        {'ok', _} -> prompt_path(AccountId, PromptId)
     end;
-get_account_prompt(Name, <<_:2/binary>> = Primary, Call, Original) ->
+get_account_prompt(Name, <<_:2/binary>> = Primary, AccountId, Original) ->
     PromptId = prompt_id(Name, Primary),
     lager:debug("getting account prompt for '~s'", [PromptId]),
 
-    case lookup_prompt(kapps_call:account_db(Call), PromptId) of
-        {'error', 'not_found'} -> get_account_prompt(Name, 'undefined', Call, Original);
-        {'ok', _} -> prompt_path(kapps_call:account_id(Call), PromptId)
+    case lookup_prompt(kz_util:format_account_db(AccountId), PromptId) of
+        {'error', 'not_found'} -> get_account_prompt(Name, 'undefined', AccountId, Original);
+        {'ok', _} -> prompt_path(AccountId, PromptId)
     end;
-get_account_prompt(Name, <<Primary:2/binary, "-", _Secondary:2/binary>> = Lang, Call, Original) ->
+get_account_prompt(Name, <<Primary:2/binary, "-", _Secondary:2/binary>> = Lang, AccountId, Original) ->
     PromptId = prompt_id(Name, Lang),
     lager:debug("getting account prompt for '~s'", [PromptId]),
 
-    case lookup_prompt(kapps_call:account_db(Call), PromptId) of
-        {'error', 'not_found'} -> get_account_prompt(Name, Primary, Call, Original);
-        {'ok', _} -> prompt_path(kapps_call:account_id(Call), PromptId)
+    case lookup_prompt(kz_util:format_account_db(AccountId), PromptId) of
+        {'error', 'not_found'} -> get_account_prompt(Name, Primary, AccountId, Original);
+        {'ok', _} -> prompt_path(AccountId, PromptId)
     end;
-get_account_prompt(Name, Lang, Call, OriginalLang) ->
+get_account_prompt(Name, Lang, AccountId, OriginalLang) ->
     PromptId = prompt_id(Name, Lang),
     lager:debug("getting account prompt for '~s'", [PromptId]),
 
-    case lookup_prompt(kapps_call:account_db(Call), PromptId) of
-        {'error', 'not_found'} -> get_account_prompt(Name, 'undefined', Call, OriginalLang);
-        {'ok', _} -> prompt_path(kapps_call:account_id(Call), PromptId)
+    case lookup_prompt(kz_util:format_account_db(AccountId), PromptId) of
+        {'error', 'not_found'} -> get_account_prompt(Name, 'undefined', AccountId, OriginalLang);
+        {'ok', _} -> prompt_path(AccountId, PromptId)
     end.
 
 -spec lookup_prompt(ne_binary(), ne_binary()) ->
@@ -633,8 +656,8 @@ get_system_prompt(Name, Lang) ->
 default_prompt_language() ->
     default_prompt_language(<<"en-us">>).
 default_prompt_language(Default) ->
-    kz_util:to_lower_binary(
-      kapps_config:get(?CONFIG_CAT, ?PROMPT_LANGUAGE_KEY, Default)
+    kz_term:to_lower_binary(
+      kapps_config:get_ne_binary(?CONFIG_CAT, ?PROMPT_LANGUAGE_KEY, Default)
      ).
 
 -spec prompt_language(api_binary()) -> ne_binary().
@@ -647,12 +670,18 @@ prompt_language('undefined', Default) ->
     default_prompt_language(Default);
 prompt_language(<<_/binary>> = AccountId, 'undefined') ->
     prompt_language(AccountId);
-prompt_language(<<_/binary>> = AccountId, Default) ->
+prompt_language(<<_/binary>> = AccountId, SystemDefault) ->
     case ?USE_ACCOUNT_OVERRIDES of
         'false' -> default_prompt_language();
         'true' ->
-            kz_util:to_lower_binary(
-              kapps_account_config:get(AccountId, ?CONFIG_CAT, ?PROMPT_LANGUAGE_KEY, kz_util:to_lower_binary(Default))
+            {'ok', AccountJObj} = kz_account:fetch(AccountId),
+            Default = kz_account:language(AccountJObj, SystemDefault),
+            kz_term:to_lower_binary(
+              kapps_account_config:get_ne_binary(AccountId
+                                                ,?CONFIG_CAT
+                                                ,?PROMPT_LANGUAGE_KEY
+                                                ,kz_term:to_lower_binary(Default)
+                                                )
              )
     end.
 

@@ -8,7 +8,6 @@
 %%%-----------------------------------------------------------------------------
 -module(kz_couch_util).
 
-
 -export([retry504s/1]).
 
 -export([new_connection/1
@@ -19,7 +18,6 @@
         ,connection_info/1
         ,format_error/1
         ,is_couchdb/1
-        ,start_compactor/1
         ]).
 
 -export([maybe_add_rev/3]).
@@ -52,15 +50,15 @@ retry504s(_Fun, 3) ->
     {'error', 'timeout'};
 retry504s(Fun, Cnt) ->
     kazoo_stats:increment_counter(<<"bigcouch-request">>),
-    case catch Fun() of
+    try Fun() of
         {'error', {'ok', 504, _, _}} ->
             kazoo_stats:increment_counter(<<"bigcouch-504-error">>),
             timer:sleep(100 * (Cnt+1)),
             retry504s(Fun, Cnt+1);
         {'error', {'ok', ErrCode, _Hdrs, _Body}} ->
             kazoo_stats:increment_counter(<<"bigcouch-other-error">>),
-            {'error', kz_util:to_integer(ErrCode)};
-%%% couchbeam doesn't pass 202 as acceptable
+            {'error', kz_term:to_integer(ErrCode)};
+        %% couchbeam doesn't pass 202 as acceptable
         {'error', {'bad_response',{202, _Headers, Body}}} ->
             {'ok', kz_json:decode(Body)};
         {'error', {'bad_response',{204, _Headers, _Body}}} ->
@@ -75,14 +73,13 @@ retry504s(Fun, Cnt) ->
         {'error', Other} ->
             kazoo_stats:increment_counter(<<"bigcouch-other-error">>),
             {'error', format_error(Other)};
-        {'ok', _Other}=OK -> OK;
-        {'EXIT', _E} ->
+        OK -> OK
+    catch _E:_R ->
             ST = erlang:get_stacktrace(),
-            lager:debug("exception running fun: ~p", [_E]),
+            lager:debug("exception running fun: ~p:~p", [_E, _R]),
             kz_util:log_stacktrace(ST),
             kazoo_stats:increment_counter(<<"bigcouch-other-error">>),
-            retry504s(Fun, Cnt+1);
-        OK -> OK
+            retry504s(Fun, Cnt+1)
     end.
 
 %%------------------------------------------------------------------------------
@@ -123,7 +120,7 @@ convert_options(Options) ->
 
 convert_option({K, V} = KV) ->
     case lists:member(K, ?ATOM_OPTIONS) of
-        'true' -> {K, kz_util:to_atom(V, 'true')};
+        'true' -> {K, kz_term:to_atom(V, 'true')};
         'false' when is_map(V) -> {K, maps:to_list(V)};
         'false' -> KV
     end.
@@ -170,13 +167,9 @@ connect(#kz_couch_connection{host=Host
                ,options => Options
                },
     Opts = [{'connection_map', ConnMap} | maybe_add_auth(User, Pass, check_options(Options))],
-    Conn = couchbeam:server_connection(kz_util:to_list(Host), Port, "", Opts),
+    Conn = couchbeam:server_connection(kz_term:to_list(Host), Port, "", Opts),
     lager:debug("new connection to host ~s:~b, testing: ~p", [Host, Port, Conn]),
-    case connection_info(Conn) of
-        {'ok', Server} ->
-            {'ok', maybe_start_compactor(Server)};
-        Error -> Error
-    end.
+    connection_info(Conn).
 
 add_couch_version(<<"1.6", _/binary>>, 'undefined', #server{options=Options}=Conn) ->
     Conn#server{options = [{driver_version, 'couchdb_1_6'} | Options]};
@@ -204,9 +197,62 @@ db_url(#server{}=Conn, DbName) ->
 %% @end
 %%------------------------------------------------------------------------------
 -spec get_db(kz_data:connection(), ne_binary()) -> db().
-get_db(#server{}=Conn, DbName) ->
-    {'ok', Db} = couchbeam:open_db(Conn, DbName),
+-spec get_db(kz_data:connection(), ne_binary(), couch_version()) -> db().
+get_db(Conn, DbName) ->
+    get_db(Conn, DbName, kazoo_couch:server_version(Conn)).
+
+get_db(Conn, DbName, Driver) ->
+    ConnToUse =
+        case is_admin_db(DbName, Driver) of
+            'true' -> maybe_use_admin_conn(Conn);
+            'false' -> Conn
+        end,
+    {'ok', Db} = couchbeam:open_db(ConnToUse, DbName),
     Db.
+
+-spec is_admin_db(ne_binary(), couch_version()) -> boolean().
+is_admin_db(<<"_dbs">>, 'couchdb_2') -> 'true';
+is_admin_db(<<"_users">>, 'couchdb_2') -> 'true';
+is_admin_db(<<"_nodes">>, 'couchdb_2') -> 'true';
+is_admin_db(<<"_dbs">>, 'couchdb_1_6') -> 'true';
+is_admin_db(<<"_users">>, 'couchdb_1_6') -> 'true';
+is_admin_db(<<"_nodes">>, 'couchdb_1_6') -> 'true';
+is_admin_db(<<"dbs">>, 'bigcouch') -> 'true';
+is_admin_db(<<"users">>, 'bigcouch') -> 'true';
+is_admin_db(<<"nodes">>, 'bigcouch') -> 'true';
+is_admin_db(_Db, _Driver) -> 'false'.
+
+-spec maybe_use_admin_conn(kz_data:connection()) -> kz_data:connection().
+maybe_use_admin_conn(#server{options=Options}=Conn) ->
+    case props:get_value('admin_connection', Options) of
+        'undefined' -> maybe_use_admin_port(Conn);
+        AdminConn -> AdminConn
+    end.
+
+maybe_use_admin_port(#server{options=Options}=Conn) ->
+    ConnectionMap = props:get_value('connection_map', Options, #{}),
+    ConnMapOptions = maps:get('options', ConnectionMap),
+    case props:get_value('admin_port', ConnMapOptions) of
+        'undefined' ->
+            APIPort = maps:get('port', ConnectionMap),
+            AdminPort = APIPort + 2,
+            change_connection_to_admin(Conn, APIPort, AdminPort);
+        AdminPort ->
+            APIPort = maps:get('port', ConnectionMap),
+            change_connection_to_admin(Conn, APIPort, AdminPort)
+    end.
+
+change_connection_to_admin(#server{url=Host
+                                  ,options=Options
+                                  }=Conn, APIPort, AdminPort) ->
+    ConnectionMap = props:get_value('connection_map', Options, #{}),
+    ConnMapOptions = maps:get('options', ConnectionMap),
+
+    ConnMapOptions1 = props:set_value('port', AdminPort, ConnMapOptions),
+    Options1 = props:set_value('connection_map', ConnectionMap#{'options'=>ConnMapOptions1}, Options),
+    Conn#server{url=binary:replace(Host, kz_term:to_binary(APIPort), kz_term:to_binary(AdminPort))
+               ,options=Options1
+               }.
 
 -spec format_error(any()) -> any().
 format_error({'failure', 404}) -> 'not_found';
@@ -229,14 +275,21 @@ format_error({'ok', 500, _Headers, Body}) ->
     end;
 format_error({'bad_response',{500, _Headers, Body}}) ->
     kz_json:get_first_defined([<<"reason">>, <<"error">>], kz_json:decode(Body), 'unknown_error');
-format_error({'bad_response',{Code, _Headers, _Body}}) ->
-    io_lib:format("response code ~b not expected", [Code]);
+format_error({'bad_response',{Code, _Headers, Body}}) ->
+    try kz_json:decode(Body) of
+        BodyJObj -> iolist_to_binary([integer_to_list(Code), ": ", kz_json:get_value(<<"error">>, BodyJObj)])
+    catch
+        _:_ ->
+            io_lib:format("response code ~b not expected", [Code])
+    end;
 format_error('timeout') -> 'timeout';
 format_error('conflict') -> 'conflict';
 format_error('not_found') -> 'not_found';
+format_error('db_not_found') -> 'db_not_found';
 format_error({'error', 'connect_timeout'}) -> 'connect_timeout';
 format_error({'http_error', _, Msg}) -> Msg;
 format_error({'error', Error}) -> Error;
+format_error(<<"400: illegal_database_name">>) -> 'illegal_database_name';
 format_error(E) ->
     lager:warning("unformatted error: ~p", [E]),
     E.
@@ -267,50 +320,9 @@ maybe_add_rev(#db{name=_Name}=Db, DocId, Options) ->
                           ne_binary() |
                           couchbeam_error().
 do_fetch_rev(#db{}=Db, DocId) ->
-    case kz_util:is_empty(DocId) of
+    case kz_term:is_empty(DocId) of
         'true' -> {'error', 'empty_doc_id'};
         'false' -> ?RETRY_504(couchbeam:lookup_doc_rev(Db, DocId))
-    end.
-
--spec maybe_start_compactor(server()) -> server().
-maybe_start_compactor(#server{options=Opts}=Server) ->
-    maybe_start_compactor(props:get_value('connection_map', Opts), Server).
-
--spec maybe_start_compactor(map(), server()) -> server().
-maybe_start_compactor(#{options := Options}=Map, Server) ->
-    case props:is_defined('admin_port', Options) of
-        'true' -> start_compactor(Map, Server);
-        'false' -> Server
-    end.
-
--spec start_compactor(map(), server()) -> server().
-start_compactor(#{options := Options
-                 ,host := Host
-                 ,username := User
-                 ,password := Pass
-                 }, #server{options=Opts}=Server) ->
-    AdminPort = props:get_value('admin_port', Options),
-    AdminUser = props:get_value('admin_username', Options, User),
-    AdminPass = props:get_value('admin_password', Options, Pass),
-    AdminOptions = maybe_add_auth(AdminUser, AdminPass, props:delete('basic_auth', Opts)),
-    AdminConn = couchbeam:server_connection(kz_util:to_list(Host), AdminPort, "", AdminOptions),
-    Compact = props:is_defined('compact_automatically', Options),
-    case connection_info(AdminConn) of
-        {'ok', AdminServer} ->
-            lager:debug("new admin connection to host ~s:~b, testing: ~p", [Host, AdminPort, AdminConn]),
-            {'ok', NodeUserPort} = couchbeam:get_config(AdminServer, <<"chttpd">>, <<"port">>),
-            {'ok', NodeAdminPort} = couchbeam:get_config(AdminServer, <<"httpd">>, <<"port">>),
-            NewServerOpts = props:set_values(
-                              [{'admin_connection', AdminServer}
-                              ,{'node_ports', {kz_util:to_integer(NodeUserPort)
-                                              ,kz_util:to_integer(NodeAdminPort)
-                                              }
-                               }
-                              ], Opts),
-            NewServer = Server#server{options = NewServerOpts},
-            kz_couch_compactor:set_connection(NewServer, Compact),
-            NewServer;
-        _Error -> Server
     end.
 
 -spec connection_info(server()) -> {'ok', server()} | {'error', term()}.
@@ -337,7 +349,3 @@ connection_info(#server{url=Url}=Conn) ->
 -spec is_couchdb(term()) -> boolean().
 is_couchdb(#server{}) -> 'true';
 is_couchdb(_) -> 'false'.
-
--spec start_compactor(server()) -> 'ok' | {'error', 'compactor_down'}.
-start_compactor(NewServer) ->
-    kz_couch_compactor:set_connection(NewServer, 'true').

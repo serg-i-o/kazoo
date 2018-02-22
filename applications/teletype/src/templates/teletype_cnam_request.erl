@@ -9,7 +9,7 @@
 -module(teletype_cnam_request).
 
 -export([init/0
-        ,handle_cnam_request/2
+        ,handle_req/1
         ]).
 
 -include("teletype.hrl").
@@ -21,11 +21,14 @@
        ,kz_json:from_list(
           [?MACRO_VALUE(<<"request.number">>, <<"request_number">>, <<"Number">>, <<"Number to add CNAM">>)
           ,?MACRO_VALUE(<<"cnam.display_name">>, <<"cnam_display_name">>, <<"Display Name">>, <<"What to display">>)
-          ,?MACRO_VALUE(<<"request.number_state">>, <<"request_number_state">>, <<"Number State">>, <<"Number State">>)
-          ,?MACRO_VALUE(<<"request.local_number">>, <<"request_local_number">>, <<"Local Number">>, <<"Local Number">>)
-           | ?ACCOUNT_MACROS ++ ?USER_MACROS
+          ,?MACRO_VALUE(<<"request.number_state">>, <<"request_number_state">>, <<"Number State">>, <<"Number state">>)
+          ,?MACRO_VALUE(<<"request.local_number">>, <<"request_local_number">>, <<"Local Number">>, <<"Is a local number">>)
+          ,?MACRO_VALUE(<<"request.acquired_for">>, <<"request_acquired_for">>, <<"Acquired For">>, <<"Who authorized the request">>)
+           | ?USER_MACROS
+           ++ ?COMMON_TEMPLATE_MACROS
           ]
-         )).
+         )
+       ).
 
 -define(TEMPLATE_SUBJECT, <<"Caller name update request for {{request.number}}">>).
 -define(TEMPLATE_CATEGORY, <<"account">>).
@@ -49,12 +52,21 @@ init() ->
                                           ,{'cc', ?TEMPLATE_CC}
                                           ,{'bcc', ?TEMPLATE_BCC}
                                           ,{'reply_to', ?TEMPLATE_REPLY_TO}
-                                          ]).
+                                          ]),
+    teletype_bindings:bind(<<"cnam_request">>, ?MODULE, 'handle_req').
 
--spec handle_cnam_request(kz_json:object(), kz_proplist()) -> 'ok'.
-handle_cnam_request(JObj, _Props) ->
-    'true' = kapi_notifications:cnam_request_v(JObj),
-    kz_util:put_callid(JObj),
+
+-spec handle_req(kz_json:object()) -> 'ok'.
+handle_req(JObj) ->
+    handle_req(JObj, kapi_notifications:cnam_request_v(JObj)).
+
+-spec handle_req(kz_json:object(), boolean()) -> 'ok'.
+handle_req(JObj, 'false') ->
+    lager:debug("invalid data for ~s", [?TEMPLATE_ID]),
+    teletype_util:send_update(JObj, <<"failed">>, <<"validation_failed">>);
+handle_req(JObj, 'true') ->
+    lager:debug("valid data for ~s, processing...", [?TEMPLATE_ID]),
+
     %% Gather data for template
     DataJObj = kz_json:normalize(JObj),
     AccountId = kz_json:get_value(<<"account_id">>, DataJObj),
@@ -69,7 +81,7 @@ handle_cnam_request(JObj, _Props) ->
                           ),
 
     case teletype_util:is_notice_enabled(AccountId, JObj, ?TEMPLATE_ID) of
-        'false' -> lager:debug("notification handling not configured for this account");
+        'false' -> teletype_util:notification_disabled(DataJObj, ?TEMPLATE_ID);
         'true' -> process_req(CNAMJObj)
     end.
 
@@ -97,7 +109,7 @@ process_req(DataJObj) ->
 
     {'ok', TemplateMetaJObj} =
         teletype_templates:fetch_notification(?TEMPLATE_ID
-                                             ,teletype_util:find_account_id(DataJObj)
+                                             ,kapi_notifications:account_id(DataJObj)
                                              ),
 
     Subject =

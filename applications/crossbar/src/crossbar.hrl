@@ -1,16 +1,18 @@
 -ifndef(CROSSBAR_HRL).
 
--include_lib("kazoo/include/kz_types.hrl").
--include_lib("kazoo/include/kz_log.hrl").
--include_lib("kazoo/include/kz_databases.hrl").
+-include_lib("kazoo_stdlib/include/kz_types.hrl").
+-include_lib("kazoo_stdlib/include/kz_log.hrl").
+-include_lib("kazoo_stdlib/include/kz_databases.hrl").
 -include_lib("kazoo/include/kz_system_config.hrl").
 -include_lib("kazoo_documents/include/kazoo_documents.hrl").
 
 -include("crossbar_types.hrl").
 
--define(APP_NAME, <<"crossbar">>).
+-define(APP, crossbar).
+-define(APP_NAME, (atom_to_binary(?APP, utf8))).
 -define(APP_VERSION, <<"4.0.0">>).
 -define(CONFIG_CAT, ?APP_NAME).
+-define(AUTH_CONFIG_CAT, <<(?CONFIG_CAT)/binary, ".auth">>).
 
 -define(CACHE_NAME, 'crossbar_cache').
 
@@ -89,6 +91,7 @@
                          ,'cb_media'
                          ,'cb_menus'
                          ,'cb_metaflows'
+                         ,'cb_multi_factor'
                          ,'cb_notifications'
                          ,'cb_pivot'
                          ,'cb_phone_numbers'
@@ -100,10 +103,13 @@
                          ,'cb_resources'
                          ,'cb_schemas'
                          ,'cb_search'
+                         ,'cb_security'
                          ,'cb_service_plans'
+                         ,'cb_service_planner'
                          ,'cb_services'
                          ,'cb_simple_authz'
                          ,'cb_sms'
+                         ,'cb_tasks'
                          ,'cb_templates'
                          ,'cb_temporal_rules'
                          ,'cb_temporal_rules_sets'
@@ -139,7 +145,7 @@
                     ,req_nouns = [{<<"404">>, []}] :: req_nouns() % {module, [id]} most typical
                     ,req_json = kz_json:new() :: req_json()
                     ,req_files = [] :: req_files()
-                    ,req_data :: kz_json:json_term()  % the "data" from the request JSON envelope
+                    ,req_data = kz_json:new() :: kz_json:json_term()  % the "data" from the request JSON envelope
                     ,req_headers = [] :: cowboy:http_headers()
                     ,query_json = kz_json:new() :: kz_json:object()
                     ,account_id :: api_ne_binary()
@@ -168,7 +174,7 @@
                     ,raw_qs = <<>> :: binary()
                     ,method = ?HTTP_GET :: http_method()
                     ,validation_errors = kz_json:new() :: kz_json:object()
-                    ,client_ip = <<"127.0.0.1">> :: ne_binary()
+                    ,client_ip = <<"127.0.0.1">> :: api_ne_binary()
                     ,load_merge_bypass :: api_object()
                     ,profile_id :: api_ne_binary()
                     ,api_version = ?VERSION_1 :: ne_binary()
@@ -201,6 +207,33 @@
                                ,{<<"vmboxes">>, <<"vmbox">>}
                                ,{<<"resource_selectors">>, <<"resource_selectors_rules">>}
                                ]).
+
+-define(CSV_HEADER_MAP, [{<<"account_id">>, <<"Account ID">>}
+                        ,{<<"account_name">>, <<"Account Name">>}
+                        ,{<<"amount">>, <<"Amount">>}
+                        ,{<<"description">>, <<"Description">>}
+                        ,{<<"id">>, <<"ID">>}
+                        ,{<<"metadata_callee_id_number">>, <<"Callee ID Number">>}
+                        ,{<<"metadata_callee_id_name">>, <<"Callee ID Name">>}
+                        ,{<<"metadata_caller_id_number">>, <<"Caller ID Number">>}
+                        ,{<<"metadata_caller_id_name">>, <<"Caller ID Name">>}
+                        ,{<<"metadata_direction">>, <<"Direction">>}
+                        ,{<<"metadata_from">>, <<"From">>}
+                        ,{<<"metadata_to">>, <<"To">>}
+                        ,{<<"metadata_rate_description">>, <<"Rate Description">>}
+                        ,{<<"metadata_rate_increment">>, <<"Rate Increment">>}
+                        ,{<<"metadata_rate_minimum">>, <<"Rate Minimum">>}
+                        ,{<<"metadata_rate_name">>, <<"Rate Name">>}
+                        ,{<<"metadata_rate_nocharge_time">>, <<"Grace Period">>}
+                        ,{<<"metadata_rate_value">>, <<"Rate">>}
+                        ,{<<"period_start">>, <<"Start Time">>}
+                        ,{<<"period_end">>, <<"End Time">>}
+                        ,{<<"source_id">>, <<"Source ID">>}
+                        ,{<<"source_service">>, <<"Source Service">>}
+                        ,{<<"usage_quantity">>, <<"Usage Quantity">>}
+                        ,{<<"usage_type">>, <<"Usage Type">>}
+                        ,{<<"usage_unit">>, <<"Usage Unit">>}
+                        ]).
 
 -define(CROSSBAR_HRL, 'true').
 -endif.

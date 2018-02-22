@@ -118,7 +118,7 @@ refresh(<<Account/binary>>) ->
     Views = kapps_util:get_views_json('callflow', "views"),
     kapps_util:update_views(AccountDb, Views);
 refresh(Account) ->
-    refresh(kz_util:to_binary(Account)).
+    refresh(kz_term:to_binary(Account)).
 
 %%--------------------------------------------------------------------
 %% @public
@@ -212,7 +212,7 @@ do_menu_migration(Menu, Db) ->
         {'ok', Bin} ->
             Name = <<(kz_json:get_value(<<"name">>, Doc, <<>>))/binary, " menu greeting">>,
             MediaId = create_media_doc(Name, <<"menu">>, MenuId, Db),
-            AName = <<(kz_util:to_hex_binary(crypto:strong_rand_bytes(16)))/binary, ".mp3">>,
+            AName = <<(kz_term:to_hex_binary(crypto:strong_rand_bytes(16)))/binary, ".mp3">>,
             {'ok', _} = kz_datamgr:put_attachment(Db, MediaId, AName, Bin),
             'ok' = update_doc([<<"media">>, <<"greeting">>], MediaId, MenuId, Db),
             'ok' = update_doc([<<"pvt_vsn">>], <<"2">>, MenuId, Db),
@@ -298,7 +298,7 @@ all_accounts_set_classifier_deny(Classifier) ->
 -spec set_account_classifier_action(ne_binary(), ne_binary(), ne_binary()) -> 'ok'.
 set_account_classifier_action(Action, Classifier, AccountDb) ->
     'true' = is_classifier(Classifier),
-    io:format("found account: ~p", [get_account_name_by_db(AccountDb)]),
+    io:format("found account: ~p", [kz_account:fetch_name(AccountDb)]),
     AccountId = kz_util:format_account_id(AccountDb, 'raw'),
 
     kz_datamgr:update_doc(AccountDb, AccountId, [{[<<"call_restriction">>, Classifier, <<"action">>], Action}]),
@@ -316,15 +316,6 @@ all_accounts_set_classifier(Action, Classifier) ->
                           %%  Keeping it as it was taken as an example from kapps_util:update_all_accounts/1
                           set_account_classifier_action(Action, Classifier, AccountDb)
                   end, kapps_util:get_all_accounts()).
-
--spec get_account_name_by_db(ne_binary()) -> ne_binary() | 'undefined'.
-get_account_name_by_db(AccountDb) ->
-    case kz_account:fetch(AccountDb) of
-        {'error', _Error} ->
-            lager:error('error opening account doc ~p', [AccountDb]),
-            'undefined';
-        {'ok', JObj} -> kz_account:name(JObj)
-    end.
 
 %%--------------------------------------------------------------------
 %% @public
@@ -462,7 +453,7 @@ update_feature_codes() ->
 -spec update_feature_codes(ne_binary()) -> 'ok'.
 update_feature_codes(Account)
   when not is_binary(Account) ->
-    update_feature_codes(kz_util:to_binary(Account));
+    update_feature_codes(kz_term:to_binary(Account));
 update_feature_codes(Account) ->
     AccountDb = kz_util:format_account_db(Account),
     case kz_datamgr:get_results(AccountDb, ?LIST_BY_PATTERN, ['include_docs']) of

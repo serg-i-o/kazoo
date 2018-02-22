@@ -24,11 +24,11 @@
 %%--------------------------------------------------------------------
 -spec handle(kz_json:object(), kapps_call:call()) -> 'ok'.
 handle(Data, Call) ->
-    UserId = kz_doc:id(Data),
+    UserId = kz_json:get_ne_binary_value(<<"id">>, Data),
     Endpoints = get_endpoints(UserId, Data, Call),
-    FailOnSingleReject = kz_json:get_value(<<"fail_on_single_reject">>, Data, 'undefined'),
+    FailOnSingleReject = kz_json:is_true(<<"fail_on_single_reject">>, Data, 'undefined'),
     Timeout = kz_json:get_integer_value(<<"timeout">>, Data, ?DEFAULT_TIMEOUT_S),
-    Strategy = kz_json:get_binary_value(<<"strategy">>, Data, <<"simultaneous">>),
+    Strategy = kz_json:get_ne_binary_value(<<"strategy">>, Data, <<"simultaneous">>),
     IgnoreEarlyMedia = kz_endpoints:ignore_early_media(Endpoints),
 
     Command = [{<<"Application-Name">>, <<"bridge">>}
@@ -73,7 +73,7 @@ maybe_handle_bridge_failure(Reason, Call) ->
                            kz_json:objects().
 get_endpoints('undefined', _, _) -> [];
 get_endpoints(UserId, Data, Call) ->
-    Params = kz_json:set_value(<<"source">>, kz_util:to_binary(?MODULE), Data),
+    Params = kz_json:set_value(<<"source">>, kz_term:to_binary(?MODULE), Data),
     kz_endpoints:by_owner_id(UserId, Params, Call).
 
 -spec bridge(kz_proplist(), integer(), kapps_call:call()) -> kapps_api_bridge_return().

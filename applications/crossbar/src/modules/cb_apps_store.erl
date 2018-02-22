@@ -303,10 +303,9 @@ validate_app(Context, Id, ?HTTP_GET) ->
     Context1 = load_app(Context, Id),
     case cb_context:resp_status(Context1) of
         'success' ->
-            cb_context:set_resp_data(
-              Context1
-                                    ,kz_json:public_fields(cb_context:doc(Context1))
-             );
+            cb_context:set_resp_data(Context1
+                                    ,kz_doc:public_fields(cb_context:doc(Context1))
+                                    );
         _ -> Context1
     end;
 validate_app(Context, Id, ?HTTP_PUT) ->
@@ -402,19 +401,18 @@ normalize_apps_result([App|Apps], Acc) ->
         'true' ->
             JObj =
                 kz_json:from_list(
-                  props:filter_undefined([{<<"id">>, kzd_app:id(App)}
-                                         ,{<<"name">>, kzd_app:name(App)}
-                                         ,{<<"i18n">>, kzd_app:i18n(App)}
-                                         ,{<<"tags">>, kzd_app:tags(App)}
-                                         ,{<<"api_url">>, kzd_app:api_url(App)}
-                                         ,{<<"source_url">>, kzd_app:source_url(App)}
-                                         ,{<<"account_id">>, kzd_app:account_id(App)}
-                                         ,{<<"users">>, kzd_app:users(App)}
-                                         ,{<<"allowed_users">>, kzd_app:allowed_users(App)}
-                                         ,{<<"masqueradable">>, kzd_app:masqueradable(App)}
-                                         ,{<<"phase">>, kzd_app:phase(App)}
-                                         ])
-                 ),
+                  [{<<"id">>, kzd_app:id(App)}
+                  ,{<<"name">>, kzd_app:name(App)}
+                  ,{<<"i18n">>, kzd_app:i18n(App)}
+                  ,{<<"tags">>, kzd_app:tags(App)}
+                  ,{<<"api_url">>, kzd_app:api_url(App)}
+                  ,{<<"source_url">>, kzd_app:source_url(App)}
+                  ,{<<"account_id">>, kzd_app:account_id(App)}
+                  ,{<<"users">>, kzd_app:users(App)}
+                  ,{<<"allowed_users">>, kzd_app:allowed_users(App)}
+                  ,{<<"masqueradable">>, kzd_app:masqueradable(App)}
+                  ,{<<"phase">>, kzd_app:phase(App)}
+                  ]),
             normalize_apps_result(Apps, [JObj|Acc])
     end.
 
@@ -560,7 +558,7 @@ get_icon(Context) ->
 maybe_get_screenshot(Context, Number) ->
     JObj = cb_context:doc(Context),
     Screenshots = kz_json:get_value(<<"screenshots">>, JObj),
-    try lists:nth(kz_util:to_integer(Number)+1, Screenshots) of
+    try lists:nth(kz_term:to_integer(Number)+1, Screenshots) of
         Name ->
             case kz_doc:attachment(JObj, Name) of
                 'undefined' -> 'error';
@@ -580,10 +578,9 @@ maybe_get_screenshot(Context, Number) ->
 get_screenshot(Context, Number) ->
     case maybe_get_screenshot(Context, Number) of
         'error' ->
-            crossbar_util:response_bad_identifier(
-              <<?SCREENSHOT/binary , "/", Number/binary>>
+            crossbar_util:response_bad_identifier(<<?SCREENSHOT/binary , "/", Number/binary>>
                                                  ,Context
-             );
+                                                 );
         {'ok', Name, _} ->
             get_attachment(Context, Name)
     end.
@@ -637,7 +634,7 @@ get_attachment(Context, Id, JObj, Attachment) ->
     AppId = kz_doc:id(JObj),
     case kz_datamgr:fetch_attachment(Db, AppId, Id) of
         {'error', R} ->
-            Reason = kz_util:to_binary(R),
+            Reason = kz_term:to_binary(R),
             lager:error("failed to fetch attachment, ~s in ~s, (account: ~s)", [Id, AppId, Db]),
             cb_context:add_system_error('datastore_fault', kz_json:from_list([{<<"details">>, Reason}]), Context);
         {'ok', AttachBin} ->

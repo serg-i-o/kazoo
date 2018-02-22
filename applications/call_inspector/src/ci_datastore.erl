@@ -1,5 +1,5 @@
 %%%-------------------------------------------------------------------
-%%% @copyright (C) 2012-2017, 2600Hz INC
+%%% @copyright (C) 2015-2017, 2600Hz INC
 %%% @doc
 %%%
 %%% @end
@@ -7,7 +7,6 @@
 %%%
 %%%-------------------------------------------------------------------
 -module(ci_datastore).
-
 -behaviour(gen_server).
 
 -include("call_inspector.hrl").
@@ -18,7 +17,9 @@
 -export([start_link/0]).
 -export([store_chunk/1]).
 -export([store_analysis/1]).
--export([lookup_callid/1]).
+-export([lookup_callid/1
+        ,lookup_objects/1
+        ]).
 -export([callid_exists/1]).
 -export([flush/0
         ,flush/1
@@ -36,10 +37,10 @@
 -record(state, {}).
 -type state() :: #state{}.
 
--record(object, {call_id
-                ,timestamp
-                ,type
-                ,value
+-record(object, {call_id :: ne_binary()
+                ,timestamp = kz_time:current_tstamp() :: gregorian_seconds()
+                ,type :: chunk | analysis
+                ,value :: ci_chunk:chunk() | ci_analysis:analysis()
                 }).
 -type object() :: #object{}.
 
@@ -49,7 +50,7 @@
 
 -export_type([data/0]).
 
--define(CI_DIR, "/tmp/2600hz-call_inspector").
+-define(CI_DIR, "/var/log/kazoo/call_inspector").
 
 %%%===================================================================
 %%% API
@@ -77,7 +78,10 @@ store_analysis(Analysis) ->
 -spec callid_exists(ne_binary()) -> boolean().
 callid_exists(CallId) ->
     File = make_name(CallId),
-    filelib:is_file(File).
+    Exists = filelib:is_file(File),
+    Exists
+        orelse lager:debug("~s not stored here", [CallId]),
+    Exists.
 
 -spec lookup_callid(ne_binary()) -> data().
 lookup_callid(CallId) ->
@@ -115,6 +119,7 @@ flush(CallId) ->
 %%--------------------------------------------------------------------
 -spec init([]) -> {'ok', #state{}}.
 init([]) ->
+    lager:debug("ensuring directory ~s exists", [?CI_DIR]),
     mkdir(?CI_DIR),
     {'ok', #state{}}.
 
@@ -151,7 +156,6 @@ handle_call(_Request, _From, State) ->
 -spec handle_cast(any(), state()) -> handle_cast_ret_state(state()).
 handle_cast({'store_chunk', CallId, Chunk}, State) ->
     Object = #object{call_id=CallId
-                    ,timestamp=kz_util:current_tstamp()
                     ,type='chunk'
                     ,value=Chunk
                     },
@@ -160,7 +164,6 @@ handle_cast({'store_chunk', CallId, Chunk}, State) ->
     {'noreply', State};
 handle_cast({'store_analysis', CallId, Analysis}, State) ->
     Object = #object{call_id=CallId
-                    ,timestamp=kz_util:current_tstamp()
                     ,type='analysis'
                     ,value=Analysis
                     },
@@ -225,7 +228,7 @@ code_change(_OldVsn, State, _Extra) ->
 
 -spec make_name(ne_binary()) -> file:filename().
 make_name(CallId) ->
-    <<D1:2/binary, D2:2/binary, Rest/binary>> = kz_util:binary_md5(CallId),
+    <<D1:2/binary, D2:2/binary, Rest/binary>> = kz_binary:md5(CallId),
     filename:join([?CI_DIR, D1, D2, Rest]).
 
 -spec ensure_path_exists(file:filename()) -> 'ok'.

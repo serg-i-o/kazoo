@@ -1,43 +1,94 @@
 ### Port Requests
 
+* [About Port Requests](#about-port-requests)
+* [Schema](#schema)
+* Utils
+    + [Build an LOA PDF from a port request](#build-an-loa-pdf-from-a-port-request)
+    + [Get port request by phone number](#get-a-port-request-by-phone-number)
+    + [Get port request by phone number for account and descendants](#get-port-request-for-account-and-descendants)
+* Port Request Listing
+    - [List all](#list-port-requests)
+    - [List all for sub accounts](#list-port-requests-of-self-and-sub-accounts)
+    - [List by state](#listing-by-port-state)
+        + [`unconfirmed`](#listing-by-unconfirmed-port)
+        + [`submitted`](#listing-by-submitted-port)
+        + [`pending`](#listing-by-pending-port)
+        + [`scheduled`](#listing-by-scheduled-port)
+        + [`completed`](#listing-by-completed-port)
+        + [`rejected`](#listing-by-rejected-port)
+        + [`canceled`](#listing-by-canceled-port)
+* Port Request Management
+    - [Create](#create-a-new-port-request)
+        + [Success](#success)
+        + [Failure: a port already exists for this number](#failure-a-port-already-exists-for-this-number)
+        + [Failure: an account already owns this number](#failure-an-account-already-owns-this-number)
+    - [Get](#get-port-request-details)
+    - [Update](#edit-a-port-request)
+    - [Delete](#delete-a-port-request)
+* Timeline
+    - [Listing transitions and comments](#listing-transitions-and-comments)
+* Update Status
+    - [`submitted`](#indicate-a-port-is-ready-to-be-processed)
+        + [Success](#success_1)
+        + [Failure: charges have to be accepted](#failure-charges-have-to-be-accepted)
+    - [`pending`](#put-port-in-pending)
+        + [Success](#success_2)
+        + [Failure: target state illegal given current state](#failure-target-state-illegal-given-current-state)
+    - [`scheduled`](#put-port-in-progress-sent-to-losing-carrier)
+    - [`completed`](#complete-port-numbers-will-activate-in-the-system-account-will-be-billed)
+    - [`rejected`](#reject-a-port)
+    - [`canceled`](#cancel-a-port)
+* Attachments
+    - [Create](#add-an-attachment-to-a-port-request)
+    - [List](#list-attachments-on-a-port-request)
+    - [Get](#get-an-attachment-from-a-port-request)
+    - [Update](#replace-an-attachment-on-a-port-request)
+    - [Delete](#delete-an-attachment-on-a-port-request)
+
+#### About Port Requests
+
 Manage and track number port requests through the Port Requests API.
 
-A port request can be in one of five **states**:
+A port request can be in one of seven **states**:
 
 * `unconfirmed`: A port request has been created, but the details have not been confirmed and the port process has not started.
 * `submitted`: Indicates the number port is ready to be processed and sent to the losing carrier.
+* `pending`: The port was submitted to the losing carrier.
 * `scheduled`: The port is in progress and the losing carrier has been notified.
 * `completed`: The port request has been finished, and numbers are activated.
-* `rejected`: The port request has been cancelled, or something has gone wrong during the port process. The port can be resubmitted.
+* `rejected`: Something has gone wrong during the port process. The port can be resubmitted.
+* `canceled`: The port request is definitely canceled and cannot be resubmitted.
+
+![porting state flow](images/port-request-states-flow.svg)
 
 #### Schema
 
 Schema for a port request
 
+
+
 Key | Description | Type | Default | Required
 --- | ----------- | ---- | ------- | --------
-`bill` | Billing information of the losing carrier | `object` |   | `false`
-`bill.extended_address` | The suite/floor/apt of the billing address the losing carrier has on record | `string` |   | `false`
-`bill.locality` | The locality (city) of the billing address the losing carrier has on record | `string` |   | `false`
-`bill.name` | The losing carrier billing/account name | `string` |   | `false`
-`bill.postal_code` | The zip/postal code of the billing address the losing carrier has on record | `string` |   | `false`
-`bill.region` | The region (state) of the billing address the losing carrier has on record | `string` |   | `false`
-`bill.street_address` | The address of the billing address the losing carrier has on record | `string` |   | `false`
-`comments` | The history of comments made on a port request | `array(object)` |   | `false`
+`bill.extended_address` | The suite/floor/apt of the billing address the losing carrier has on record | `string()` |   | `false`
+`bill.locality` | The locality (city) of the billing address the losing carrier has on record | `string()` |   | `false`
+`bill.name` | The losing carrier billing/account name | `string()` |   | `false`
+`bill.postal_code` | The zip/postal code of the billing address the losing carrier has on record | `string()` |   | `false`
+`bill.region` | The region (state) of the billing address the losing carrier has on record | `string()` |   | `false`
+`bill.street_address` | The address of the billing address the losing carrier has on record | `string()` |   | `false`
+`bill` | Billing information of the losing carrier | `object()` |   | `false`
+`comments` | The history of comments made on a port request | `array(object())` |   | `false`
 `name` | A friendly name for the port request | `string(1..128)` |   | `true`
-`notifications` | Status notifications | `object` |   | `false`
-`notifications.email` | Inbound Email Notifications | `object` |   | `false`
-`notifications.email.send_to` | A list or string of email recipent(s) | `string, array(string)` |   | `false`
-`numbers` | The numbers to port in | `object` |   | `true`
-`numbers./\+?[0-9]+/` |   | `object` |   | `false`
-`port_state` | What state the port request is currently in | `string('unconfirmed', 'pending', 'submitted', 'scheduled', 'completed', 'rejected', 'canceled')` | `unconfirmed` | `false`
-`scheduled_date` | Requested scheduled date in gregorain timestamp | `integer` |   | `false`
-`transfer_date` | Requested transfer date in gregorain timestamp | `integer` |   | `false`
+`notifications.email.send_to` | A list or string of email recipent(s) | `string() | array(string())` |   | `false`
+`notifications.email` | Inbound Email Notifications | `object()` |   | `false`
+`notifications` | Status notifications | `object()` |   | `false`
+`numbers./\+?[0-9]+/` |   | `object()` |   | `false`
+`numbers` | The numbers to port in | `object()` |   | `true`
+`port_state` | What state the port request is currently in | `string('unconfirmed' | 'pending' | 'submitted' | 'scheduled' | 'completed' | 'rejected' | 'canceled')` | `unconfirmed` | `false`
+`transfer_date` | Requested transfer date in gregorain timestamp | `integer()` |   | `false`
 
 
 
-
-#### List port requests
+#### Fetch
 
 > GET /v2/accounts/{ACCOUNT_ID}/port_requests
 
@@ -278,6 +329,11 @@ curl -v -X GET \
                         "+12025559042": {}
                     },
                     "port_state": "scheduled",
+                    "schedule_on": {
+                        "date_time": "2017-06-24 12:00",
+                        "timezone": "America/New_York"
+                    },
+                    "scheduled_date": 63665539200,
                     "sent": false,
                     "updated": 63630130490,
                     "uploads": {}
@@ -565,7 +621,7 @@ curl -v -X PUT \
 ```
 
 
-#### List port request details
+#### Get port request details
 
 > GET /v2/accounts/{ACCOUNT_ID}/port_requests/{PORT_REQUEST_ID}
 
@@ -704,7 +760,7 @@ curl -v -X PUT \
     -H "X-Auth-Token: {AUTH_TOKEN}" \
     -H "Content-Type: application/pdf" \
     --data-binary @/path/to/file.pdf \
-    http://{SERVER}:8000/v2/accounts/{ACCOUNT_ID}/port_requests/{PORT_REQUEST_ID}/attachments?filename={ATTACHMENT_ID}'
+    http://{SERVER}:8000/v2/accounts/{ACCOUNT_ID}/port_requests/{PORT_REQUEST_ID}/attachments?filename={ATTACHMENT_ID}
 ```
 
 ```json
@@ -775,6 +831,142 @@ curl -v -X DELETE \
 }
 ```
 
+#### Listing all port requests by their last transition to the `submitted` state
+
+> GET /v2/accounts/{ACCOUNT_ID}/port_requests/last_submitted
+
+```shell
+curl -v -X GET \
+    -H "X-Auth-Token: {AUTH_TOKEN}" \
+    http://{SERVER}:8000/v2/accounts/{ACCOUNT_ID}/port_requests/last_submitted
+```
+
+```json
+{
+    "auth_token": "{AUTH_TOKEN}",
+    "data": [
+        {
+            "id": "{PORT_REQUEST_ID}",
+            "transition": {
+                "authorization": {
+                    "account": {
+                        "id": "{AUTH_ACCOUNT_ID}",
+                        "name": "{AUTH_ACCOUNT_NAME}"
+                    },
+                    "user": {
+                        "id": "0d46906ff1eb36bff4d09b5b32fc14be",
+                        "first_name": "John",
+                        "last_name": "Doe"
+                    }
+                },
+                "reason": "this was approved by Jane Doe",
+                "timestamp": 63664096014,
+                "transition": {
+                    "new": "submitted",
+                    "previous": "unconfirmed"
+                },
+                "type": "transition"
+            }
+        ]
+    },
+    "node": "{NODE}",
+    "request_id": "{REQUEST_ID}",
+    "revision": "{REVISION}",
+    "status": "success",
+    "timestamp": "2017-06-07T23:07:09",
+    "version": "4.1.12"
+}
+```
+
+
+#### Listing transitions and comments
+
+> GET /v2/accounts/{ACCOUNT_ID}/port_requests/{PORT_REQUEST_ID}/timeline
+
+This shows the port request's timeline as a sorted list of transitions and comments.
+
+Admins are able to list every transitions and comments regardless of their privacy setting.
+Non admins only see transitions and public comments.
+
+```shell
+curl -v -X GET \
+    -H "X-Auth-Token: {AUTH_TOKEN}" \
+    http://{SERVER}:8000/v2/accounts/{ACCOUNT_ID}/port_requests/{PORT_REQUEST_ID}/timeline
+```
+
+```json
+{
+    "auth_token": "{AUTH_TOKEN}",
+    "data": [
+        {
+            "authorization": {
+                "account": {
+                    "id": "{AUTH_ACCOUNT_ID}",
+                    "name": "{AUTH_ACCOUNT_NAME}"
+                },
+                "user": {
+                    "id": "0d46906ff1eb36bff4d09b5b32fc14be",
+                    "first_name": "John",
+                    "last_name": "Doe"
+                }
+            },
+            "timestamp": 63663993575,
+            "transition": {
+                "new": "unconfirmed"
+            },
+            "type": "transition"
+        },
+        {
+            "content": "the previous comment was private, this one is not",
+            "superduper_comment": false,
+            "timestamp": 63664000760,
+            "user_id": "0d46906ff1eb36bff4d09b5b32fc14be"
+        },
+        {
+            "content": "this is not private",
+            "superduper_comment": false,
+            "timestamp": 63664000768,
+            "user_id": "0d46906ff1eb36bff4d09b5b32fc14be"
+        },
+        {
+            "authorization": {
+                "account": {
+                    "id": "{AUTH_ACCOUNT_ID}",
+                    "name": "{AUTH_ACCOUNT_NAME}"
+                },
+                "user": {
+                    "id": "0d46906ff1eb36bff4d09b5b32fc14be",
+                    "first_name": "John",
+                    "last_name": "Doe"
+                }
+            },
+            "reason": "this was approved by Jane Doe",
+            "timestamp": 63664096014,
+            "transition": {
+                "new": "submitted",
+                "previous": "unconfirmed"
+            },
+            "type": "transition"
+        }
+    ],
+    "node": "{NODE}",
+    "request_id": "{REQUEST_ID}",
+    "revision": "{REVISION}",
+    "status": "success",
+    "timestamp": "2017-06-07T23:07:09",
+    "version": "4.1.12"
+}
+```
+
+
+### Updating a port request's status
+
+When PATCHing a port request a reason can be added to the transition with the following request value:
+* `reason`: an optional string that can be used to describe the reason for the transition
+
+This information will then be available in the timeline.
+
+Note: request values can be set either in the query string or in the data payload.
 
 #### Indicate a port is ready to be processed
 
@@ -783,7 +975,7 @@ curl -v -X DELETE \
 ```shell
 curl -v -X PATCH \
     -H "X-Auth-Token: {AUTH_TOKEN}" \
-    http://{SERVER}:8000/v2/accounts/{ACCOUNT_ID}/port_requests/{PORT_REQUEST_ID}/submitted
+    http://{SERVER}:8000/v2/accounts/{ACCOUNT_ID}/port_requests/{PORT_REQUEST_ID}/submitted?reason=this+was+approved+by+Jane+Doe
 ```
 
 ##### Success
@@ -898,9 +1090,13 @@ curl -v -X PATCH \
 
 > PATCH /v2/accounts/{ACCOUNT_ID}/port_requests/{PORT_REQUEST_ID}/scheduled
 
+Note: `schedule_on` is a required field for this state transition.
+Note: `scheduled_date` is an automatically added timestamp computed from the value of the `schedule_on` object.
+
 ```shell
 curl -v -X PATCH \
     -H "X-Auth-Token: {AUTH_TOKEN}" \
+    -d '{"data": {"schedule_on": {"timezone":"America/Los_Angeles", "date_time":"2017-06-24 12:00"}}}' \
     http://{SERVER}:8000/v2/accounts/{ACCOUNT_ID}/port_requests/{PORT_REQUEST_ID}/scheduled
 ```
 
@@ -915,6 +1111,11 @@ curl -v -X PATCH \
             "+12025559000": {}
         },
         "port_state": "scheduled",
+        "schedule_on": {
+            "date_time": "2017-06-24 12:00",
+            "timezone": "America/Los_Angeles"
+        },
+        "scheduled_date": 63658292400,
         "sent": false,
         "updated": 63630120528,
         "uploads": {

@@ -53,6 +53,9 @@
                 "context_2"
             ],
             "description": "ecallmgr call routing bindings",
+            "items": {
+                "type": "string"
+            },
             "type": "array"
         },
         "capabilities": {
@@ -119,6 +122,9 @@
                 }
             ],
             "description": "ecallmgr capabilities",
+            "items": {
+                "type": "object"
+            },
             "type": "array"
         },
         "debug_channel": {
@@ -142,12 +148,25 @@
             "type": "string"
         },
         "default_ringback": {
-            "description": "ecallmgr default ringback"
+            "default": "%(2000,4000,440,480)",
+            "description": "ecallmgr default ringback",
+            "type": "string"
         },
         "event_stream_idle_alert": {
             "default": 0,
             "description": "ecallmgr event stream idle alert",
             "type": "integer"
+        },
+        "expandable_macros": {
+            "default": {
+                "{account_id}": "${ecallmgr_Account-ID}",
+                "{billing_id}": "${ecallmgr_Billing-ID}",
+                "{caller_id_name}": "${caller_id_name}",
+                "{caller_id_number}": "${caller_id_number}",
+                "{reseller_id}": "${ecallmgr_Reseller-ID}"
+            },
+            "description": "macros that will be expanded at call-time, for use in custom SIP headers",
+            "type": "object"
         },
         "expires_deviation_time": {
             "default": 180,
@@ -179,6 +198,9 @@
                 }
             ],
             "description": "ecallmgr fs cmds",
+            "items": {
+                "type": "object"
+            },
             "type": "array"
         },
         "fs_cmds_wait_ms": {
@@ -194,6 +216,9 @@
         "fs_nodes": {
             "default": [],
             "description": "ecallmgr fs nodes",
+            "items": {
+                "type": "string"
+            },
             "type": "array"
         },
         "fs_profiles": {
@@ -202,7 +227,11 @@
             "type": "object"
         },
         "fs_reconnect_cmds": {
-            "description": "ecallmgr fs reconnect cmds"
+            "description": "ecallmgr fs reconnect cmds",
+            "items": {
+                "type": "object"
+            },
+            "type": "array"
         },
         "gateways": {
             "default": {},
@@ -239,11 +268,9 @@
                 "send_http": {
                     "properties": {
                         "delete_on_success": {
-                            "properties": {
-                                "default": false,
-                                "description": "ecallmgr delete on success",
-                                "type": "boolean"
-                            }
+                            "default": false,
+                            "description": "ecallmgr delete on success",
+                            "type": "boolean"
                         }
                     }
                 }
@@ -285,6 +312,9 @@
                 "undeaf-member"
             ],
             "description": "ecallmgr publish conference event",
+            "items": {
+                "type": "string"
+            },
             "type": "array"
         },
         "record_sample_rate": {
@@ -327,7 +357,8 @@
             "type": "boolean"
         },
         "sofia_conf": {
-            "description": "ecallmgr sofia conf"
+            "description": "ecallmgr sofia conf",
+            "type": "boolean"
         },
         "tcp_packet_type": {
             "default": 2,
@@ -339,6 +370,9 @@
                 "context_2"
             ],
             "description": "ecallmgr text routing bindings",
+            "items": {
+                "type": "string"
+            },
             "type": "array"
         },
         "use_bypass_media_after_bridge": {
@@ -367,12 +401,5 @@
             "type": "integer"
         }
     },
-    "required": [
-        "default_ringback",
-        "fs_reconnect_cmds",
-        "node_commands",
-        "should_detect_inband_dtmf",
-        "sofia_conf"
-    ],
     "type": "object"
 }

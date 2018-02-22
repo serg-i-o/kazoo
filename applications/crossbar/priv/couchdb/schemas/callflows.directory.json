@@ -1,8 +1,12 @@
 {
-    "$schema": "http://json-schema.org/draft-03/schema#",
+    "$schema": "http://json-schema.org/draft-04/schema#",
     "_id": "callflows.directory",
     "description": "Validator for the directory callflow's data object",
-    "properties": {},
-    "required": true,
+    "properties": {
+        "id": {
+            "description": "Directory ID",
+            "type": "string"
+        }
+    },
     "type": "object"
 }

@@ -10,7 +10,6 @@
 -behaviour(supervisor).
 
 -export([start_link/0
-        ,stop/0
         ]).
 -export([init/1]).
 
@@ -21,8 +20,7 @@
 -define(ID, 'kazoo_bindings').
 
 %% Helper macro for declaring children of supervisor
--define(CHILDREN, [?WORKER(?ID)
-                  ,?WORKER_ARGS('kazoo_etsmgr_srv'
+-define(CHILDREN, [?WORKER_ARGS('kazoo_etsmgr_srv'
                                ,[
                                  [{'table_id', kazoo_bindings:table_id()}
                                  ,{'table_options', kazoo_bindings:table_options()}
@@ -30,6 +28,8 @@
                                  ,{'gift_data', kazoo_bindings:gift_data()}
                                  ]
                                 ])
+                  ,?WORKER(?ID)
+                  ,?WORKER('kazoo_bindings_init')
                   ]).
 
 %% ===================================================================
@@ -43,10 +43,6 @@
 -spec start_link() -> startlink_ret().
 start_link() ->
     supervisor:start_link({'local', ?SERVER}, ?MODULE, []).
-
--spec stop() -> 'ok' | {'error', 'not_found'}.
-stop() ->
-    supervisor:terminate_child(?SERVER, ?ID).
 
 %% ===================================================================
 %% Supervisor callbacks

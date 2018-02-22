@@ -11,7 +11,6 @@
 %%%   Karl Anderson
 %%%-------------------------------------------------------------------
 -module(cf_menu).
-
 -behaviour(gen_cf_action).
 
 -export([handle/2]).
@@ -20,17 +19,14 @@
 
 -define(MOD_CONFIG_CAT, <<(?CF_CONFIG_CAT)/binary, ".menu">>).
 
--record(menu_keys, {
-          %% Record Review
-          save = <<"1">> :: ne_binary()
+-record(menu_keys, {save = <<"1">> :: ne_binary() %% Record Review
                    ,listen = <<"2">> :: ne_binary()
                    ,record = <<"3">> :: ne_binary()
-         }).
+                   }).
 -type menu_keys() :: #menu_keys{}.
 -define(MENU_KEY_LENGTH, 1).
 
--record(cf_menu_data, {
-          menu_id :: api_binary()
+-record(cf_menu_data, {menu_id :: api_ne_binary()
                       ,name = <<>> :: binary()
                       ,retries = 3 :: pos_integer()
                       ,timeout = 10000 :: pos_integer()
@@ -40,13 +36,13 @@
                       ,hunt_allow = <<>> :: binary()
                       ,record_pin = <<>> :: binary()
                       ,record_from_offnet = 'false' :: boolean()
-                      ,greeting_id :: api_binary()
+                      ,greeting_id :: api_ne_binary()
                       ,exit_media = 'true' :: boolean() | ne_binary()
                       ,transfer_media = 'true' :: boolean() | ne_binary()
                       ,invalid_media = 'true' :: boolean() | ne_binary()
                       ,keys = #menu_keys{} :: menu_keys()
                       ,interdigit_timeout = kapps_call_command:default_interdigit_timeout() :: pos_integer()
-         }).
+                      }).
 -type menu() :: #cf_menu_data{}.
 
 %%--------------------------------------------------------------------
@@ -361,7 +357,7 @@ play_exit_prompt(#cf_menu_data{exit_media=Id}, Call) ->
 %%--------------------------------------------------------------------
 -spec get_prompt(menu(), kapps_call:call()) -> ne_binary().
 get_prompt(#cf_menu_data{greeting_id='undefined'}, Call) ->
-    kz_media_util:get_prompt(<<"menu-no_prompt">>, Call);
+    kapps_call:get_prompt(Call, <<"menu-no_prompt">>);
 get_prompt(#cf_menu_data{greeting_id = <<"local_stream://", _/binary>> = ID}, _) ->
     ID;
 get_prompt(#cf_menu_data{greeting_id=Id}, Call) ->
@@ -417,7 +413,7 @@ maybe_delete_attachments(AccountDb, _MediaId, JObj) ->
 %%--------------------------------------------------------------------
 -spec tmp_file() -> ne_binary().
 tmp_file() ->
-    <<(kz_util:to_hex_binary(crypto:strong_rand_bytes(16)))/binary, ".mp3">>.
+    <<(kz_term:to_hex_binary(crypto:strong_rand_bytes(16)))/binary, ".mp3">>.
 
 %%--------------------------------------------------------------------
 %% @private
@@ -516,7 +512,7 @@ update_doc(Updates, Id, Call) ->
 %%--------------------------------------------------------------------
 -spec get_menu_profile(kz_json:object(), kapps_call:call()) -> menu().
 get_menu_profile(Data, Call) ->
-    Id = kz_doc:id(Data),
+    Id = kz_json:get_ne_binary_value(<<"id">>, Data),
     AccountDb = kapps_call:account_db(Call),
     case kz_datamgr:open_doc(AccountDb, Id) of
         {'ok', JObj} ->
@@ -553,7 +549,7 @@ get_menu_profile(Data, Call) ->
                               (not kz_json:is_false([<<"media">>, <<"invalid_media">>], JObj))
                           andalso kz_json:get_ne_value([<<"media">>, <<"invalid_media">>], JObj, 'true')
                          ,interdigit_timeout =
-                              kz_util:to_integer(
+                              kz_term:to_integer(
                                 kz_json:find(<<"interdigit_timeout">>
                                             ,[JObj, Data]
                                             ,kapps_call_command:default_interdigit_timeout()

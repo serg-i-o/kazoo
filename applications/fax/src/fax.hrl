@@ -1,9 +1,9 @@
 -ifndef(FAX_HRL).
 
 %% Typical includes needed
--include_lib("kazoo/include/kz_types.hrl").
--include_lib("kazoo/include/kz_log.hrl").
--include_lib("kazoo/include/kz_databases.hrl").
+-include_lib("kazoo_stdlib/include/kz_types.hrl").
+-include_lib("kazoo_stdlib/include/kz_log.hrl").
+-include_lib("kazoo_stdlib/include/kz_databases.hrl").
 
 -define(APP_NAME, <<"fax">>).
 -define(APP_VERSION, <<"4.0.0">>).
@@ -21,11 +21,10 @@
                                                                 ]}
                                    ]).
 
--record(fax_storage, {
-          id :: api_binary()
+-record(fax_storage, {id :: api_binary()
                      ,attachment_id :: api_binary()
                      ,db :: api_binary()
-         }).
+                     }).
 -type fax_storage() :: #fax_storage{}.
 
 -type fax_job() :: kz_json:object().
@@ -64,12 +63,11 @@
                                        ,<<"application/vnd.ms-powerpoint">>
                                        ]).
 
--define(DEFAULT_DENIED_CONTENT_TYPES
-       ,[kz_json:from_list([{<<"prefix">>, <<"image/">>}])]
-       ).
+-define(DEFAULT_DENIED_CONTENT_TYPES, [kz_json:from_list([{<<"prefix">>, <<"image/">>}])
+                                      ]).
 
 -define(SMTP_MSG_MAX_SIZE, kapps_config:get_integer(?CONFIG_CAT, <<"smtp_max_msg_size">>, 10485670)).
--define(SMTP_EXTENSIONS, [{"SIZE", kz_util:to_list(?SMTP_MSG_MAX_SIZE)}]).
+-define(SMTP_EXTENSIONS, [{"SIZE", kz_term:to_list(?SMTP_MSG_MAX_SIZE)}]).
 -define(SMTP_CALLBACK_OPTIONS, {'callbackoptions', ['extensions', ?SMTP_EXTENSIONS]}).
 -define(SMTP_PORT, kapps_config:get_integer(?CONFIG_CAT, <<"smtp_port">>, 19025)).
 
@@ -78,6 +76,41 @@
 -define(FAX_OUTBOUND_SERVER(AccountId), <<"fax_outbound_", AccountId/binary>>).
 
 -define(PORT, kapps_config:get_integer(?CONFIG_CAT, <<"port">>, 30950)).
+
+-define(DEFAULT_CONVERT_PDF_CMD
+       ,<<"/usr/bin/gs -q "
+          "-r204x98 "
+          "-g1728x1078 "
+          "-dNOPAUSE "
+          "-dBATCH "
+          "-dSAFER "
+          "-sDEVICE=tiffg3 "
+          "-sOutputFile=~s -- ~s > /dev/null 2>&1"
+          "&& echo -n success"
+        >>).
+-define(CONVERT_IMAGE_CMD, <<"convert -density 204x98 "
+                             "-units PixelsPerInch "
+                             "-size 1728x1078 ~s ~s > /dev/null 2>&1"
+                             "&& echo -n success"
+                           >>).
+-define(CONVERT_OO_DOC_CMD, <<"unoconv -c ~s -f pdf --stdout ~s "
+                              "| /usr/bin/gs -q "
+                              "-r204x98 "
+                              "-g1728x1078 "
+                              "-dNOPAUSE "
+                              "-dBATCH "
+                              "-dSAFER "
+                              "-sDEVICE=tiffg3 "
+                              "-sOutputFile=~s - > /dev/null 2>&1"
+                              "&& echo -n success"
+                            >>).
+
+-define(CONVERT_IMAGE_COMMAND
+       ,kapps_config:get_binary(?CONFIG_CAT, <<"conversion_image_command">>, ?CONVERT_IMAGE_CMD)).
+-define(CONVERT_OO_COMMAND
+       ,kapps_config:get_binary(?CONFIG_CAT, <<"conversion_openoffice_document_command">>, ?CONVERT_OO_DOC_CMD)).
+-define(CONVERT_PDF_COMMAND
+       ,kapps_config:get_binary(?CONFIG_CAT, <<"conversion_pdf_command">>, ?DEFAULT_CONVERT_PDF_CMD)).
 
 -define(FAX_HRL, 'true').
 -endif.

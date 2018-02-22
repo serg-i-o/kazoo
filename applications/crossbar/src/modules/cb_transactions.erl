@@ -21,7 +21,7 @@
 -include_lib("kazoo_transactions/include/kazoo_transactions.hrl").
 
 -define(CURRENT_BALANCE, <<"current_balance">>).
--define(MONTHLY, <<"monthly_recurring">>).
+-define(MONTHLY, <<"monthly_recurring">>). %% wht_util:monthly_recurring()
 -define(SUBSCRIPTIONS, <<"subscriptions">>).
 -define(CREDIT, <<"credit">>).
 -define(DEBIT, <<"debit">>).
@@ -183,19 +183,13 @@ maybe_create_credit_tansaction(CreditType, Context) ->
     case create_credit_tansaction(CreditType, Context) of
         {'error', _R}=Error ->
             lager:error("failed to create credit transaction : ~p", [_R]),
-            cb_context:add_system_error(
-              'transaction_failed'
-                                       ,kz_json:from_list(
-                                          [{<<"message">>, <<"failed to create credit transaction">>}
-                                          ,{<<"cause">>, kz_util:error_to_binary(Error)}
-                                          ])
-                                       ,Context
-             );
+            Msg = kz_json:from_list(
+                    [{<<"message">>, <<"failed to create credit transaction">>}
+                    ,{<<"cause">>, kz_term:error_to_binary(Error)}
+                    ]),
+            cb_context:add_system_error('transaction_failed', Msg, Context);
         {'ok', Transaction} ->
-            cb_context:set_resp_data(
-              Context
-                                    ,kz_transaction:to_public_json(Transaction)
-             )
+            cb_context:set_resp_data(Context, kz_transaction:to_public_json(Transaction))
     end.
 
 -spec create_credit_tansaction('save'|'service_save', cb_context:context()) ->
@@ -206,11 +200,10 @@ create_credit_tansaction(CreditType, Context) ->
     JObj = cb_context:req_data(Context),
     Amount = kz_json:get_float_value(<<"amount">>, JObj),
     Units = wht_util:dollars_to_units(Amount),
-    Meta =
-        kz_json:from_list(
-          [{<<"auth_account_id">>, cb_context:auth_account_id(Context)}]
-         ),
-    Reason = kz_json:get_value(<<"reason">>, JObj, <<"manual_addition">>),
+    Meta = kz_json:from_list(
+             [{<<"auth_account_id">>, cb_context:auth_account_id(Context)}
+             ]),
+    Reason = kz_json:get_value(<<"reason">>, JObj, wht_util:manual_addition()),
     Description = kz_json:get_value(<<"description">>, JObj),
 
     Routines = [fun(Tr) -> kz_transaction:set_reason(Reason, Tr) end
@@ -218,11 +211,10 @@ create_credit_tansaction(CreditType, Context) ->
                ,fun(Tr) -> kz_transaction:set_metadata(Meta, Tr) end
                ,fun kz_transaction:CreditType/1
                ],
-    lists:foldl(
-      fun(F, Tr) -> F(Tr) end
+    lists:foldl(fun(F, Tr) -> F(Tr) end
                ,kz_transaction:credit(AccountId, Units)
                ,Routines
-     ).
+               ).
 
 %%--------------------------------------------------------------------
 %% @public
@@ -268,7 +260,7 @@ maybe_create_debit_tansaction(Context) ->
               'transaction_failed'
                                        ,kz_json:from_list(
                                           [{<<"message">>, <<"failed to create debit transaction">>}
-                                          ,{<<"cause">>, kz_util:error_to_binary(Error)}
+                                          ,{<<"cause">>, kz_term:error_to_binary(Error)}
                                           ])
                                        ,Context
              );
@@ -291,7 +283,7 @@ create_debit_tansaction(Context) ->
         kz_json:from_list(
           [{<<"auth_account_id">>, cb_context:auth_account_id(Context)}]
          ),
-    Reason = kz_json:get_value(<<"reason">>, JObj, <<"admin_discretion">>),
+    Reason = kz_json:get_value(<<"reason">>, JObj, wht_util:admin_discretion()),
     Description = kz_json:get_value(<<"description">>, JObj),
 
     Routines = [fun(Tr) -> kz_transaction:set_reason(Reason, Tr) end
@@ -322,7 +314,11 @@ validate_transactions(Context, ?HTTP_GET) ->
     end.
 
 validate_transaction(Context, ?CURRENT_BALANCE, ?HTTP_GET) ->
-    Balance = wht_util:units_to_dollars(wht_util:current_balance(cb_context:account_id(Context))),
+    CurrentBalance = case wht_util:current_balance(cb_context:account_id(Context)) of
+                         {'ok', Bal} -> Bal;
+                         {'error', _} -> 0
+                     end,
+    Balance = wht_util:units_to_dollars(CurrentBalance),
     JObj = kz_json:from_list([{<<"balance">>, Balance}]),
     cb_context:setters(Context
                       ,[{fun cb_context:set_resp_status/2, 'success'}
@@ -426,7 +422,10 @@ validate_debit(Context, Amount) ->
         'true' ->
             cb_context:set_resp_status(Context, 'success');
         'false' ->
-            FuturAmount = wht_util:current_account_dollars(AccountId) - Amount,
+            FuturAmount = case wht_util:current_account_dollars(AccountId) of
+                              {'ok', AccBal} -> AccBal - Amount;
+                              {'error', _} -> 0 - Amount
+                          end,
             case FuturAmount < 0 of
                 'false' ->
                     cb_context:set_resp_status(Context, 'success');

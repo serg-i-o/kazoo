@@ -19,9 +19,9 @@
 
 -export([error_empty/0]).
 
--include_lib("kazoo/include/kz_types.hrl").
--include_lib("kazoo/include/kz_log.hrl").
--include_lib("kazoo/include/kz_databases.hrl").
+-include_lib("kazoo_stdlib/include/kz_types.hrl").
+-include_lib("kazoo_stdlib/include/kz_log.hrl").
+-include_lib("kazoo_stdlib/include/kz_databases.hrl").
 
 -define(CONFIG_CAT, <<"kazoo">>).
 -define(TEMPLATE_DOC_ID(Type), <<"pdf.", Type/binary>>).
@@ -64,7 +64,6 @@ find_template(AccountId, Props, AttachmentId) ->
 %% @end
 %%--------------------------------------------------------------------
 -spec generate(ne_binary(), kz_proplist()) -> ret().
--spec generate(ne_binary(), kz_proplist(), ne_binary()) -> ret().
 generate(AccountId, Props) ->
     case find_template(AccountId, Props) of
         {'error', _R}=Error -> Error;
@@ -72,13 +71,14 @@ generate(AccountId, Props) ->
             generate(AccountId, Props, Template)
     end.
 
+-spec generate(ne_binary(), kz_proplist(), ne_binary()) -> ret().
 generate(Account, Props, Template) ->
     AccountId = kz_util:format_account_id(Account, 'raw'),
     DocType = props:get_first_defined([<<"type">>, <<"pvt_type">>], Props),
 
-    Rand = kz_util:rand_hex_binary(5),
+    Rand = kz_binary:rand_hex(5),
     %% TODO: fix that atom creation!
-    Renderer = kz_util:to_atom(<<"kz_pdf_", DocType/binary, "_", Rand/binary>>, 'true'),
+    Renderer = kz_term:to_atom(<<"kz_pdf_", DocType/binary, "_", Rand/binary>>, 'true'),
     {'ok', Renderer} = kz_template:compile(Template, Renderer),
     {'ok', Rendered} = kz_template:render(Renderer, Props),
 
@@ -91,15 +91,13 @@ generate(Account, Props, Template) ->
 
     'ok' = file:write_file(HTMLFile, Rendered),
 
-    RawCmd = kapps_config:get(?PDF_CONFIG_CAT, <<"html2pdf">>, ?HTML_TO_PDF),
-    Cmd = lists:foldl(fun cmd_fold/2
-                     ,RawCmd
-                     ,[{<<"\$pdf\$">>, PDFFile}
-                      ,{<<"\$html\$">>, HTMLFile}
-                      ]
-                     ),
+    RawCmd = kapps_config:get_ne_binary(?PDF_CONFIG_CAT, <<"html2pdf">>, ?HTML_TO_PDF),
+    Targets = [{<<"\$pdf\$">>, PDFFile}
+              ,{<<"\$html\$">>, HTMLFile}
+              ],
+    Cmd = lists:foldl(fun cmd_fold/2, RawCmd, Targets),
     lager:debug("exec ~s", [Cmd]),
-    case os:cmd(kz_util:to_list(Cmd)) of
+    case os:cmd(kz_term:to_list(Cmd)) of
         [] -> file:read_file(PDFFile);
         _R ->
             lager:error("failed to exec ~s: ~s", [Cmd, _R]),

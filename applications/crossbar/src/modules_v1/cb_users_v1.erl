@@ -200,7 +200,7 @@ process_billing(Context, [{<<"users">>, _}|_], _Verb) ->
         'true' -> Context
     catch
         'throw':{Error, Reason} ->
-            crossbar_util:response('error', kz_util:to_binary(Error), 500, Reason, Context)
+            crossbar_util:response('error', kz_term:to_binary(Error), 500, Reason, Context)
     end;
 process_billing(Context, _Nouns, _Verb) -> Context.
 
@@ -311,8 +311,8 @@ delete(Context, _Id) ->
     crossbar_doc:delete(Context).
 
 -spec patch(cb_context:context(), path_token()) -> cb_context:context().
-patch(Context, _Id) ->
-    crossbar_doc:save(Context).
+patch(Context, Id) ->
+    post(Context, Id).
 
 %%--------------------------------------------------------------------
 %% @private
@@ -321,14 +321,11 @@ patch(Context, _Id) ->
 %%--------------------------------------------------------------------
 -spec get_channels(cb_context:context()) -> cb_context:context().
 get_channels(Context) ->
-    Realm = kz_util:get_account_realm(cb_context:account_id(Context)),
+    Realm = kz_account:fetch_realm(cb_context:account_id(Context)),
     Usernames = [Username
                  || JObj <- cb_context:doc(Context),
-                    (Username = kz_device:sip_username(
-                                  kz_json:get_value(<<"doc">>, JObj)
-                                 )
-                    )
-                        =/= 'undefined'
+                    Username <- [kz_device:sip_username(kz_json:get_value(<<"doc">>, JObj))],
+                    Username =/= undefined
                 ],
     Req = [{<<"Realm">>, Realm}
           ,{<<"Usernames">>, Usernames}
@@ -439,7 +436,7 @@ vcard_normalize_type(T) when is_list(T) -> iolist_join(<<";">>, [vcard_normalize
 vcard_normalize_type({T, V}) -> iolist_join(<<"=">>, [T, V]);
 vcard_normalize_type(T) -> T.
 
-                                                %-spec card_field(ne_binary(), kz_json:object()) -> {vcard_type_spec(), vcard_val()}.
+%%-spec card_field(ne_binary(), kz_json:object()) -> {vcard_type_spec(), vcard_val()}.
 card_field(Key, _)
   when Key =:= <<"BEGIN">> ->
     {Key, <<"VCARD">>};
@@ -580,7 +577,7 @@ prepare_username(UserId, Context) ->
     case kz_json:get_ne_value(<<"username">>, JObj) of
         'undefined' -> check_user_name(UserId, Context);
         Username ->
-            JObj1 = kz_json:set_value(<<"username">>, kz_util:to_lower_binary(Username), JObj),
+            JObj1 = kz_json:set_value(<<"username">>, kz_term:to_lower_binary(Username), JObj),
             check_user_name(UserId, cb_context:set_req_data(Context, JObj1))
     end.
 
@@ -591,20 +588,15 @@ check_user_name(UserId, Context) ->
     AccountDb = cb_context:account_db(Context),
     case is_username_unique(AccountDb, UserId, UserName) of
         'true' ->
-            lager:debug("user name ~p is unique", [UserName]),
+            lager:debug("user name ~s is unique", [UserName]),
             check_emergency_caller_id(UserId, Context);
         'false' ->
-            Context1 =
-                cb_context:add_validation_error(
-                  [<<"username">>]
-                                               ,<<"unique">>
-                                               ,kz_json:from_list([
-                                                                   {<<"message">>, <<"User name already in use">>}
-                                                                  ,{<<"cause">>, UserName}
-                                                                  ])
-                                               ,Context
-                 ),
-            lager:error("user name ~p is already used", [UserName]),
+            lager:error("user name ~s is already in use", [UserName]),
+            Msg = kz_json:from_list(
+                    [{<<"message">>, <<"User name already in use">>}
+                    ,{<<"cause">>, UserName}
+                    ]),
+            Context1 = cb_context:add_validation_error([<<"username">>], <<"unique">>, Msg, Context),
             check_emergency_caller_id(UserId, Context1)
     end.
 
@@ -663,7 +655,7 @@ maybe_validate_username(UserId, Context) ->
                           CurrentJObj ->
                               kz_json:get_ne_value(<<"username">>, CurrentJObj, NewUsername)
                       end,
-    case kz_util:is_empty(NewUsername)
+    case kz_term:is_empty(NewUsername)
         orelse CurrentUsername =:= NewUsername
         orelse username_doc_id(NewUsername, Context)
     of
@@ -674,15 +666,11 @@ maybe_validate_username(UserId, Context) ->
             manditory_rehash_creds(UserId, NewUsername, Context);
         %% updated user name to existing, collect any further errors...
         _Else ->
-            C = cb_context:add_validation_error(
-                  <<"username">>
-                                               ,<<"unique">>
-                                               ,kz_json:from_list([
-                                                                   {<<"message">>, <<"User name is not unique for this account">>}
-                                                                  ,{<<"cause">>, NewUsername}
-                                                                  ])
-                                               ,Context
-                 ),
+            Msg = kz_json:from_list(
+                    [{<<"message">>, <<"User name is not unique for this account">>}
+                    ,{<<"cause">>, NewUsername}
+                    ]),
+            C = cb_context:add_validation_error(<<"username">>, <<"unique">>, Msg, Context),
             manditory_rehash_creds(UserId, NewUsername, C)
     end.
 
@@ -704,28 +692,20 @@ maybe_rehash_creds(UserId, Username, Context) ->
 manditory_rehash_creds(UserId, Username, Context) ->
     case kz_json:get_ne_value(<<"password">>, cb_context:doc(Context)) of
         'undefined' ->
-            cb_context:add_validation_error(
-              <<"password">>
-                                           ,<<"required">>
-                                           ,kz_json:from_list([
-                                                               {<<"message">>, <<"The password must be provided when updating the user name">>}
-                                                              ])
-                                           ,Context
-             );
+            Msg = kz_json:from_list(
+                    [{<<"message">>, <<"The password must be provided when updating the user name">>}
+                    ]),
+            cb_context:add_validation_error(<<"password">>, <<"required">>, Msg, Context);
         Password -> rehash_creds(UserId, Username, Password, Context)
     end.
 
 -spec rehash_creds(api_binary(), api_binary(), ne_binary(), cb_context:context()) ->
                           cb_context:context().
 rehash_creds(_UserId, 'undefined', _Password, Context) ->
-    cb_context:add_validation_error(
-      <<"username">>
-                                   ,<<"required">>
-                                   ,kz_json:from_list([
-                                                       {<<"message">>, <<"The user name must be provided when updating the password">>}
-                                                      ])
-                                   ,Context
-     );
+    Msg = kz_json:from_list(
+            [{<<"message">>, <<"The user name must be provided when updating the password">>}
+            ]),
+    cb_context:add_validation_error(<<"username">>, <<"required">>, Msg, Context);
 rehash_creds(_UserId, Username, Password, Context) ->
     lager:debug("password set on doc, updating hashes for ~s", [Username]),
     {MD5, SHA1} = cb_modules_util:pass_hashes(Username, Password),
@@ -747,7 +727,7 @@ username_doc_id(Username, Context) ->
 username_doc_id(_, _, 'undefined') ->
     'undefined';
 username_doc_id(Username, Context, _AccountDb) ->
-    Username = kz_util:to_lower_binary(Username),
+    Username = kz_term:to_lower_binary(Username),
     Context1 = crossbar_doc:load_view(?LIST_BY_USERNAME, [{'key', Username}], Context),
     case cb_context:resp_status(Context1) =:= 'success'
         andalso cb_context:doc(Context1)
@@ -759,7 +739,7 @@ username_doc_id(Username, Context, _AccountDb) ->
 %%--------------------------------------------------------------------
 %% @private
 %% @doc
-%% Normalizes the resuts of a view
+%% Normalizes the results of a view
 %% @end
 %%--------------------------------------------------------------------
 -spec(normalize_view_results(kz_json:object(), kz_json:objects()) -> kz_json:objects()).

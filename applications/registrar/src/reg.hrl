@@ -1,7 +1,7 @@
 -ifndef(REG_HRL).
--include_lib("kazoo/include/kz_types.hrl").
--include_lib("kazoo/include/kz_log.hrl").
--include_lib("kazoo/include/kz_databases.hrl").
+-include_lib("kazoo_stdlib/include/kz_types.hrl").
+-include_lib("kazoo_stdlib/include/kz_log.hrl").
+-include_lib("kazoo_stdlib/include/kz_databases.hrl").
 
 -define(APP_NAME, <<"registrar">>).
 -define(APP_VERSION, <<"4.0.0">>).
@@ -32,7 +32,6 @@
                    ,request :: api_object()
                    }).
 -type auth_user() :: #auth_user{}.
-
 
 -define(GSM_CACHED_METHOD, <<"gsm_cached">>).
 -define(GSM_A3A8_METHOD, <<"gsm_a3a8">>).

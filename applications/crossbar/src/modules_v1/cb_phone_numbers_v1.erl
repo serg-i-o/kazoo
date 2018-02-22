@@ -50,8 +50,6 @@
 -define(PHONE_NUMBERS_CONFIG_CAT, <<"crossbar.phone_numbers">>).
 -define(FIND_NUMBER_SCHEMA, "{\"$schema\": \"http://json-schema.org/draft-03/schema#\", \"id\": \"http://json-schema.org/draft-03/schema#\", \"properties\": {\"prefix\": {\"required\": \"true\", \"type\": \"string\", \"minLength\": 3, \"maxLength\": 10}, \"quantity\": {\"default\": 1, \"type\": \"integer\", \"minimum\": 1}}}").
 
--define(MAX_TOKENS, kapps_config:get_integer(?PHONE_NUMBERS_CONFIG_CAT, <<"activations_per_day">>, 100)).
-
 -define(PREFIX, <<"prefix">>).
 -define(COUNTRY, <<"country">>).
 -define(OFFSET, <<"offset">>).
@@ -146,7 +144,7 @@ billing(Context, _, [{<<"phone_numbers">>, _}|_]) ->
         'true' -> Context
     catch
         'throw':{Error, Reason} ->
-            crossbar_util:response('error', kz_util:to_binary(Error), 500, Reason, Context)
+            crossbar_util:response('error', kz_term:to_binary(Error), 500, Reason, Context)
     end;
 billing(Context, _Verb, _Nouns) ->
     Context.
@@ -253,8 +251,7 @@ post(Context, Number) ->
 -spec put(cb_context:context(), path_token()) -> cb_context:context().
 -spec put(cb_context:context(), path_token(), path_token()) -> cb_context:context().
 put(Context, ?COLLECTION) ->
-    Results = collection_process(Context),
-    set_response(Results, <<>>, Context);
+    set_response(collection_process(Context), <<>>, Context);
 put(Context, Number) ->
     Options = [{'assign_to', cb_context:account_id(Context)}
               ,{'auth_by', cb_context:auth_account_id(Context)}
@@ -264,8 +261,7 @@ put(Context, Number) ->
     set_response(Result, Number, Context).
 
 put(Context, ?COLLECTION, ?ACTIVATE) ->
-    Results = collection_process(Context, ?ACTIVATE),
-    set_response(Results, <<>>, Context);
+    set_response(collection_process(Context,?ACTIVATE), <<>>, Context);
 put(Context, Number, ?ACTIVATE) ->
     Options = [{'auth_by', cb_context:auth_account_id(Context)}
               ,{'public_fields', cb_context:doc(Context)}
@@ -294,8 +290,7 @@ put(Context, Number, ?PORT) ->
 
 -spec delete(cb_context:context(), path_token()) -> cb_context:context().
 delete(Context, ?COLLECTION) ->
-    Results = collection_process(Context),
-    set_response(Results, <<>>, Context);
+    set_response(collection_process(Context), <<>>, Context);
 delete(Context, Number) ->
     Options = [{'auth_by', cb_context:auth_account_id(Context)}
               ],
@@ -308,7 +303,7 @@ summary(Context) ->
     ListOfNumProps = cb_context:resp_data(Context1),
     NumbersJObj = lists:foldl(fun kz_json:merge_jobjs/2, kz_json:new(), ListOfNumProps),
     Service = kz_services:fetch(cb_context:account_id(Context)),
-    Quantity = kz_services:cascade_category_quantity(<<"phone_numbers">>, [], Service),
+    Quantity = kz_services:cascade_category_quantity(<<"phone_numbers">>, Service),
     NewRespData = kz_json:from_list([{<<"numbers">>, NumbersJObj}
                                     ,{<<"casquade_quantity">>, Quantity}
                                     ]),
@@ -355,7 +350,7 @@ identify(Context, Number) ->
                                        ,Context
              );
         {'error', E} ->
-            set_response({kz_util:to_binary(E), <<>>}, Number, Context);
+            set_response({kz_term:to_binary(E), <<>>}, Number, Context);
         {'ok', AccountId, Options} ->
             JObj = kz_json:set_values([{<<"account_id">>, AccountId}
                                       ,{<<"number">>, knm_number_options:number(Options)}
@@ -387,13 +382,13 @@ read(Context, Number) ->
 %%--------------------------------------------------------------------
 -spec find_numbers(cb_context:context()) -> cb_context:context().
 find_numbers(Context) ->
-    AccountId = cb_context:auth_account_id(Context),
+    AuthAccountId = cb_context:auth_account_id(Context),
     QS = cb_context:query_string(Context),
     Country = kz_json:get_ne_value(?COUNTRY, QS, ?KNM_DEFAULT_COUNTRY),
-    Prefix = kz_util:remove_white_spaces(kz_json:get_ne_value(?PREFIX, QS)),
+    Prefix = kz_binary:remove_white_spaces(kz_json:get_ne_value(?PREFIX, QS)),
     Offset = kz_json:get_integer_value(?OFFSET, QS, 0),
     Token = cb_context:auth_token(Context),
-    HashKey = <<AccountId/binary, "-", Token/binary>>,
+    HashKey = <<AuthAccountId/binary, "-", Token/binary>>,
     Hash = kz_base64url:encode(crypto:hash(sha, HashKey)),
     QueryId = list_to_binary([Country, "-", Prefix, "-", Hash]),
     Dialcode = knm_util:prefix_for_country(Country),
@@ -405,8 +400,8 @@ find_numbers(Context) ->
                 ,{'country', Country}
                 ,{'dialcode', Dialcode}
                 ,{'offset', Offset}
-                ,{'account_id', AccountId}
-                ,{'reseller_id', cb_context:reseller_id(Context)}
+                ,{'account_id', AuthAccountId}
+                ,{'reseller_id', kz_services:find_reseller_id(AuthAccountId)}
                 ,{'query_id', QueryId}
                 ]),
     OnSuccess =
@@ -418,7 +413,7 @@ find_numbers(Context) ->
                                    ])
         end,
     Schema = kz_json:decode(?FIND_NUMBER_SCHEMA),
-    Context1 = cb_context:set_req_data(Context, knm_carriers:options_to_jobj(Options)),
+    Context1 = cb_context:set_req_data(Context, kz_json:from_list(Options)),
     cb_context:validate_request_data(Schema, Context1, OnSuccess).
 
 %%--------------------------------------------------------------------
@@ -481,10 +476,14 @@ set_response({'error', Data}, _, Context) ->
             crossbar_util:response_400(<<"client error">>, Data, Context)
     end;
 set_response({Error, Reason}, _, Context) ->
-    crossbar_util:response('error', kz_util:to_binary(Error), 500, Reason, Context);
-set_response(_Else, _, Context) ->
-    lager:debug("unexpected response: ~p", [_Else]),
-    cb_context:add_system_error('unspecified_fault', Context).
+    crossbar_util:response('error', kz_term:to_binary(Error), 500, Reason, Context);
+set_response(CollectionJObjOrUnkown, _, Context) ->
+    case kz_json:is_json_object(CollectionJObjOrUnkown) of
+        true -> crossbar_util:response(CollectionJObjOrUnkown, Context);
+        false ->
+            lager:debug("unexpected response: ~p", [CollectionJObjOrUnkown]),
+            cb_context:add_system_error('unspecified_fault', Context)
+    end.
 
 -spec collection_process(cb_context:context()) -> kz_json:object().
 -spec collection_process(cb_context:context(), ne_binary() | ne_binaries()) -> kz_json:object().

@@ -1,5 +1,5 @@
 %%%-------------------------------------------------------------------
-%%% @copyright (C) 2013-2017, 2600Hz
+%%% @copyright (C) 2015-2017, 2600Hz
 %%% @doc
 %%%
 %%% @end
@@ -19,7 +19,7 @@
 -export([bind_q/2, unbind_q/2]).
 -export([declare_exchanges/0]).
 
--include_lib("kazoo/include/kz_types.hrl").
+-include_lib("kazoo_stdlib/include/kz_types.hrl").
 
 -define(LOOKUP_REQ_HEADERS, [<<"Call-ID">>]).
 -define(OPTIONAL_LOOKUP_REQ_HEADERS, []).

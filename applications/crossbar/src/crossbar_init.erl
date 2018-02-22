@@ -36,7 +36,7 @@ api_version_constraint() ->
 
 -spec api_version_constraint(ne_binary()) -> boolean().
 api_version_constraint(<<"v", ApiVersion/binary>>) ->
-    try kz_util:to_integer(ApiVersion) of
+    try kz_term:to_integer(ApiVersion) of
         _Int -> lager:debug("routing to version ~b", [_Int]), 'true'
     catch
         _:_ -> lager:debug("not routing to version ~s", [ApiVersion]), 'false'
@@ -51,6 +51,11 @@ api_version_constraint(NotVersion) ->
 -spec start_link() -> startlink_ret().
 start_link() ->
     kz_util:put_callid(?LOG_SYSTEM_ID),
+
+    _ = [
+         lager:warning("System config ~s validation error:~p", [Config, Error])
+         || {Config, Error} <- kapps_maintenance:validate_system_configs()
+        ],
 
     Dispatch = cowboy_router:compile(crossbar_routes()),
 
@@ -76,7 +81,7 @@ is_versioned_module(Module) ->
 start_mod(CBMod) when is_binary(CBMod) ->
     case is_versioned_module(CBMod) of
         'true' -> {'error', 'version_supplied'};
-        'false' -> start_mod(kz_util:to_atom(CBMod, 'true'))
+        'false' -> start_mod(kz_term:to_atom(CBMod, 'true'))
     end;
 start_mod(CBMod) when is_atom(CBMod) ->
     try CBMod:init() of
@@ -87,7 +92,7 @@ start_mod(CBMod) when is_atom(CBMod) ->
             maybe_start_mod_versions(?VERSION_SUPPORTED, CBMod)
     end;
 start_mod(CBMod) ->
-    start_mod(kz_util:to_binary(CBMod)).
+    start_mod(kz_term:to_binary(CBMod)).
 
 -spec maybe_start_mod_versions(ne_binaries(), ne_binary() | atom()) -> 'ok'.
 maybe_start_mod_versions(Versions, Mod) ->
@@ -98,10 +103,10 @@ maybe_start_mod_versions(Versions, Mod) ->
 
 -spec start_mod_version(ne_binary(), ne_binary() | atom()) -> boolean().
 start_mod_version(Version, Mod) ->
-    Module = <<(kz_util:to_binary(Mod))/binary
-               , "_", (kz_util:to_binary(Version))/binary
+    Module = <<(kz_term:to_binary(Mod))/binary
+               , "_", (kz_term:to_binary(Version))/binary
              >>,
-    CBMod = kz_util:to_atom(Module, 'true'),
+    CBMod = kz_term:to_atom(Module, 'true'),
     try CBMod:init() of
         _ ->
             lager:debug("module ~s version ~s successfully loaded", [Mod, Version]),
@@ -117,7 +122,7 @@ start_mod_version(Version, Mod) ->
 %%--------------------------------------------------------------------
 -spec stop_mod(atom() | string() | binary()) -> 'ok'.
 stop_mod(CBMod) when not is_atom(CBMod) ->
-    stop_mod(kz_util:to_atom(CBMod, 'true'));
+    stop_mod(kz_term:to_atom(CBMod, 'true'));
 stop_mod(CBMod) ->
     crossbar_bindings:flush_mod(CBMod),
     case erlang:function_exported(CBMod, 'stop', 0) of
@@ -143,10 +148,10 @@ maybe_stop_mod_versions(Versions, Mod) ->
 
 -spec stop_mod_version(ne_binary(), ne_binary() | atom()) -> boolean().
 stop_mod_version(Version, Mod) ->
-    Module = <<(kz_util:to_binary(Mod))/binary
-               , "_", (kz_util:to_binary(Version))/binary
+    Module = <<(kz_term:to_binary(Mod))/binary
+               , "_", (kz_term:to_binary(Version))/binary
              >>,
-    CBMod = kz_util:to_atom(Module, 'true'),
+    CBMod = kz_term:to_atom(Module, 'true'),
     crossbar_bindings:flush_mod(CBMod),
     try CBMod:stop() of
         _ ->
@@ -157,7 +162,6 @@ stop_mod_version(Version, Mod) ->
             lager:warning("failed to stop module ~s version ~s: ~p", [Mod, Version, _R]),
             'false'
     end.
-
 
 %%--------------------------------------------------------------------
 %% @private
@@ -218,52 +222,41 @@ maybe_start_plaintext(Dispatch) ->
 
 -spec get_binding_ip() -> inet:ip_address().
 get_binding_ip() ->
-    IsIPv6Enabled = is_ip_family_supported("localhost", 'inet6'),
-    IsIPv4Enabled = is_ip_family_supported("localhost", 'inet'),
+    IsIPv6Enabled = kz_network_utils:is_ip_family_supported('inet6'),
+    IsIPv4Enabled = kz_network_utils:is_ip_family_supported('inet'),
 
-    %% expilicty convert to list to allow save the default value in human readable value
-    IP = kz_util:to_list(kapps_config:get_binary(?CONFIG_CAT, <<"ip">>, default_ip())),
+    DefaultIP = kz_network_utils:default_binding_all_ip(),
 
-    {'ok', DefaultIP} = inet:parse_address(kz_util:to_list(default_ip(IsIPv6Enabled))),
-    {'ok', DefaultIPv4} = inet:parse_address(kz_util:to_list(default_ip('false'))),
-    {'ok', DefaultIPv6} = inet:parse_address(kz_util:to_list(default_ip('true'))),
+    IP = kapps_config:get_string(?CONFIG_CAT, <<"ip">>, DefaultIP),
+
+    {'ok', DefaultIPAddress} = inet:parse_address(DefaultIP),
 
     case inet:parse_ipv6strict_address(IP) of
         {'ok', IPv6} when IsIPv6Enabled -> IPv6;
-        {'ok', _} when IsIPv4Enabled ->
-            lager:warning("address ~s is ipv6, but ipv6 is not supported by the system, enforcing default ipv4 ~s"
-                         ,[IP, inet:ntoa(DefaultIPv4)]
+        {'ok', _} ->
+            lager:warning("address ~s is ipv6, but ipv6 is not supported by the system, enforcing default ip ~s"
+                         ,[IP, inet:ntoa(DefaultIPAddress)]
                          ),
-            DefaultIPv4;
+            DefaultIPAddress;
         {'error', 'einval'} ->
             case inet:parse_ipv4strict_address(IP) of
                 {'ok', IPv4} when IsIPv4Enabled -> IPv4;
-                {'ok', _} when IsIPv6Enabled->
-                    lager:warning("address ~s is ipv4, but ipv4 is not supported by the system, enforcing default ipv6 ~s"
-                                 ,[IP, inet:ntoa(DefaultIPv6)]
+                {'ok', _} when IsIPv6Enabled ->
+                    lager:warning("address ~s is ipv4, but ipv4 is not supported by the system, enforcing default ip ~s"
+                                 ,[IP, inet:ntoa(DefaultIPAddress)]
                                  ),
-                    DefaultIPv6;
+                    DefaultIPAddress;
+                {'ok', _} ->
+                    lager:warning("address ~s is ipv4, but system reports that ipv4 and ipv6 are not supported by the system, enforcing default ip ~s"
+                                 ,[IP, inet:ntoa(DefaultIPAddress)]
+                                 ),
+                    DefaultIPAddress;
                 {'error', 'einval'} ->
                     lager:warning("address ~s is not a valid ipv6 or ipv4 address, enforcing default ip ~s"
-                                 ,[IP, inet:ntoa(DefaultIP)]
+                                 ,[IP, inet:ntoa(DefaultIPAddress)]
                                  ),
-                    DefaultIP
+                    DefaultIPAddress
             end
-    end.
-
--spec default_ip() -> ne_binary().
-default_ip() ->
-    default_ip(is_ip_family_supported("localhost", 'inet6')).
-
--spec default_ip(boolean()) -> ne_binary().
-default_ip('true') -> <<"::">>;
-default_ip('false') -> <<"0.0.0.0">>.
-
--spec is_ip_family_supported(string(), inet:address_family()) -> boolean().
-is_ip_family_supported(Host, Family) ->
-    case inet:getaddr(Host, Family) of
-        {'ok', _} -> 'true';
-        {'error', _} -> 'false'
     end.
 
 -spec maybe_start_ssl(cowboy_router:dispatch_rules()) -> 'ok'.
@@ -275,7 +268,7 @@ maybe_start_ssl(Dispatch) ->
 
 -spec start_ssl(cowboy_router:dispatch_rules()) -> 'ok'.
 start_ssl(Dispatch) ->
-    try ssl_opts(code:lib_dir('crossbar')) of
+    try ssl_opts(code:lib_dir(?APP)) of
         SSLOpts ->
             lager:debug("trying to start SSL API server"),
             _SslStarted = ssl:start(),

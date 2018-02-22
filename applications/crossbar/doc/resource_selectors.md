@@ -1,49 +1,27 @@
-# Resource selectors
+### Resource Selectors
 
-## About
+#### About Resource Selectors
 
-Resource selectors is a new way to route Offnet-calls. Old way used regex rules and "flags" for select proper resources (gateways). With new "resource selectors" you have several small modules, which can be organaized in "chanin" (rules).
+Resource selectors is a new way to route Offnet-calls. Old way used regex rules and "flags" for select proper resources (gateways). With new "resource selectors" you have several small modules, which can be organaized in "chain" (rules).
 
 #### Schema
 
 Schema for resource selector document
 
+
+
 Key | Description | Type | Default | Required
 --- | ----------- | ---- | ------- | --------
-`name` | Selector name | `string` |   | `true`
-`resource` | Resource ID | `string` |   | `true`
-`selector` | Selector data | `string` |   | `true`
-`start_time` | Start time (gregorian seconds) | `integer` |   | `false`
-`stop_time` | Stop time (gregorian seconds) | `integer` |   | `false`
-`value` | Extra selector data | `string` |   | `false`
+`name` | Selector name | `string()` |   | `true`
+`resource` | Resource ID | `string()` |   | `true`
+`selector` | Selector data | `string()` |   | `true`
+`start_time` | Start time (gregorian seconds) | `integer()` |   | `false`
+`stop_time` | Stop time (gregorian seconds) | `integer()` |   | `false`
+`value` | Extra selector data | `string()` |   | `false`
 
 
 
-
-## Rules
-
-Rules is array of JSON objects. Each object contain one item where key is name of the module, and value is another object, with parameters for that module.
-
-Example:
-
-```json
-{
-    "filter_list": {
-        "value_a": "request:Flags",
-        "value_b": "resource:flags",
-        "action": "keep"
-    }
-}
-```
-
-here we call modue `filter_list` (which filter resources comparing 2 lists).
-More info about modules and their parameters can be found [here](https://github.com/2600hz/kazoo/blob/master/applications/stepswitch/doc/resource_selectors.md).
-
-Rules can be managed via `http://{IP}:8000/v2/resource_selectors` or `http://{IP}:8000/v2/accounts/{ACCOUNT_ID}/resource_selectors/rules`
-
-Rules storred in `resource_selector_rules` file in Account database. System-wide rules is stored in Master-Account database, so `http://{IP}:8000/v2/resource_selectors/rules` is equal to `http://{IP}:8000/v2/accounts/{MASTER_ACCOUNT_ID}/resource_selectors/rules`
-
-### Show rules
+#### Fetch
 
 > GET /v2/resource_selectors/rules
 
@@ -100,7 +78,7 @@ curl -X GET \
 }
 ```
 
-### Update rules
+#### Update rules
 
 > POST /v2/resource_selectors/rules
 
@@ -138,7 +116,7 @@ curl -X POST \
 }
 ```
 
-## Database selectors
+### Database selectors
 
 Database selectors - selectors stored in special database. Name of this database `account/XX/XX/XXXXXXXXXXXXXXXXXXXXXXXXXXXX-selectors`, where `XXX...XXX` - Account ID. System-wide selectors database use Master Account ID.
 
@@ -332,4 +310,3 @@ CSV columns:
  * stat_time
  * stop_time
  * value
-

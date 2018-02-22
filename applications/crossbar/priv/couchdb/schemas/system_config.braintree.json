@@ -14,12 +14,12 @@
             "type": "boolean"
         },
         "default_environment": {
-            "default": [],
+            "default": "",
             "description": "braintree default environment",
             "type": "string"
         },
         "default_merchant_id": {
-            "default": [],
+            "default": "",
             "description": "braintree default merchant id",
             "type": "string"
         },
@@ -34,12 +34,12 @@
             "type": "string"
         },
         "max_amount": {
-            "default": 200.0,
+            "default": 200,
             "description": "braintree maximum amount",
             "type": "number"
         },
         "min_amount": {
-            "default": 5.0,
+            "default": 5,
             "description": "braintree minimum amount",
             "type": "number"
         },

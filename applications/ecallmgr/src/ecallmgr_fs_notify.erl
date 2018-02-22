@@ -97,7 +97,7 @@ resp_to_probe(State, User, Realm) ->
     PresenceId = <<User/binary, "@", Realm/binary>>,
     PresenceUpdate = [{<<"Presence-ID">>, PresenceId}
                      ,{<<"State">>, State}
-                     ,{<<"Call-ID">>, kz_util:to_hex_binary(crypto:hash(md5, PresenceId))}
+                     ,{<<"Call-ID">>, kz_term:to_hex_binary(crypto:hash(md5, PresenceId))}
                       | kz_api:default_headers(?APP_NAME, ?APP_VERSION)
                      ],
     kz_amqp_worker:cast(PresenceUpdate, fun kapi_presence:publish_update/1).
@@ -106,32 +106,28 @@ resp_to_probe(State, User, Realm) ->
 check_sync_api(JObj, _Props) ->
     'true' = kapi_switch:check_sync_v(JObj),
     kz_util:put_callid(JObj),
-    check_sync(kapi_switch:check_sync_username(JObj)
-              ,kapi_switch:check_sync_realm(JObj)
-              ).
+    check_sync(kapi_switch:check_sync_username(JObj), kapi_switch:check_sync_realm(JObj)).
 
 -spec check_sync(ne_binary(), ne_binary()) -> 'ok'.
 check_sync(Username, Realm) ->
     lager:info("looking up registration information for ~s@~s", [Username, Realm]),
     case ecallmgr_registrar:lookup_registration(Realm, Username) of
         {'error', 'not_found'} ->
-            lager:warning("failed to find contact for ~s@~s, not sending check-sync", [Username, Realm]);
+            lager:warning("failed to find contact ~s@~s, not sending check-sync", [Username, Realm]);
         {'ok', Registration} ->
             Contact = kz_json:get_first_defined([<<"Bridge-RURI">>, <<"Contact">>], Registration),
-            [Node|_] = kz_util:shuffle_list(ecallmgr_fs_nodes:connected()),
+            [Node|_] = kz_term:shuffle_list(ecallmgr_fs_nodes:connected()),
             lager:info("calling check sync on ~s for ~s@~s and contact ~s", [Node, Username, Realm, Contact]),
             case ensure_contact_user(Contact, Username, Realm) of
                 'undefined' ->
-                    lager:error("invalid contact : ~p : ~p", [Contact, Registration]);
+                    lager:error("invalid contact ~p: ~p", [Contact, Registration]);
                 Valid -> send_check_sync(Node, Username, Realm, Valid)
             end
     end.
 
 -spec send_check_sync(atom(), ne_binary(), ne_binary(), ne_binary()) -> 'ok'.
 send_check_sync(Node, Username, Realm, Contact) ->
-    To = kzsip_uri:uri(#uri{user=Username, domain=Realm}),
-    From = kzsip_uri:uri(#uri{user=Username, domain=Realm}),
-    AOR = kzsip_uri:ruri(#uri{user=Username, domain=Realm}),
+    AOR = To = From = kzsip_uri:ruri(#uri{user=Username, domain=Realm}),
     SIPHeaders = <<"X-KAZOO-AOR : ", AOR/binary, "\r\n">>,
     Headers = [{"profile", ?DEFAULT_FS_PROFILE}
               ,{"contact-uri", Contact}
@@ -187,7 +183,7 @@ send_mwi_update(JObj, Username, Realm, Node, Registration) ->
                       ,{"from-uri", From}
                       ,{"event-string", "message-summary"}
                       ,{"content-type", "application/simple-message-summary"}
-                      ,{"content-length", kz_util:to_list(length(Body))}
+                      ,{"content-length", kz_term:to_list(length(Body))}
                       ,{"body", lists:flatten(Body)}
                       ],
             Resp = freeswitch:sendevent(Node, 'NOTIFY', Headers),
@@ -210,8 +206,8 @@ register_overwrite(JObj, Props) ->
                                     ,Realm
                   ),
     SipUri = kzsip_uri:uri(#uri{user=Username, domain=Realm}),
-    PrevBody = kz_util:to_list(<<"Replaced-By:", (kz_util:to_binary(NewContact))/binary>>),
-    NewBody = kz_util:to_list(<<"Overwrote:", (kz_util:to_binary(PrevContact))/binary>>),
+    PrevBody = kz_term:to_list(<<"Replaced-By:", (kz_term:to_binary(NewContact))/binary>>),
+    NewBody = kz_term:to_list(<<"Overwrote:", (kz_term:to_binary(PrevContact))/binary>>),
     PrevContactHeaders = [{"profile", ?DEFAULT_FS_PROFILE}
                          ,{"contact", PrevContact}
                          ,{"contact-uri", PrevContact}
@@ -219,7 +215,7 @@ register_overwrite(JObj, Props) ->
                          ,{"from-uri", SipUri}
                          ,{"event-str", "registration-overwrite"}
                          ,{"content-type", "text/plain"}
-                         ,{"content-length", kz_util:to_list(length(PrevBody))}
+                         ,{"content-length", kz_term:to_list(length(PrevBody))}
                          ,{"body", PrevBody}
                          ],
     NewContactHeaders = [{"profile", ?DEFAULT_FS_PROFILE}
@@ -229,7 +225,7 @@ register_overwrite(JObj, Props) ->
                         ,{"from-uri", SipUri}
                         ,{"event-str", "registration-overwrite"}
                         ,{"content-type", "text/plain"}
-                        ,{"content-length", kz_util:to_list(length(NewBody))}
+                        ,{"content-length", kz_term:to_list(length(NewBody))}
                         ,{"body", NewBody}
                         ],
     case PrevContact of

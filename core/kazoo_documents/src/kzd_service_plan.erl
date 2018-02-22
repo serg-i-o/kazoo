@@ -8,6 +8,7 @@
 -module(kzd_service_plan).
 
 -export([new/0
+        ,type/0
         ,account_id/1, account_id/2
         ,overrides/1, overrides/2
         ,merge_overrides/2
@@ -29,6 +30,7 @@
         ,items/2, item/3
 
         ,bookkeepers/1, bookkeeper/2, bookkeeper_ids/1
+        ,grouping_category/1, grouping_category/2
 
         ,all_items_key/0
         ]).
@@ -49,7 +51,11 @@
 -define(BOOKKEEPERS, <<"bookkeepers">>).
 
 -spec new() -> doc().
-new() -> kz_json:new().
+new() ->
+    kz_doc:set_type(kz_json:new(), type()).
+
+-spec type() -> ne_binary().
+type() -> <<"service_plan">>.
 
 -spec all_items_key() -> ne_binary().
 all_items_key() -> ?ALL.
@@ -70,21 +76,16 @@ overrides(Plan, Default) ->
 
 -spec merge_overrides(doc(), kz_json:object()) -> doc().
 merge_overrides(Plan, Overrides) ->
-    kz_json:merge_recursive(Plan, kz_json:from_list([{?PLAN, Overrides}])).
+    kz_json:merge(Plan, kz_json:from_list([{?PLAN, Overrides}])).
 
--spec item_activation_charge(doc(), ne_binary(), ne_binary()) -> api_float().
+-spec item_activation_charge(doc(), ne_binary(), ne_binary()) -> float().
 -spec item_activation_charge(doc(), ne_binary(), ne_binary(), Default) -> float() | Default.
 item_activation_charge(Plan, Category, Item) ->
-    item_activation_charge(Plan, Category, Item, 0).
+    item_activation_charge(Plan, Category, Item, 0.0).
 item_activation_charge(Plan, Category, Item, Default) ->
-    kzd_item_plan:activation_charge(
-      kz_json:get_json_value(
-        [?PLAN, Category, Item]
-                            ,Plan
-                            ,kz_json:new()
-       )
-                                   ,Default
-     ).
+    Path = [?PLAN, Category, Item],
+    ItemConfig = kz_json:get_json_value(Path, Plan, kz_json:new()),
+    kzd_item_plan:activation_charge(ItemConfig, Default).
 
 -spec category_activation_charge(doc(), ne_binary()) -> float().
 -spec category_activation_charge(doc(), ne_binary(), Default) -> float() | Default.
@@ -184,3 +185,10 @@ plan(Plan, Default) ->
 -spec set_plan(doc(), kz_json:object()) -> doc().
 set_plan(Plan, P) ->
     kz_json:set_value(?PLAN, P, Plan).
+
+-spec grouping_category(doc()) -> api_ne_binary().
+-spec grouping_category(doc(), Default) -> ne_binary() | Default.
+grouping_category(ServicePlan) ->
+    grouping_category(ServicePlan, 'undefined').
+grouping_category(ServicePlan, Default) ->
+    kz_json:get_ne_binary_value(<<"category">>, ServicePlan, Default).

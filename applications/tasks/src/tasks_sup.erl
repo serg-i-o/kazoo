@@ -1,5 +1,5 @@
 %%%-------------------------------------------------------------------
-%%% @copyright (C) 2017, 2600Hz
+%%% @copyright (C) 2016-2017, 2600Hz
 %%% @doc
 %%%
 %%% @end
@@ -26,6 +26,9 @@
                   ,?WORKER('knm_number_crawler')
                    %% DB
                   ,?WORKER('kz_account_crawler')
+                   %% Standalone tasks
+                  ,?WORKER('kz_notify_resend')
+                  ,?WORKER('tasks_maint_listener')
                   ]).
 
 %% ===================================================================

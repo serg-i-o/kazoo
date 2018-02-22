@@ -16,16 +16,20 @@
         "call_recording": {
             "properties": {
                 "extension": {
-                    "properties": {
-                        "default": "mp3",
-                        "description": "media extension",
-                        "type": "string"
-                    }
+                    "default": "mp3",
+                    "description": "Default media file format",
+                    "type": "string"
+                },
+                "storage_retry_times": {
+                    "default": 5,
+                    "description": "media storage retry times",
+                    "type": "integer"
                 }
             }
         },
         "default_language": {
-            "description": "media default language"
+            "description": "media default language",
+            "type": "string"
         },
         "fix_media_names": {
             "default": true,
@@ -56,6 +60,10 @@
             "description": "media proxy hostname to be used with haproxy",
             "type": "string"
         },
+        "proxy_ip": {
+            "description": "media proxy ip",
+            "type": "string"
+        },
         "proxy_listeners": {
             "default": 25,
             "description": "media proxy listeners",
@@ -68,13 +76,16 @@
         "proxy_port": {
             "default": 24517,
             "description": "media proxy port",
-            "type": "string"
+            "type": "integer"
         },
         "proxy_store_acls": {
             "default": [
                 "127.0.0.0/24"
             ],
             "description": "media proxy store acls",
+            "items": {
+                "type": "string"
+            },
             "type": "array"
         },
         "proxy_store_authenticate": {
@@ -119,11 +130,6 @@
             "description": "media support account overrides",
             "type": "boolean"
         },
-        "tts_cache": {
-            "default": 3600000,
-            "description": "media tts cache",
-            "type": "integer"
-        },
         "use_https": {
             "default": false,
             "description": "media use https",
@@ -140,9 +146,5 @@
             "type": "boolean"
         }
     },
-    "required": [
-        "call_recording",
-        "default_language"
-    ],
     "type": "object"
 }

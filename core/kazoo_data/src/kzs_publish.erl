@@ -1,5 +1,5 @@
 %%%-----------------------------------------------------------------------------
-%%% @copyright (C) 2011-2017, 2600Hz
+%%% @copyright (C) 2016-2017, 2600Hz
 %%% @doc
 %%% data adapter behaviour
 %%% @end
@@ -7,9 +7,7 @@
 %%%-----------------------------------------------------------------------------
 -module(kzs_publish).
 
-
--export([maybe_publish_db/2
-        ,maybe_publish_doc/3
+-export([maybe_publish_doc/3
         ,maybe_publish_docs/3
         ,publish_db/2
         ,publish_doc/3
@@ -22,13 +20,10 @@
 
 -spec maybe_publish_docs(ne_binary(), kz_json:objects(), kz_json:objects()) -> 'ok'.
 maybe_publish_docs(Db, Docs, JObjs) ->
-    case kz_datamgr:change_notice()
+    _ = kz_datamgr:change_notice()
         andalso should_publish_db_changes(Db)
-    of
-        'true' ->
-            publish_docs(Db, Docs, JObjs);
-        'false' -> 'ok'
-    end.
+        andalso publish_docs(Db, Docs, JObjs),
+    kzs_cache:flush_cache_docs(Db, JObjs).
 
 -spec publish_docs(ne_binary(), kz_json:objects(), kz_json:objects()) -> 'ok'.
 publish_docs(Db, Docs, JObjs) ->
@@ -43,24 +38,16 @@ publish_docs(Db, Docs, JObjs) ->
 
 -spec maybe_publish_doc(ne_binary(), kz_json:object(), kz_json:object()) -> 'ok'.
 maybe_publish_doc(Db, Doc, JObj) ->
-    case kz_datamgr:change_notice()
+    _ = kz_datamgr:change_notice()
         andalso should_publish_db_changes(Db)
         andalso should_publish_doc(Doc)
-    of
-        'true' ->
-            _ = kz_util:spawn(fun() -> publish_doc(Db, Doc, JObj) end),
-            'ok';
-        'false' -> 'ok'
-    end.
+        andalso kz_util:spawn(fun publish_doc/3, [Db, Doc, JObj]),
+    kzs_cache:flush_cache_doc(Db, JObj).
 
--spec maybe_publish_db(ne_binary(), kapi_conf:action()) -> 'ok'.
-maybe_publish_db(DbName, Action) ->
-    case kz_datamgr:change_notice() of
-        'true' ->
-            _ = kz_util:spawn(fun() -> publish_db(DbName, Action) end),
-            'ok';
-        'false' -> 'ok'
-    end.
+-spec publish_db(ne_binary(), kapi_conf:action()) -> boolean().
+publish_db(DbName, Action) ->
+    _ = kz_util:spawn(fun() -> do_publish_db(DbName, Action) end),
+    'true'.
 
 -spec should_publish_doc(kz_json:object()) -> boolean().
 should_publish_doc(Doc) ->
@@ -73,33 +60,31 @@ should_publish_doc(Doc) ->
 
 -spec should_publish_db_changes(ne_binary()) -> boolean().
 should_publish_db_changes(DbName) ->
-    Key = <<"publish_", (kz_util:to_binary(kzs_util:db_classification(DbName)))/binary, "_changes">>,
+    Key = <<"publish_", (kz_term:to_binary(kzs_util:db_classification(DbName)))/binary, "_changes">>,
     kapps_config:get_is_true(?CONFIG_CAT, Key, 'true').
 
 -spec publish_doc(ne_binary(), kz_json:object(), kz_json:object()) -> 'ok'.
 publish_doc(DbName, Doc, JObj) ->
     case kz_doc:is_soft_deleted(Doc)
         orelse kz_doc:is_deleted(Doc)
+        orelse kz_doc:revision(JObj)
     of
         'true' ->
-            publish('deleted', kz_util:to_binary(DbName), publish_fields(Doc, JObj));
-        'false' ->
-            case kz_doc:revision(JObj) of
-                <<"1-", _/binary>> ->
-                    publish('created', kz_util:to_binary(DbName), publish_fields(Doc, JObj));
-                _Else ->
-                    publish('edited', kz_util:to_binary(DbName), publish_fields(Doc, JObj))
-            end
+            publish('deleted', kz_term:to_binary(DbName), publish_fields(Doc, JObj));
+        <<"1-", _/binary>> ->
+            publish('created', kz_term:to_binary(DbName), publish_fields(Doc, JObj));
+        _Else ->
+            publish('edited', kz_term:to_binary(DbName), publish_fields(Doc, JObj))
     end.
 
--spec publish_db(ne_binary(), kapi_conf:action()) -> 'ok'.
-publish_db(DbName, Action) ->
+-spec do_publish_db(ne_binary(), kapi_conf:action()) -> 'ok'.
+do_publish_db(DbName, Action) ->
     Props =
         [{<<"Type">>, 'database'}
         ,{<<"ID">>, DbName}
         ,{<<"Database">>, DbName}
          | kz_api:default_headers(<<"configuration">>
-                                 ,<<"db_", (kz_util:to_binary(Action))/binary>>
+                                 ,<<"db_", (kz_term:to_binary(Action))/binary>>
                                  ,?CONFIG_CAT
                                  ,<<"1.0.0">>
                                  )
@@ -112,7 +97,7 @@ publish_db(DbName, Action) ->
 publish_fields(Doc) ->
     [{Key, V} ||
         Key <- ?PUBLISH_FIELDS,
-        kz_util:is_not_empty(V = kz_json:get_value(Key, Doc))
+        kz_term:is_not_empty(V = kz_json:get_value(Key, Doc))
     ].
 
 publish_fields(Doc, JObj) ->
@@ -126,9 +111,7 @@ publish(Action, Db, Doc) ->
     IsSoftDeleted = kz_doc:is_soft_deleted(Doc),
     IsHardDeleted = kz_doc:is_deleted(Doc),
 
-    EventName = doc_change_event_name(Action, IsSoftDeleted
-                                      orelse IsHardDeleted
-                                     ),
+    EventName = doc_change_event_name(Action, IsSoftDeleted or IsHardDeleted),
 
     Props = props:filter_undefined(
               [{<<"ID">>, Id}
@@ -153,7 +136,7 @@ publish(Action, Db, Doc) ->
 doc_change_event_name(_Action, 'true') ->
     ?DOC_DELETED;
 doc_change_event_name(Action, 'false') ->
-    <<"doc_", (kz_util:to_binary(Action))/binary>>.
+    <<"doc_", (kz_term:to_binary(Action))/binary>>.
 
 -spec doc_acct_id(ne_binary(), kz_json:object()) -> ne_binary().
 doc_acct_id(Db, Doc) ->

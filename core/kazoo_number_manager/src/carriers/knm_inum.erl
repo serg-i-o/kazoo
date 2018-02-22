@@ -12,6 +12,7 @@
 -module(knm_inum).
 -behaviour(knm_gen_carrier).
 
+-export([info/0]).
 -export([is_local/0]).
 -export([find_numbers/3]).
 -export([acquire_number/1]).
@@ -26,6 +27,16 @@
 
 -define(KZ_INUM,<<"numbers%2Finum">>).
 -define(INUM_VIEW_FILE, <<"views/numbers_inum.json">>).
+
+%%--------------------------------------------------------------------
+%% @public
+%% @doc
+%% @end
+%%--------------------------------------------------------------------
+-spec info() -> map().
+info() ->
+    #{?CARRIER_INFO_MAX_PREFIX => 15
+     }.
 
 %%--------------------------------------------------------------------
 %% @public
@@ -152,13 +163,13 @@ disconnect_number(Number) ->
 -spec generate_numbers(ne_binary(), pos_integer(), non_neg_integer()) -> 'ok'.
 generate_numbers(AccountId, <<"8835100",_/binary>> = Number, Quantity)
   when byte_size(Number) =:= 15 ->
-    generate_numbers(AccountId, kz_util:to_integer(Number), kz_util:to_integer(Quantity));
+    generate_numbers(AccountId, kz_term:to_integer(Number), kz_term:to_integer(Quantity));
 generate_numbers(_AccountId, _Number, 0) -> 'ok';
 generate_numbers(?MATCH_ACCOUNT_RAW(AccountId), Number, Quantity)
   when is_integer(Number),
        is_integer(Quantity),
        Quantity > 0 ->
-    _R = save_doc(AccountId, <<"+",(kz_util:to_binary(Number))/binary>>),
+    _R = save_doc(AccountId, <<"+",(kz_term:to_binary(Number))/binary>>),
     lager:info("number ~p/~p/~p", [Number, Quantity, _R]),
     generate_numbers(AccountId, Number+1, Quantity-1).
 
@@ -189,7 +200,7 @@ save_doc(JObj) ->
 update_doc(Number, UpdateProps) ->
     PhoneNumber = knm_number:phone_number(Number),
     Num = knm_phone_number:number(PhoneNumber),
-    case kz_datamgr:update_doc(?KZ_INUM, Num, [{?PVT_MODULE_NAME, kz_util:to_binary(?MODULE)}
+    case kz_datamgr:update_doc(?KZ_INUM, Num, [{?PVT_MODULE_NAME, kz_term:to_binary(?MODULE)}
                                                | UpdateProps
                                               ])
     of

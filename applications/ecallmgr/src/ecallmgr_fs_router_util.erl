@@ -16,39 +16,29 @@
 -include_lib("kazoo_sip/include/kzsip_uri.hrl").
 -include("ecallmgr.hrl").
 
--define(CALLER_PRIVACY(Props)
-       ,props:is_true(<<"Caller-Screen-Bit">>, Props, 'false')
-       ).
-
--define(CALLER_PRIVACY_NUMBER(Props)
-       ,?CALLER_PRIVACY(Props)
-        andalso props:is_true(<<"Caller-Privacy-Hide-Number">>, Props, 'false')
-       ).
-
--define(CALLER_PRIVACY_NAME(Props)
-       ,?CALLER_PRIVACY(Props)
-        andalso props:is_true(<<"Caller-Privacy-Hide-Name">>, Props, 'false')
-       ).
-
 %%%===================================================================
 %%% API
 %%%===================================================================
 -type search_ret() :: 'ok' | {'ok', kz_json:object()}.
 
--spec search_for_route(atom(), atom(), ne_binary(), ne_binary(), kz_proplist()) -> search_ret().
+-spec search_for_route(atom(), atom(), ne_binary(), ne_binary(), kzd_freeswitch:data()) ->
+                              search_ret().
 search_for_route(Section, Node, FetchId, CallId, Props) ->
-    search_for_route(Section, Node, FetchId, CallId, Props, 'true').
+    Authz = ecallmgr_config:is_true(<<"authz_enabled">>, 'false'),
+    search_for_route(Section, Node, FetchId, CallId, Props, Authz).
 
--spec search_for_route(atom(), atom(), ne_binary(), ne_binary(), kz_proplist(), boolean()) -> search_ret().
-search_for_route(Section, Node, FetchId, CallId, Props, 'false' = Authz) ->
-    do_search_for_route(Section, Node, FetchId, CallId, Props, Authz);
-search_for_route(Section, Node, FetchId, CallId, Props, 'true' = Authz) ->
-    SetupCall = props:set_value(<<"Call-Setup">>, <<"true">>, Props),
-    _ = kz_util:spawn(fun ecallmgr_fs_authz:authorize/3, [SetupCall, CallId, Node]),
-    do_search_for_route(Section, Node, FetchId, CallId, Props, Authz).
+-spec search_for_route(atom(), atom(), ne_binary(), ne_binary(), kzd_freeswitch:data(), boolean()) ->
+                              search_ret().
+search_for_route(Section, Node, FetchId, CallId, Props, 'false') ->
+    do_search_for_route(Section, Node, FetchId, CallId, Props, 'undefined');
+search_for_route(Section, Node, FetchId, CallId, Props, 'true') ->
+    AuthzWorker = spawn_authorize_call_fun(Node, CallId, Props),
+    lager:debug("authz worker in ~p", [AuthzWorker]),
+    do_search_for_route(Section, Node, FetchId, CallId, Props, AuthzWorker).
 
--spec do_search_for_route(atom(), atom(), ne_binary(), ne_binary(), kz_proplist(), boolean()) -> search_ret().
-do_search_for_route(Section, Node, FetchId, CallId, Props, Authz) ->
+-spec do_search_for_route(atom(), atom(), ne_binary(), ne_binary(), kzd_freeswitch:data(), api_pid_ref()) ->
+                                 search_ret().
+do_search_for_route(Section, Node, FetchId, CallId, Props, AuthzWorker) ->
     Request = route_req(CallId, FetchId, Props, Node),
     ReqResp = kz_amqp_worker:call(Request
                                  ,fun kapi_route:publish_req/1
@@ -60,32 +50,50 @@ do_search_for_route(Section, Node, FetchId, CallId, Props, Authz) ->
             lager:info("did not receive route response for request ~s: ~p", [FetchId, _R]);
         {'ok', JObj} ->
             'true' = kapi_route:resp_v(JObj),
-            maybe_wait_for_authz(Section, Node, FetchId, CallId, JObj, Props, Authz)
+            maybe_wait_for_authz(Section, Node, FetchId, CallId, JObj, Props, AuthzWorker)
     end.
 
--spec maybe_wait_for_authz(atom(), atom(), ne_binary(), ne_binary(), kz_json:object(), kz_proplist(), boolean()) -> search_ret().
-maybe_wait_for_authz(Section, Node, FetchId, CallId, JObj, Props, 'false') ->
-    reply_affirmative(Section, Node, FetchId, CallId, JObj, Props);
-maybe_wait_for_authz(Section, Node, FetchId, CallId, JObj, Props, 'true') ->
-    case ecallmgr_config:is_true(<<"authz_enabled">>, 'false')
-        andalso kz_json:get_value(<<"Method">>, JObj) =/= <<"error">>
-    of
-        'true' -> wait_for_authz(Section, Node, FetchId, CallId, JObj, Props);
+-spec spawn_authorize_call_fun(atom(), ne_binary(), kzd_freeswitch:data()) -> pid_ref().
+spawn_authorize_call_fun(Node, CallId, Props) ->
+    Ref = make_ref(),
+    Pid = kz_util:spawn(fun authorize_call_fun/5, [self(), Ref, Node, CallId, Props]),
+    {Pid, Ref}.
+
+-spec authorize_call_fun(pid(), reference(), atom(), ne_binary(), kzd_freeswitch:data()) ->
+                                {'authorize_reply', reference(), ecallmgr_fs_authz:authz_reply()}.
+authorize_call_fun(Parent, Ref, Node, CallId, Props) ->
+    kz_util:put_callid(CallId),
+    Parent ! {'authorize_reply', Ref, ecallmgr_fs_authz:authorize(Props, CallId, Node)}.
+
+-spec maybe_wait_for_authz(atom(), atom(), ne_binary(), ne_binary(), kz_json:object(), kz_proplist(), 'undefined' | pid_ref()) -> search_ret().
+maybe_wait_for_authz(Section, Node, FetchId, CallId, JObj, Props, 'undefined') ->
+    CCVs = kz_json:get_value(<<"Custom-Channel-Vars">>, JObj, kz_json:new()),
+    J = kz_json:set_value(<<"Custom-Channel-Vars">>
+                         ,kz_json:set_value(<<"Channel-Authorized">>, <<"true">>, CCVs)
+                         ,JObj
+                         ),
+    reply_affirmative(Section, Node, FetchId, CallId, J, Props);
+maybe_wait_for_authz(Section, Node, FetchId, CallId, JObj, Props, AuthzWorker) ->
+    case kz_json:get_value(<<"Method">>, JObj) =/= <<"error">> of
+        'true' -> wait_for_authz(Section, Node, FetchId, CallId, JObj, Props, AuthzWorker);
         'false' -> reply_affirmative(Section, Node, FetchId, CallId, JObj, Props)
     end.
 
--spec wait_for_authz(atom(), atom(), ne_binary(), ne_binary(), kz_json:object(), kz_proplist()) -> search_ret().
-wait_for_authz(Section, Node, FetchId, CallId, JObj, Props) ->
-    case kz_cache:wait_for_key_local(?ECALLMGR_UTIL_CACHE, ?AUTHZ_RESPONSE_KEY(CallId)) of
-        {'ok', {'true', AuthzCCVs}} ->
-            _ = kz_cache:erase_local(?ECALLMGR_UTIL_CACHE, ?AUTHZ_RESPONSE_KEY(CallId)),
+-spec wait_for_authz(atom(), atom(), ne_binary(), ne_binary(), kz_json:object(), kz_proplist(), pid_ref()) -> search_ret().
+wait_for_authz(Section, Node, FetchId, CallId, JObj, Props, {Pid, Ref}) ->
+    lager:info("waiting for authz reply from worker ~p", [Pid]),
+    receive
+        {'authorize_reply', Ref, 'false'} -> reply_forbidden(Section, Node, FetchId);
+        {'authorize_reply', Ref, 'true'} -> reply_affirmative(Section, Node, FetchId, CallId, JObj, Props);
+        {'authorize_reply', Ref, {'true', AuthzCCVs}} ->
             CCVs = kz_json:get_value(<<"Custom-Channel-Vars">>, JObj, kz_json:new()),
             J = kz_json:set_value(<<"Custom-Channel-Vars">>
                                  ,kz_json:merge_jobjs(CCVs, AuthzCCVs)
                                  ,JObj
                                  ),
-            reply_affirmative(Section, Node, FetchId, CallId, J, Props);
-        _Else -> reply_forbidden(Section, Node, FetchId)
+            reply_affirmative(Section, Node, FetchId, CallId, J, Props)
+    after 5000 ->
+            lager:warning("timeout waiting for authz reply from worker ~p", [Pid])
     end.
 
 %% Reply with a 402 for unauthzed calls
@@ -126,13 +134,18 @@ route_resp_xml(_, Section, JObj, Props) ->
 
 -spec route_req(ne_binary(), ne_binary(), kz_proplist(), atom()) -> kz_proplist().
 route_req(CallId, FetchId, Props, Node) ->
+    AccountId = kzd_freeswitch:account_id(Props),
     props:filter_empty(
       [{<<"Msg-ID">>, FetchId}
       ,{<<"Call-ID">>, CallId}
       ,{<<"Call-Direction">>, kzd_freeswitch:call_direction(Props)}
       ,{<<"Message-ID">>, props:get_value(<<"Message-ID">>, Props)}
-      ,{<<"Caller-ID-Name">>, caller_id_name(Props)}
-      ,{<<"Caller-ID-Number">>, caller_id_number(Props)}
+      ,{<<"Caller-ID-Name">>
+       ,kzd_freeswitch:caller_id_name(Props, kz_privacy:anonymous_caller_id_name(AccountId))
+       }
+      ,{<<"Caller-ID-Number">>
+       ,kzd_freeswitch:caller_id_number(Props, kz_privacy:anonymous_caller_id_number(AccountId))
+       }
       ,{<<"From-Network-Addr">>, kzd_freeswitch:from_network_ip(Props)}
       ,{<<"From-Network-Port">>, kzd_freeswitch:from_network_port(Props)}
       ,{<<"User-Agent">>, kzd_freeswitch:user_agent(Props)}
@@ -141,8 +154,8 @@ route_req(CallId, FetchId, Props, Node) ->
       ,{<<"Request">>, ecallmgr_util:get_sip_request(Props)}
       ,{<<"Body">>, get_body(Props) }
       ,{<<"SIP-Request-Host">>, props:get_value(<<"variable_sip_req_host">>, Props)}
-      ,{<<"Switch-Nodename">>, kz_util:to_binary(Node)}
-      ,{<<"Switch-Hostname">>, props:get_value(<<"FreeSWITCH-Hostname">>, Props)}
+      ,{<<"Switch-Nodename">>, kz_term:to_binary(Node)}
+      ,{<<"Switch-Hostname">>, kzd_freeswitch:hostname(Props)}
       ,{<<"Switch-URL">>, props:get_value(<<"Switch-URL">>, Props)}
       ,{<<"Switch-URI">>, props:get_value(<<"Switch-URI">>, Props)}
       ,{<<"Custom-Channel-Vars">>, kz_json:from_list(route_req_ccvs(FetchId, Props))}
@@ -163,9 +176,9 @@ route_req_ccvs(FetchId, Props) ->
       ,{<<"Fetch-ID">>, FetchId}
       ,{<<"Redirected-By">>, RedirectedBy}
       ,{<<"Redirected-Reason">>, RedirectedReason}
-      ,{<<"Caller-Privacy-Number">>, ?CALLER_PRIVACY_NUMBER(Props)}
-      ,{<<"Caller-Privacy-Name">>, ?CALLER_PRIVACY_NAME(Props)}
-       | props:delete(<<?CALL_INTERACTION_ID>>, CCVs)
+       | props:delete_keys([<<?CALL_INTERACTION_ID>>
+                           ,<<"Fetch-ID">>
+                           ], CCVs) ++ kz_privacy:flags(Props)
       ]
      ).
 
@@ -190,26 +203,6 @@ get_redirected(Props) ->
             end;
         _ -> {'undefined' , 'undefined'}
     end.
-
--spec caller_id_name(kz_proplist()) -> ne_binary().
-caller_id_name(Props) ->
-    caller_id_name(?CALLER_PRIVACY_NAME(Props), Props).
-
--spec caller_id_name(boolean(), kz_proplist()) -> ne_binary().
-caller_id_name('true', _Props) ->
-    kz_util:anonymous_caller_id_name();
-caller_id_name('false', Props) ->
-    kzd_freeswitch:caller_id_name(Props, kz_util:anonymous_caller_id_name()).
-
--spec caller_id_number(kz_proplist()) -> ne_binary().
-caller_id_number(Props) ->
-    caller_id_number(?CALLER_PRIVACY_NUMBER(Props), Props).
-
--spec caller_id_number(boolean(), kz_proplist()) -> ne_binary().
-caller_id_number('true', _Props) ->
-    kz_util:anonymous_caller_id_number();
-caller_id_number('false', Props) ->
-    kzd_freeswitch:caller_id_number(Props, kz_util:anonymous_caller_id_number()).
 
 -spec register_bindings(atom(), atom(), ne_binaries()) -> boolean().
 register_bindings(Node, Section, Bindings) ->

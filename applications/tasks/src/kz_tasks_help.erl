@@ -1,5 +1,5 @@
 %%%-------------------------------------------------------------------
-%%% @copyright (C) 2017, 2600Hz INC
+%%% @copyright (C) 2016-2017, 2600Hz INC
 %%% @doc
 %%% Discover available tasks.
 %%% @end
@@ -14,7 +14,7 @@
 
 -include("tasks.hrl").
 -include_lib("kazoo_tasks/include/task_fields.hrl").
--include_lib("kazoo_json/include/kazoo_json.hrl").
+-include_lib("kazoo_stdlib/include/kazoo_json.hrl").
 
 %%%===================================================================
 %%% API
@@ -117,8 +117,8 @@ parse_apis([{Category, Actions}|HelpProps], Acc) ->
 
 -spec verify_unicity_map({ne_binary(), kz_json:object()}) -> 'ok'.
 verify_unicity_map({_Action, API}) ->
-    Fields0 = kz_tasks:mandatory(API) ++ kz_tasks:optional(API),
-    Fields = [kz_util:to_lower_binary(Field) || Field <- Fields0],
+    Fields0 = kz_tasks:possible_fields(API),
+    Fields = [kz_term:to_lower_binary(Field) || Field <- Fields0],
     case
         length(lists:usort(Fields)) == length(Fields)
         andalso Fields == Fields0

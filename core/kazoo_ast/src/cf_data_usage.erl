@@ -7,17 +7,17 @@
         ]).
 
 -include_lib("kazoo_ast/include/kz_ast.hrl").
--include_lib("kazoo_json/include/kazoo_json.hrl").
+-include_lib("kazoo_stdlib/include/kazoo_json.hrl").
 
 -define(DEBUG(_Fmt, _Args), 'ok').
-%% -define(DEBUG(Fmt, Args), io:format([$~, $p, $  | Fmt], [?LINE | Args])).
+%%-define(DEBUG(Fmt, Args), io:format([$~, $p, $  | Fmt], [?LINE | Args])).
 
 -record(usage, {usages = [] %% places the Data is accessed
                ,data_var_name = 'Data' %% Tracks current var name
-               ,data_var_aliases = [] %% typically when kz_json:set_value is used
-               ,current_module %% what module are we currently in
-               ,functions = [] %% AST functions loaded
-               ,visited = [] %% MFAs visited (to stop recursion)
+               ,data_var_aliases = [] :: [any()] %% typically when kz_json:set_value is used
+               ,current_module :: module() %% what module are we currently in
+               ,functions = [] :: [tuple()] %% AST functions loaded
+               ,visited = [] :: [tuple()] %% MFAs visited (to stop recursion)
                }).
 
 -spec to_schema_docs() -> 'ok'.
@@ -30,10 +30,26 @@ to_schema_doc(M) ->
     to_schema_doc(M, process(M)).
 
 to_schema_doc(M, Usage) ->
-    <<"cf_", Base/binary>> = kz_util:to_binary(M),
+    <<"cf_", Base/binary>> = kz_term:to_binary(M),
     Schema = kz_ast_util:schema_path(<<"callflows.", Base/binary, ".json">>),
     kz_ast_util:ensure_file_exists(Schema),
-    update_schema(Base, Schema, Usage).
+    update_schema(Base, Schema, Usage),
+    update_doc(Base, Schema).
+
+-define(SCHEMA_SECTION, <<"#### Schema\n\n">>).
+-define(SUB_SCHEMA_SECTION_HEADER, <<"#####">>).
+
+update_doc(Base, Schema) ->
+    RefPath = filename:join([code:lib_dir('callflow'), "doc", "ref", <<Base/binary,".md">>]),
+    Contents = build_ref_doc(Base, Schema),
+    'ok' = file:write_file(RefPath, Contents).
+
+build_ref_doc(Base, Schema) ->
+    DocName = kz_ast_util:smash_snake(Base),
+    ["## ", DocName, "\n\n"
+    ,"### About ", DocName, "\n\n"
+    ,kz_ast_util:schema_to_table(Schema)
+    ].
 
 update_schema(Base, Path, Usage) ->
     {'ok', Bin} = file:read_file(Path),
@@ -67,6 +83,9 @@ maybe_insert_schema('get_first_defined', _Ks, _Default, Schema) ->
     Schema;
 maybe_insert_schema('get_first_defined_keys', _Ks, _Default, Schema) ->
     Schema;
+maybe_insert_schema(_F, ['undefined' | _Keys], _Default, Schema) ->
+    ?DEBUG("skipping function ~p with key undefined (~p left)", [_F, _Keys]),
+    Schema;
 maybe_insert_schema(F, [K|Ks], Default, Schema) ->
     Section = kz_json:get_value([<<"properties">>, K], Schema, kz_json:new()),
     Updated = maybe_insert_schema(F, Ks, Default, Section),
@@ -79,13 +98,14 @@ maybe_insert_schema(F, [], Default, Schema) ->
                 [{<<"type">>, guess_type(F, Default)}
                 ,{<<"default">>, check_default(Default)}
                 ,{<<"description">>, <<>>}
-                ]
-               ),
+                ]),
     kz_json:insert_values(Updates, Schema).
 
 check_default({_M, _F, _A}) -> 'undefined';
+check_default([<<_/binary>>|_]=L) ->
+    L;
 check_default([_|_]=_L) ->
-    ?DEBUG("unchanged default list ~p~n", [_L]),
+    ?DEBUG("default list ~p~n", [L]),
     'undefined';
 check_default([]) -> [];
 check_default(?EMPTY_JSON_OBJECT=J) -> J;
@@ -98,19 +118,21 @@ check_default(B) when is_binary(B) -> B;
 check_default(A) when is_atom(A) -> 'undefined';
 
 check_default(Default) ->
-    io:format("unchanged default ~p~n", [Default]),
+    ?DEBUG("unchanged default ~p~n", [Default]),
     Default.
 
 guess_type('get_value', <<_/binary>>) ->
     <<"string">>;
 guess_type('get_value', []) ->
     <<"array">>;
+guess_type('get_ne_value', []) ->
+    <<"array">>;
 guess_type('get_value', ?EMPTY_JSON_OBJECT) ->
     <<"object">>;
 guess_type('get_value', I) when is_integer(I) ->
     <<"integer">>;
 guess_type('get_value', F) when is_float(F) ->
-    <<"float">>;
+    <<"number">>;
 guess_type('get_value', 'undefined') ->
     'undefined';
 guess_type('get_value', A) when is_atom(A) ->
@@ -134,9 +156,13 @@ guess_type('is_false', _) ->
 guess_type('get_integer_value', _) ->
     <<"integer">>;
 guess_type('get_float_value', _) ->
-    <<"float">>;
+    <<"number">>;
 guess_type('get_json_value', _) ->
     <<"object">>;
+guess_type('get_list_value', [<<_/binary>>|_]) ->
+    <<"array">>;
+guess_type('get_list_value', _L) ->
+    <<"array">>;
 guess_type('find', _) ->
     'undefined';
 guess_type('get_ne_value', <<_/binary>>) ->
@@ -246,7 +272,7 @@ process_expression(Acc, ?LC_BIN_GENERATOR(Pattern, Expr)) ->
     process_expressions(Acc, [Pattern, Expr]);
 
 process_expression(#usage{current_module=_M}=Acc, _Expression) ->
-    io:format("~nskipping expression in ~p: ~p~n", [_M, _Expression]),
+    ?DEBUG("~nskipping expression in ~p: ~p~n", [_M, _Expression]),
     Acc.
 
 process_list(Acc, Head, Tail) ->
@@ -306,8 +332,15 @@ process_mfa(#usage{data_var_name=DataName}=Acc
            ,'kz_json', 'merge_recursive', [?VAR(DataName), _Arg]
            ) ->
     Acc;
-process_mfa(#usage{data_var_name=DataName}=Acc
-           ,'kz_json', 'set_value', [_Key, _Value, ?VAR(DataName)]
+process_mfa(#usage{data_var_name=DataName
+                  ,usages=Usages
+                  }=Acc
+           ,'kz_json'=M, 'set_value'=F, [Key, Value, ?VAR(DataName)]
+           ) ->
+    ?DEBUG("adding set_value usage ~p, ~p, ~p~n", [Key, Value, DataName]),
+    Acc#usage{usages=maybe_add_usage(Usages, {M, F, arg_to_key(Key), DataName, arg_to_key(Value)})};
+process_mfa(#usage{}=Acc
+           ,'kz_json', _F, [{call, _, _, _}=_Key|_]
            ) ->
     Acc;
 process_mfa(#usage{data_var_name=DataName
@@ -339,7 +372,6 @@ process_mfa(#usage{data_var_name=DataName
                           maybe_add_usage(Usages, {M, F, arg_to_key(Key), Alias, arg_to_key(Default)})
                      }
     end;
-
 process_mfa(#usage{data_var_name=DataName
                   ,data_var_aliases=Aliases
                   }=Acc
@@ -433,8 +465,7 @@ arg_to_key(?MOD_FUN_ARGS('kz_json', 'new', [])) ->
     kz_json:new();
 arg_to_key(?MOD_FUN_ARGS(M, F, As)) ->
     {M, F, length(As)};
-arg_to_key(?VAR(Arg)) ->
-    Arg;
+arg_to_key(?VAR(_Arg)) -> 'undefined';
 arg_to_key(?INTEGER(I)) ->
     I;
 arg_to_key(?EMPTY_LIST) ->
@@ -450,6 +481,9 @@ list_of_keys_to_binary(Arg, ?EMPTY_LIST, Path) ->
 list_of_keys_to_binary(Arg, ?LIST(Head, Tail), Path) ->
     list_of_keys_to_binary(Head, Tail, [arg_to_key(Arg) | Path]).
 
+
+maybe_add_usage(Usages, {'kz_json',_Function,<<"source">>,_DataVar, _Default}) ->
+    Usages;
 maybe_add_usage(Usages, Call) ->
     case lists:member(Call, Usages) of
         'true' -> Usages;
@@ -491,9 +525,7 @@ process_mfa_call(Acc, M, F, As) ->
 have_visited(#usage{visited=Vs}, M, F, As) ->
     lists:member({M, F, As}, Vs).
 
-process_mfa_call(#usage{data_var_name=DataName
-                       ,usages=Usages
-                       ,functions=Fs
+process_mfa_call(#usage{functions=Fs
                        ,current_module=_CM
                        ,visited=Vs
                        }=Acc
@@ -506,32 +538,107 @@ process_mfa_call(#usage{data_var_name=DataName
                     Acc#usage{visited=lists:usort([{M, F, As} | Vs])};
                 {M, AST} ->
                     ?DEBUG("  added AST for ~p~n", [M]),
-                    process_mfa_call(Acc#usage{functions=kz_ast_util:add_module_ast(Fs, M, AST)}
+                    #module_ast{functions=NewFs}
+                        = kz_ast_util:add_module_ast(#module_ast{functions=Fs}, M, AST),
+                    process_mfa_call(Acc#usage{functions=NewFs}
                                     ,M, F, As, 'false'
                                     )
             end;
         [] ->
             ?DEBUG("  no clauses for ~p:~p~n", [M, F]),
             Acc#usage{visited=lists:usort([{M, F, As} | Vs])};
+        [Clauses] when F =:= 'evaluate_rules_for_creation';
+                       F =:= 'create_endpoints' ->
+            process_mfa_clauses_kz_endpoint(Acc, M, F, As, Clauses);
         [Clauses] ->
-            #usage{usages=ModuleUsages
-                  ,functions=NewFs
-                  ,visited=ModuleVisited
-                  } =
-                process_mfa_clauses(Acc#usage{current_module=M
-                                             ,usages=[]
-                                             ,data_var_aliases=[]
-                                             ,visited=lists:usort([{M, F, As} | Vs])
-                                             }
-                                   ,Clauses
-                                   ,data_index(DataName, As)
-                                   ),
-            ?DEBUG("  visited ~p:~p(~p)~n", [M, F, As]),
-            Acc#usage{usages=lists:usort(ModuleUsages ++ Usages)
-                     ,functions=NewFs
-                     ,visited=ModuleVisited
-                     }
+            process_mfa_clauses(Acc, M, F, As, Clauses)
     end.
+
+process_mfa_clauses(#usage{visited=Vs
+                          ,data_var_name=DataName
+                          ,usages=Usages
+                          }=Acc
+                   ,M, F, As, Clauses
+                   ) ->
+    #usage{usages=ModuleUsages
+          ,functions=NewFs
+          ,visited=ModuleVisited
+          } =
+        process_mfa_clauses(Acc#usage{current_module=M
+                                     ,usages=[]
+                                     ,data_var_aliases=[]
+                                     ,visited=lists:usort([{M, F, As} | Vs])
+                                     }
+                           ,Clauses
+                           ,data_index(DataName, As)
+                           ),
+    ?DEBUG("  visited ~p:~p(~p)~n", [M, F, As]),
+    Acc#usage{usages=lists:usort(ModuleUsages ++ Usages)
+             ,functions=NewFs
+             ,visited=ModuleVisited
+             }.
+
+process_mfa_clauses_kz_endpoint(#usage{visited=Vs}=Acc
+                               ,M, 'evaluate_rules_for_creation'=F, As
+                               ,[?CLAUSE(_Args, _Guards, Expressions)]
+                               ) ->
+    [?MATCH(?VAR('Routines')
+           ,?LIST(_, _)=FunExpressions
+           )
+    ,?MOD_FUN_ARGS('lists'
+                  ,'foldl'
+                  ,[?FA(_FoldFun, 2), ?TUPLE(FunArgs), ?VAR('Routines')]
+                  )
+    ] = Expressions,
+
+    ?DEBUG("  visiting funs in ~p:~p(~p)~n", [M, F, As]),
+    process_mfa_clauses_kz_endpoint_folds(Acc#usage{visited=lists:usort([{M, F, As} | Vs])}
+                                         ,M, list_of_fun_expressions_to_f(FunExpressions), FunArgs
+                                         );
+process_mfa_clauses_kz_endpoint(#usage{visited=Vs}=Acc
+                               ,M, 'create_endpoints'=F, As
+                               ,[?CLAUSE(_Args, _Guards, Expressions)]
+                               ) ->
+    ?MATCH(?VAR('Routines')
+          ,?LIST(_, _)=FunExpressions
+          ) = hd(Expressions),
+
+    ?DEBUG("  visiting funs in ~p:~p(~p)~n", [M, F, As]),
+    process_mfa_clauses_kz_endpoint_folds(Acc#usage{visited=lists:usort([{M, F, As} | Vs])}
+                                         ,M, list_of_fun_expressions_to_f(FunExpressions), As
+                                         ).
+
+process_mfa_clauses_kz_endpoint_folds(#usage{usages=Usages}=Acc, M, Funs, FunArgs) ->
+    ForFsAcc = Acc#usage{current_module=M
+                        ,usages=[]
+                        ,data_var_aliases=[]
+                        },
+
+    #usage{usages=ModuleUsages
+          ,functions=NewFs
+          ,visited=ModuleVisited
+          } =
+        lists:foldl(fun(LocalFun, MyAcc) ->
+                            ?DEBUG("  checking for usage in ~p:~p(~p)~n", [M, LocalFun, FunArgs]),
+                            process_mfa_call(MyAcc, M, LocalFun, FunArgs)
+                    end
+                   ,ForFsAcc
+                   ,Funs
+                   ),
+
+    ?DEBUG("  new usages: ~p~n", [ModuleUsages]),
+    Acc#usage{usages=lists:usort(ModuleUsages ++ Usages)
+             ,functions=NewFs
+             ,visited=ModuleVisited
+             }.
+
+
+list_of_fun_expressions_to_f(ListExpression) ->
+    list_of_fun_expressions_to_f(ListExpression, []).
+list_of_fun_expressions_to_f(?EMPTY_LIST, Acc) ->
+    lists:reverse(Acc);
+list_of_fun_expressions_to_f(?LIST(?FA(Function, _Arity), Tail), Acc) ->
+    list_of_fun_expressions_to_f(Tail, [Function | Acc]).
 
 process_mfa_clauses(Acc, Clauses, DataIndex) ->
     lists:foldl(fun(Clause, UsagesAcc) ->
@@ -560,7 +667,9 @@ process_mfa_clause(#usage{data_var_name=DataName}=Acc
         ?VAR('_') -> Acc;
         ?EMPTY_LIST -> Acc;
         ?VAR(DataName) -> process_clause_body(Acc, Body);
-        ?MOD_FUN_ARGS('kz_json', 'set_value', _Args) -> process_clause_body(Acc, Body);
+        ?MOD_FUN_ARGS('kz_json', 'set_value', _Args)=_ClauseArgs ->
+            ?DEBUG("skipping set_value on ~p(~p)~n", [_Args, element(2, _ClauseArgs)]),
+            process_clause_body(Acc, Body);
         ?VAR(NewName) ->
             ?DEBUG("  data name changed from ~p to ~p~n", [DataName, NewName]),
             #usage{usages=ClauseUsages
@@ -583,9 +692,9 @@ process_mfa_clause(#usage{data_var_name=DataName}=Acc
                      ,visited=Vs
                      };
         _Unexpected ->
-            io:format("unexpected arg(~p) at ~p in ~p, expected ~p~n"
-                     ,[_Unexpected, DataIndex, Args, DataName]
-                     ),
+            ?DEBUG("unexpected arg(~p) at ~p in ~p, expected ~p~n"
+                  ,[_Unexpected, DataIndex, Args, DataName]
+                  ),
             Acc
     end.
 

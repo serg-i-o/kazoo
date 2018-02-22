@@ -22,7 +22,7 @@
 -define(U_CONFIG_CAT, <<"crossbar.ubiquiti">>).
 
 -define(UBIQUITI_AUTH_TOKENS, kapps_config:get_integer(?U_CONFIG_CAT, <<"tokens_per_request">>, 35)).
--define(UBIQUITI_PROVIDER_ID, kapps_config:get(?U_CONFIG_CAT, <<"sso_provider_id">>)).
+-define(UBIQUITI_PROVIDER_ID, kapps_config:get_binary(?U_CONFIG_CAT, <<"sso_provider_id">>)).
 
 -define(SSO_STAGING_URI, <<"https://sso-stage.ubnt.com/api/sso/v1/">>).
 -define(SSO_PROD_URI, <<"https://sso.ubnt.com/api/sso/v1/">>).
@@ -33,8 +33,8 @@
 
 -define(SSO_PROVIDER, <<"ubiquiti">>).
 
--define(SSO_ENV, kapps_config:get(?U_CONFIG_CAT, <<"sso_environment">>, ?SSO_STAGING_ENV)).
--define(SSO_URL, kapps_config:get(?U_CONFIG_CAT, [?SSO_ENV, ?SSO_URL_KEY])).
+-define(SSO_ENV, kapps_config:get_binary(?U_CONFIG_CAT, <<"sso_environment">>, ?SSO_STAGING_ENV)).
+-define(SSO_URL, kapps_config:get_binary(?U_CONFIG_CAT, [?SSO_ENV, ?SSO_URL_KEY])).
 
 %%%===================================================================
 %%% API
@@ -42,8 +42,8 @@
 
 -spec init() -> ok.
 init() ->
-    _ProdURI = kapps_config:get(?U_CONFIG_CAT, [?SSO_PROD_ENV, ?SSO_URL_KEY], ?SSO_PROD_URI),
-    _StagURI = kapps_config:get(?U_CONFIG_CAT, [?SSO_STAGING_ENV, ?SSO_URL_KEY], ?SSO_STAGING_URI),
+    _ProdURI = kapps_config:get_ne_binary(?U_CONFIG_CAT, [?SSO_PROD_ENV, ?SSO_URL_KEY], ?SSO_PROD_URI),
+    _StagURI = kapps_config:get_ne_binary(?U_CONFIG_CAT, [?SSO_STAGING_ENV, ?SSO_URL_KEY], ?SSO_STAGING_URI),
 
     lager:debug("SSO Environment: ~s", [?SSO_ENV]),
     lager:debug("SSO URI: ~s", [?SSO_URL]),
@@ -138,15 +138,16 @@ put(Context) ->
 maybe_authenticate_user(Context) ->
     LoginURL = crossbar_util:get_path(?SSO_URL, <<"login">>),
 
-    case kz_http:post(kz_util:to_list(LoginURL)
+    case kz_http:post(kz_term:to_list(LoginURL)
                      ,[{"Content-Type","application/json"}]
                      ,kz_json:encode(login_req(Context))
                      )
     of
         {'ok', 200, RespHeaders, RespBody} ->
             lager:debug("successfully authenticated to '~s'", [LoginURL]),
-            cb_context:setters(Context, [{fun cb_context:set_doc/2, auth_response(Context, RespHeaders, RespBody)}
+            cb_context:setters(Context, [{fun cb_context:set_doc/2, auth_response(RespHeaders, RespBody)}
                                         ,{fun cb_context:set_resp_status/2, 'success'}
+                                        ,{fun cb_context:store/3, 'auth_type', <<"sso_auth">>}
                                         ]);
         {'ok', _RespCode, _RespHeaders, _RespBody} ->
             lager:debug("recv non-200(~p) code from '~s': ~s", [_RespCode, LoginURL, _RespBody]),
@@ -164,8 +165,8 @@ login_req(Context) ->
                      ,kz_json:delete_key(<<"username">>, Data)
                      ).
 
--spec auth_response(cb_context:context(), kz_proplist(), binary()) -> kz_json:object().
-auth_response(_Context, _RespHeaders, RespBody) ->
+-spec auth_response(kz_proplist(), binary()) -> kz_json:object().
+auth_response(_RespHeaders, RespBody) ->
     RespJObj = kz_json:decode(RespBody),
     UUID = kz_json:get_value(<<"uuid">>, RespJObj),
 

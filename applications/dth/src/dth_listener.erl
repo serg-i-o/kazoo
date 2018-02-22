@@ -38,7 +38,7 @@
 
 -define(BLACKLIST_REFRESH, 60 * ?MILLISECONDS_IN_SECOND).
 
--record(state, {wsdl_model = 'undefined' :: 'undefined' | #wsdl{}
+-record(state, {wsdl_model :: 'undefined' | #wsdl{}
                ,dth_cdr_url = <<>> :: binary()
                }).
 -type state() :: #state{}.
@@ -220,4 +220,4 @@ get_blocklist_entries(#'p:GetBlockListResponse'{
                                                  'BlockListEntry'=Entries
                                                 }}) when is_list(Entries) ->
     %% do some formatting of the entries to be [{ID, Reason}]
-    kz_json:from_list([{kz_util:to_binary(ID), kz_util:to_binary(Reason)} || #'p:BlockListEntry'{'CustomerID'=ID, 'BlockReason'=Reason} <- Entries]).
+    kz_json:from_list([{kz_term:to_binary(ID), kz_term:to_binary(Reason)} || #'p:BlockListEntry'{'CustomerID'=ID, 'BlockReason'=Reason} <- Entries]).

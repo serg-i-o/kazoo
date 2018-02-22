@@ -1,31 +1,31 @@
-### Port_requests
+### Port Requests
 
-#### About Port_requests
+#### About Port Requests
 
 #### Schema
 
 Schema for a port request
 
+
+
 Key | Description | Type | Default | Required
 --- | ----------- | ---- | ------- | --------
-`bill` | Billing information of the losing carrier | `object` |   | `false`
-`bill.extended_address` | The suite/floor/apt of the billing address the losing carrier has on record | `string` |   | `false`
-`bill.locality` | The locality (city) of the billing address the losing carrier has on record | `string` |   | `false`
-`bill.name` | The losing carrier billing/account name | `string` |   | `false`
-`bill.postal_code` | The zip/postal code of the billing address the losing carrier has on record | `string` |   | `false`
-`bill.region` | The region (state) of the billing address the losing carrier has on record | `string` |   | `false`
-`bill.street_address` | The address of the billing address the losing carrier has on record | `string` |   | `false`
-`comments` | The history of comments made on a port request | `array(object)` |   | `false`
+`bill.extended_address` | The suite/floor/apt of the billing address the losing carrier has on record | `string()` |   | `false`
+`bill.locality` | The locality (city) of the billing address the losing carrier has on record | `string()` |   | `false`
+`bill.name` | The losing carrier billing/account name | `string()` |   | `false`
+`bill.postal_code` | The zip/postal code of the billing address the losing carrier has on record | `string()` |   | `false`
+`bill.region` | The region (state) of the billing address the losing carrier has on record | `string()` |   | `false`
+`bill.street_address` | The address of the billing address the losing carrier has on record | `string()` |   | `false`
+`bill` | Billing information of the losing carrier | `object()` |   | `false`
+`comments` | The history of comments made on a port request | `array(object())` |   | `false`
 `name` | A friendly name for the port request | `string(1..128)` |   | `true`
-`notifications` | Status notifications | `object` |   | `false`
-`notifications.email` | Inbound Email Notifications | `object` |   | `false`
-`notifications.email.send_to` | A list or string of email recipent(s) | `string, array(string)` |   | `false`
-`numbers` | The numbers to port in | `object` |   | `true`
-`numbers./\+?[0-9]+/` |   | `object` |   | `false`
-`port_state` | What state the port request is currently in | `string('unconfirmed', 'pending', 'submitted', 'scheduled', 'completed', 'rejected', 'canceled')` | `unconfirmed` | `false`
-`scheduled_date` | Requested scheduled date in gregorain timestamp | `integer` |   | `false`
-`transfer_date` | Requested transfer date in gregorain timestamp | `integer` |   | `false`
-
+`notifications.email.send_to` | A list or string of email recipent(s) | `string() | array(string())` |   | `false`
+`notifications.email` | Inbound Email Notifications | `object()` |   | `false`
+`notifications` | Status notifications | `object()` |   | `false`
+`numbers./\+?[0-9]+/` |   | `object()` |   | `false`
+`numbers` | The numbers to port in | `object()` |   | `true`
+`port_state` | What state the port request is currently in | `string('unconfirmed' | 'pending' | 'submitted' | 'scheduled' | 'completed' | 'rejected' | 'canceled')` | `unconfirmed` | `false`
+`transfer_date` | Requested transfer date in gregorain timestamp | `integer()` |   | `false`
 
 
 
@@ -147,6 +147,26 @@ curl -v -X GET \
 curl -v -X GET \
     -H "X-Auth-Token: {AUTH_TOKEN}" \
     http://{SERVER}:8000/v2/accounts/{ACCOUNT_ID}/port_requests/submitted
+```
+
+#### Fetch
+
+> GET /v2/accounts/{ACCOUNT_ID}/port_requests/last_submitted
+
+```shell
+curl -v -X GET \
+    -H "X-Auth-Token: {AUTH_TOKEN}" \
+    http://{SERVER}:8000/v2/accounts/{ACCOUNT_ID}/port_requests/last_submitted
+```
+
+#### Fetch
+
+> GET /v2/accounts/{ACCOUNT_ID}/port_requests/{PORT_REQUEST_ID}/timeline
+
+```shell
+curl -v -X GET \
+    -H "X-Auth-Token: {AUTH_TOKEN}" \
+    http://{SERVER}:8000/v2/accounts/{ACCOUNT_ID}/port_requests/{PORT_REQUEST_ID}/timeline
 ```
 
 #### Fetch

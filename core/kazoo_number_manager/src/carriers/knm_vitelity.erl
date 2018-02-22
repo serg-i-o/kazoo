@@ -12,6 +12,7 @@
 -module(knm_vitelity).
 -behaviour(knm_gen_carrier).
 
+-export([info/0]).
 -export([is_local/0]).
 -export([find_numbers/3]).
 -export([acquire_number/1]).
@@ -23,6 +24,16 @@
 -include("knm.hrl").
 -include("knm_vitelity.hrl").
 
+
+%%--------------------------------------------------------------------
+%% @public
+%% @doc
+%% @end
+%%--------------------------------------------------------------------
+-spec info() -> map().
+info() ->
+    #{?CARRIER_INFO_MAX_PREFIX => 3
+     }.
 
 %%--------------------------------------------------------------------
 %% @public
@@ -236,8 +247,8 @@ query_vitelity(Prefix, Quantity, QOptions) ->
     URI = knm_vitelity_util:build_uri(QOptions),
     {'ok'
     ,{'http', [], _Host, _Port, _Path, [$? | QueryString]}
-    } = http_uri:parse(kz_util:to_list(URI)),
-    Options = cow_qs:parse_qs(kz_util:to_binary(QueryString)),
+    } = http_uri:parse(kz_term:to_list(URI)),
+    Options = cow_qs:parse_qs(kz_term:to_binary(QueryString)),
     XML =
         case props:get_value(<<"cmd">>, Options) of
             ?PREFIX_SEARCH_CMD -> ?PREFIX_SEARCH_RESP;
@@ -250,7 +261,7 @@ query_vitelity(Prefix, Quantity, QOptions) ->
 query_vitelity(Prefix, Quantity, QOptions) ->
     URI = knm_vitelity_util:build_uri(QOptions),
     lager:debug("querying ~s", [URI]),
-    case kz_http:post(kz_util:to_list(URI)) of
+    case kz_http:post(kz_term:to_list(URI)) of
         {'ok', _RespCode, _RespHeaders, RespXML} ->
             lager:debug("recv ~p: ~s", [_RespCode, RespXML]),
             process_xml_resp(Prefix, Quantity, RespXML);
@@ -269,7 +280,8 @@ query_vitelity(Prefix, Quantity, QOptions) ->
 -spec process_xml_resp(ne_binary(), pos_integer(), text()) ->
                               {'ok', kz_json:object()} |
                               {'error', any()}.
-process_xml_resp(Prefix, Quantity, XML) ->
+process_xml_resp(Prefix, Quantity, XML_binary) ->
+    XML = unicode:characters_to_list(XML_binary),
     try xmerl_scan:string(XML) of
         {XmlEl, _} -> process_xml_content_tag(Prefix, Quantity, XmlEl)
     catch
@@ -397,7 +409,7 @@ purchase_local_options(DID) ->
     [{'qs', [{'did', knm_converters:to_npan(DID)}
             ,{'cmd', <<"getlocaldid">>}
             ,{'xml', <<"yes">>}
-            ,{'routesip', get_routesip()}
+            ,{'routesip', knm_vitelity_util:get_routesip()}
              | knm_vitelity_util:default_options()
             ]}
     ,{'uri', knm_vitelity_util:api_uri()}
@@ -414,28 +426,11 @@ purchase_tollfree_options(DID) ->
     [{'qs', [{'did', knm_converters:to_npan(DID)}
             ,{'cmd', <<"gettollfree">>}
             ,{'xml', <<"yes">>}
-            ,{'routesip', get_routesip()}
+            ,{'routesip', knm_vitelity_util:get_routesip()}
              | knm_vitelity_util:default_options()
             ]}
     ,{'uri', knm_vitelity_util:api_uri()}
     ].
-
-%%--------------------------------------------------------------------
-%% @private
-%% @doc
-%%
-%% @end
-%%--------------------------------------------------------------------
--spec get_routesip() -> api_binary().
--ifdef(TEST).
-get_routesip() -> <<"1.2.3.4">>.
--else.
-get_routesip() ->
-    case knm_vitelity_util:get_routesip() of
-        [Route|_] -> Route;
-        Route -> Route
-    end.
--endif.
 
 %%--------------------------------------------------------------------
 %% @private
@@ -448,7 +443,7 @@ get_routesip() ->
 query_vitelity(Number, QOptions) ->
     URI = knm_vitelity_util:build_uri(QOptions),
     ?LOG_DEBUG("querying ~s", [URI]),
-    case kz_http:post(kz_util:to_list(URI)) of
+    case kz_http:post(kz_term:to_list(URI)) of
         {'ok', _RespCode, _RespHeaders, RespXML} ->
             ?LOG_DEBUG("recv ~p: ~s", [_RespCode, RespXML]),
             process_xml_resp(Number, RespXML);
@@ -465,7 +460,8 @@ query_vitelity(Number, QOptions) ->
 %%--------------------------------------------------------------------
 -spec process_xml_resp(knm_number:knm_number(), text()) ->
                               knm_number:knm_number().
-process_xml_resp(Number, XML) ->
+process_xml_resp(Number, XML_binary) ->
+    XML = unicode:characters_to_list(XML_binary),
     try xmerl_scan:string(XML) of
         {XmlEl, _} -> process_xml_content_tag(Number, XmlEl)
     catch

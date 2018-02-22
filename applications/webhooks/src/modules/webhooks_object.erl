@@ -16,39 +16,32 @@
 -include_lib("kazoo_amqp/include/kapi_conf.hrl").
 -include_lib("kazoo_documents/include/doc_types.hrl").
 
--define(ID, kz_util:to_binary(?MODULE)).
+-define(ID, kz_term:to_binary(?MODULE)).
 -define(NAME, <<"object">>).
 -define(DESC, <<"Receive notifications when objects in Kazoo are changed">>).
 
 -define(OBJECT_TYPES
-       ,kapps_config:get(?APP_NAME
-                        ,<<"object_types">>
-                        ,?DOC_TYPES
-                        )
-       ).
+       ,kapps_config:get(?APP_NAME, <<"object_types">>, ?DOC_TYPES)).
 
 -define(TYPE_MODIFIER
        ,kz_json:from_list(
           [{<<"type">>, <<"array">>}
           ,{<<"description">>, <<"A list of object types to handle">>}
           ,{<<"items">>, ?OBJECT_TYPES}
-          ])
-       ).
+          ])).
 
 -define(ACTIONS_MODIFIER
        ,kz_json:from_list(
           [{<<"type">>, <<"array">>}
           ,{<<"description">>, <<"A list of object actions to handle">>}
           ,{<<"items">>, ?DOC_ACTIONS}
-          ])
-       ).
+          ])).
 
 -define(MODIFIERS
        ,kz_json:from_list(
           [{<<"type">>, ?TYPE_MODIFIER}
           ,{<<"action">>, ?ACTIONS_MODIFIER}
-          ])
-       ).
+          ])).
 
 -define(METADATA
        ,kz_json:from_list(
@@ -56,8 +49,7 @@
           ,{<<"name">>, ?NAME}
           ,{<<"description">>, ?DESC}
           ,{<<"modifiers">>, ?MODIFIERS}
-          ])
-       ).
+          ])).
 
 %%--------------------------------------------------------------------
 %% @public
@@ -144,13 +136,11 @@ bindings() ->
 -spec format_event(kz_json:object(), ne_binary()) -> kz_json:object().
 format_event(JObj, AccountId) ->
     kz_json:from_list(
-      props:filter_undefined(
-        [{<<"id">>, kapi_conf:get_id(JObj)}
-        ,{<<"account_id">>, AccountId}
-        ,{<<"action">>, kz_api:event_name(JObj)}
-        ,{<<"type">>, kapi_conf:get_type(JObj)}
-        ])
-     ).
+      [{<<"id">>, kapi_conf:get_id(JObj)}
+      ,{<<"account_id">>, AccountId}
+      ,{<<"action">>, kz_api:event_name(JObj)}
+      ,{<<"type">>, kapi_conf:get_type(JObj)}
+      ]).
 
 %%--------------------------------------------------------------------
 %% @private

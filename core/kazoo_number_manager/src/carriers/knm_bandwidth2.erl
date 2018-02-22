@@ -14,6 +14,7 @@
 -module(knm_bandwidth2).
 -behaviour(knm_gen_carrier).
 
+-export([info/0]).
 -export([is_local/0]).
 -export([find_numbers/3]).
 -export([acquire_number/1]).
@@ -34,8 +35,9 @@
 -endif.
 
 -ifdef(TEST).
--define(DEBUG_WRITE(Format, Args), io:format(user, Format, Args)).
--define(DEBUG_APPEND(Format, Args), io:format(user, Format, Args)).
+-include_lib("eunit/include/eunit.hrl").
+-define(DEBUG_WRITE(Format, Args), ?debugFmt(Format, Args)).
+-define(DEBUG_APPEND(Format, Args), ?debugFmt(Format, Args)).
 -else.
 -define(BW2_DEBUG, kapps_config:get_is_true(?KNM_BW2_CONFIG_CAT, <<"debug">>, 'false')).
 -define(BW2_DEBUG_FILE, "/tmp/bandwidth2.com.xml").
@@ -54,32 +56,39 @@
 -ifdef(TEST).
 -define(BW2_ACCOUNT_ID, "eunit_testing_account").
 -else.
--define(BW2_ACCOUNT_ID,
-        kapps_config:get_string(?KNM_BW2_CONFIG_CAT, <<"account_id">>, "")).
+-define(BW2_ACCOUNT_ID
+       ,kapps_config:get_string(?KNM_BW2_CONFIG_CAT, <<"account_id">>, "")
+       ).
 -endif.
 
--define(IS_SANDBOX_PROVISIONING_TRUE,
-        kapps_config:get_is_true(?KNM_BW2_CONFIG_CAT, <<"sandbox_provisioning">>, 'true')).
--define(IS_PROVISIONING_ENABLED,
-        kapps_config:get_is_true(?KNM_BW2_CONFIG_CAT, <<"enable_provisioning">>, 'true')).
--define(BW2_ORDER_NAME_PREFIX,
-        kapps_config:get_string(?KNM_BW2_CONFIG_CAT, <<"order_name_prefix">>, "Kazoo")).
+-define(IS_SANDBOX_PROVISIONING_TRUE
+       ,kapps_config:get_is_true(?KNM_BW2_CONFIG_CAT, <<"sandbox_provisioning">>, 'true')
+       ).
+-define(IS_PROVISIONING_ENABLED
+       ,kapps_config:get_is_true(?KNM_BW2_CONFIG_CAT, <<"enable_provisioning">>, 'true')
+       ).
+-define(BW2_ORDER_NAME_PREFIX
+       ,kapps_config:get_string(?KNM_BW2_CONFIG_CAT, <<"order_name_prefix">>, "Kazoo")
+       ).
 
--define(BW2_API_USERNAME,
-        kapps_config:get_binary(?KNM_BW2_CONFIG_CAT, <<"api_username">>, <<>>)).
--define(BW2_API_PASSWORD,
-        kapps_config:get_binary(?KNM_BW2_CONFIG_CAT, <<"api_password">>, <<>>)).
--define(BW2_SIP_PEER,
-        kapps_config:get_string(?KNM_BW2_CONFIG_CAT, <<"sip_peer">>, "")).
--define(BW2_SITE_ID,
-        kapps_config:get_string(?KNM_BW2_CONFIG_CAT, <<"site_id">>, "")).
+-define(BW2_API_USERNAME
+       ,kapps_config:get_binary(?KNM_BW2_CONFIG_CAT, <<"api_username">>, <<>>)
+       ).
+-define(BW2_API_PASSWORD
+       ,kapps_config:get_binary(?KNM_BW2_CONFIG_CAT, <<"api_password">>, <<>>)
+       ).
+-define(BW2_SIP_PEER
+       ,kapps_config:get_string(?KNM_BW2_CONFIG_CAT, <<"sip_peer">>, "")
+       ).
+-define(BW2_SITE_ID
+       ,kapps_config:get_string(?KNM_BW2_CONFIG_CAT, <<"site_id">>, "")
+       ).
 
--define(MAX_SEARCH_QUANTITY,
-        kapps_config:get_integer(?KNM_BW2_CONFIG_CAT, <<"max_search_quantity">>, 500)).
+-define(MAX_SEARCH_QUANTITY
+       ,kapps_config:get_pos_integer(?KNM_BW2_CONFIG_CAT, <<"max_search_quantity">>, 500)
+       ).
 
 -define(BW2_ORDER_POLL_INTERVAL, 2000).
-
-
 
 -define(ORDER_NUMBER_XPATH, "ExistingTelephoneNumberOrderType/TelephoneNumberList/TelephoneNumber/text()").
 -define(CUSTOMER_ORDER_ID_XPATH, "CustomerOrderId/text()").
@@ -90,6 +99,16 @@
 -type search_ret() :: {'ok', knm_number:knm_numbers()} | {'error', any()}.
 
 %%% API
+
+%%--------------------------------------------------------------------
+%% @public
+%% @doc
+%% @end
+%%--------------------------------------------------------------------
+-spec info() -> map().
+info() ->
+    #{?CARRIER_INFO_MAX_PREFIX => 3
+     }.
 
 %%--------------------------------------------------------------------
 %% @public
@@ -152,7 +171,7 @@ find_numbers(<<NPA:3/binary>>, Quantity, Options) ->
     process_search_response(Result, Options);
 
 find_numbers(Search, Quantity, Options) ->
-    NpaNxx = kz_util:truncate_right_binary(Search, 6),
+    NpaNxx = kz_binary:truncate_right(Search, 6),
     Params = [ "npaNxx=", binary_to_list(NpaNxx)
              , "&enableTNDetail=false&quantity=", quantity_uri_param(Quantity)
              ],
@@ -195,11 +214,11 @@ acquire_number(Number) ->
         'true' ->
             PhoneNumber = knm_number:phone_number(Number),
             Num = to_bandwidth2(knm_phone_number:number(PhoneNumber)),
-            ON = lists:flatten([?BW2_ORDER_NAME_PREFIX, "-", integer_to_list(kz_util:current_tstamp())]),
+            ON = lists:flatten([?BW2_ORDER_NAME_PREFIX, "-", integer_to_list(kz_time:current_tstamp())]),
             AuthBy = knm_phone_number:auth_by(PhoneNumber),
 
             Props = [{'Name', [ON]}
-                    ,{'CustomerOrderId', [kz_util:to_list(AuthBy)]}
+                    ,{'CustomerOrderId', [kz_term:to_list(AuthBy)]}
                     ,{'SiteId', [?BW2_SITE_ID]}
                     ,{'PeerId', [?BW2_SIP_PEER]}
                     ,{'ExistingTelephoneNumberOrderType',
@@ -210,12 +229,12 @@ acquire_number(Number) ->
 
             case api_post(url(["orders"]), Body) of
                 {'error', Reason} ->
-                    Error = <<"Unable to acquire number: ", (kz_util:to_binary(Reason))/binary>>,
+                    Error = <<"Unable to acquire number: ", (kz_term:to_binary(Reason))/binary>>,
                     knm_errors:by_carrier(?MODULE, Error, Num);
                 {'ok', Xml} ->
                     Response = xmerl_xpath:string("Order", Xml),
-                    OrderId = kz_util:get_xml_value(?BW_ORDER_ID_XPATH, Xml),
-                    OrderStatus = kz_util:get_xml_value(?BW_ORDER_STATUS_XPATH, Xml),
+                    OrderId = kz_xml:get_value(?BW_ORDER_ID_XPATH, Xml),
+                    OrderStatus = kz_xml:get_value(?BW_ORDER_STATUS_XPATH, Xml),
                     check_order(OrderId, OrderStatus, Response, PhoneNumber, Number)
             end
     end.
@@ -223,15 +242,15 @@ acquire_number(Number) ->
 -spec check_order(api_binary(), api_binary(), xml_el(), knm_number:knm_number(), knm_number:knm_number()) -> knm_number:knm_number().
 check_order(OrderId, <<"RECEIVED">>, _Response, PhoneNumber, Number) ->
     timer:sleep(?BW2_ORDER_POLL_INTERVAL),
-    Url = ["orders/", kz_util:to_list(OrderId)],
+    Url = ["orders/", kz_term:to_list(OrderId)],
     case api_get(url(Url)) of
         {'error', Reason} ->
-            Error = <<"Unable to acquire number: ", (kz_util:to_binary(Reason))/binary>>,
+            Error = <<"Unable to acquire number: ", (kz_term:to_binary(Reason))/binary>>,
             Num = to_bandwidth2(knm_phone_number:number(PhoneNumber)),
             knm_errors:by_carrier(?MODULE, Error, Num);
         {'ok', Xml} ->
             Response = xmerl_xpath:string("Order", Xml),
-            OrderStatus = kz_util:get_xml_value(?BW_ORDER_STATUS_XPATH, Xml),
+            OrderStatus = kz_xml:get_value(?BW_ORDER_STATUS_XPATH, Xml),
             check_order(OrderId, OrderStatus, Response, PhoneNumber, Number)
     end;
 
@@ -242,13 +261,13 @@ check_order(_OrderId, <<"COMPLETE">>, Response, PhoneNumber, Number) ->
 
 check_order(_OrderId, <<"FAILED">>, _Response, PhoneNumber, _Number) ->
     Reason = <<"FAILED">>,
-    Error = <<"Unable to acquire number: ", (kz_util:to_binary(Reason))/binary>>,
+    Error = <<"Unable to acquire number: ", (kz_term:to_binary(Reason))/binary>>,
     Num = to_bandwidth2(knm_phone_number:number(PhoneNumber)),
     knm_errors:by_carrier(?MODULE, Error, Num);
 
 check_order(_OrderId, OrderStatus, _Response, PhoneNumber, _Number) ->
     Reason = OrderStatus,
-    Error = <<"Unable to acquire number: ", (kz_util:to_binary(Reason))/binary>>,
+    Error = <<"Unable to acquire number: ", (kz_term:to_binary(Reason))/binary>>,
     Num = to_bandwidth2(knm_phone_number:number(PhoneNumber)),
     knm_errors:by_carrier(?MODULE, Error, Num).
 
@@ -281,8 +300,8 @@ sites() ->
 
 -spec process_site(xml_el()) -> 'ok'.
 process_site(Site) ->
-    Id   = kz_util:get_xml_value("Id/text()", Site),
-    Name = kz_util:get_xml_value("Name/text()", Site),
+    Id   = kz_xml:get_value("Id/text()", Site),
+    Name = kz_xml:get_value("Name/text()", Site),
     io:format("Id: ~p Name: ~p~n", [Id, Name]).
 
 %% @public
@@ -296,8 +315,8 @@ peers(SiteId) ->
 
 -spec process_peer(xml_el()) -> 'ok'.
 process_peer(Peer) ->
-    Id   = kz_util:get_xml_value("PeerId/text()", Peer),
-    Name = kz_util:get_xml_value("PeerName/text()", Peer),
+    Id   = kz_xml:get_value("PeerId/text()", Peer),
+    Name = kz_xml:get_value("PeerName/text()", Peer),
     io:format("Id: ~p Name: ~p~n", [Id, Name]).
 
 %%% Internals
@@ -377,7 +396,7 @@ api_post("https://api.inetwork.com/v1.0/accounts/eunit_testing_account/orders", 
 -spec handle_response(kz_http:ret()) -> api_res().
 handle_response({Result, Code, Props, Response})
   when is_binary(Response) ->
-    handle_response({Result, Code, Props, kz_util:to_list(Response)});
+    handle_response({Result, Code, Props, kz_term:to_list(Response)});
 handle_response({'ok', 401, _, _Response}) ->
     ?DEBUG_APPEND("Response:~n401~n~s~n", [_Response]),
     lager:debug("bandwidth.com request error: 401 (unauthenticated)"),
@@ -436,11 +455,11 @@ number_order_response_to_json([]) ->
 number_order_response_to_json([Xml]) ->
     number_order_response_to_json(Xml);
 number_order_response_to_json(Xml) ->
-    Num = from_bandwidth2(kz_util:get_xml_value(?ORDER_NUMBER_XPATH, Xml)),
+    Num = from_bandwidth2(kz_xml:get_value(?ORDER_NUMBER_XPATH, Xml)),
     kz_json:from_list(
       props:filter_empty(
-        [{<<"order_id">>, kz_util:get_xml_value(?CUSTOMER_ORDER_ID_XPATH, Xml)}
-        ,{<<"order_name">>, kz_util:get_xml_value(?ORDER_NAME_XPATH, Xml)}
+        [{<<"order_id">>, kz_xml:get_value(?CUSTOMER_ORDER_ID_XPATH, Xml)}
+        ,{<<"order_name">>, kz_xml:get_value(?ORDER_NAME_XPATH, Xml)}
         ,{<<"number">>, Num}
         ]
        )
@@ -451,7 +470,7 @@ number_order_response_to_json(Xml) ->
 search_response_to_KNM([Xml], QID) ->
     search_response_to_KNM(Xml, QID);
 search_response_to_KNM(Xml, QID) ->
-    Num = from_bandwidth2(kz_util:get_xml_value("//TelephoneNumber/text()", Xml)),
+    Num = from_bandwidth2(kz_xml:get_value("//TelephoneNumber/text()", Xml)),
     JObj = kz_json:from_list(
              props:filter_empty(
                [{<<"rate_center">>, rate_center_to_json(Xml)}
@@ -462,7 +481,7 @@ search_response_to_KNM(Xml, QID) ->
 %% @private
 -spec tollfree_search_response_to_KNM(xml_el(), ne_binary()) -> tuple().
 tollfree_search_response_to_KNM(Xml, QID) ->
-    Num = from_bandwidth2(kz_util:get_xml_value("//TelephoneNumber/text()", Xml)),
+    Num = from_bandwidth2(kz_xml:get_value("//TelephoneNumber/text()", Xml)),
     {QID, {Num, ?MODULE, ?NUMBER_STATE_DISCOVERY, kz_json:new()}}.
 
 %%--------------------------------------------------------------------
@@ -479,9 +498,9 @@ rate_center_to_json([Xml]) ->
 rate_center_to_json(Xml) ->
     kz_json:from_list(
       props:filter_empty(
-        [{<<"name">>, kz_util:get_xml_value("//RateCenter/text()", Xml)}
-        ,{<<"lata">>, kz_util:get_xml_value("//LATA/text()", Xml)}
-        ,{<<"state">>, kz_util:get_xml_value("//State/text()", Xml)}
+        [{<<"name">>, kz_xml:get_value("//RateCenter/text()", Xml)}
+        ,{<<"lata">>, kz_xml:get_value("//LATA/text()", Xml)}
+        ,{<<"state">>, kz_xml:get_value("//State/text()", Xml)}
         ]
        )
      ).
@@ -504,14 +523,14 @@ verify_response(Xml) ->
         orelse validate_xpath_value(xmerl_xpath:string(TollFreePath, Xml))
         orelse validate_xpath_value(xmerl_xpath:string(SitesPath, Xml))
         orelse validate_xpath_value(xmerl_xpath:string(PeersPath, Xml))
-        orelse validate_xpath_value(kz_util:get_xml_value("//OrderStatus/text()", Xml))
+        orelse validate_xpath_value(kz_xml:get_value("//OrderStatus/text()", Xml))
     of
         'true' ->
             lager:debug("request was successful"),
             {'ok', Xml};
         'false' ->
             ErrorPath = "//ErrorList/Error/Description/text()",
-            Reason = case kz_util:get_xml_value(ErrorPath, Xml) of
+            Reason = case kz_xml:get_value(ErrorPath, Xml) of
                          'undefined' -> <<"Number not found">>;
                          R -> R
                      end,

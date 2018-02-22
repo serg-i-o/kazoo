@@ -1,12 +1,14 @@
-### Ubiquiti auth
+### Ubiquiti Authentication
+
+#### About Ubiquiti Authentication
 
 Ubiquiti Single Sign On.
-
-#### About
 
 #### Schema
 
 Provides an auth-token via Ubiquiti's SSO
+
+
 
 Key | Description | Type | Default | Required
 --- | ----------- | ---- | ------- | --------
@@ -15,8 +17,7 @@ Key | Description | Type | Default | Required
 
 
 
-
-#### Create an auth token
+#### Create
 
 > PUT /v2/ubiquiti_auth
 

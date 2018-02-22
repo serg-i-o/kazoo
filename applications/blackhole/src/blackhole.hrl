@@ -1,9 +1,9 @@
 -ifndef(BLACKHOLE_HRL).
 
 %% Typical includes needed
--include_lib("kazoo/include/kz_types.hrl").
--include_lib("kazoo/include/kz_log.hrl").
--include_lib("kazoo/include/kz_databases.hrl").
+-include_lib("kazoo_stdlib/include/kz_types.hrl").
+-include_lib("kazoo_stdlib/include/kz_log.hrl").
+-include_lib("kazoo_stdlib/include/kz_databases.hrl").
 -include_lib("kazoo_apps/include/kz_hooks.hrl").
 
 -define(APP_NAME, <<"blackhole">>).
@@ -30,8 +30,8 @@
                     ,bindings = [] :: ne_binaries() | '_'
                     ,websocket_session_id :: api_binary() | '_'
                     ,websocket_pid :: api_pid() | '_'
-                    ,req_id = kz_util:rand_hex_binary(16) :: ne_binary() | '_'
-                    ,timestamp :: gregorian_seconds() | '_'
+                    ,req_id = kz_binary:rand_hex(16) :: ne_binary() | '_'
+                    ,timestamp = kz_time:current_tstamp() :: gregorian_seconds() | '_'
                     ,name :: api_binary() | '_'
                     ,metadata :: any() | '_'
                     ,destination = kz_util:node_hostname() :: ne_binary() | '_'

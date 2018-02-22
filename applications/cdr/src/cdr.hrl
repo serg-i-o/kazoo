@@ -1,14 +1,13 @@
 -ifndef(CDR_HRL).
 
--include_lib("kazoo/include/kz_types.hrl").
--include_lib("kazoo/include/kz_databases.hrl").
--include_lib("kazoo/include/kz_log.hrl").
+-include_lib("kazoo_stdlib/include/kz_types.hrl").
+-include_lib("kazoo_stdlib/include/kz_databases.hrl").
+-include_lib("kazoo_stdlib/include/kz_log.hrl").
 
--define(APP_NAME, <<"cdr">>).
+-define(APP, cdr).
+-define(APP_NAME, (atom_to_binary(?APP, utf8))).
 -define(APP_VERSION, <<"4.0.0">>).
 -define(CONFIG_CAT, ?APP_NAME).
-
--define(MAX_RETRIES, 3).
 
 -type account_id() :: ne_binary().
 -type account_db() :: ne_binary().

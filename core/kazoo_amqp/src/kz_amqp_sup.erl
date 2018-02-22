@@ -37,8 +37,8 @@
 
 -define(CHILDREN, [?WORKER('kz_amqp_connections')
                   ,?SUPER('kz_amqp_connection_sup')
-                  ,?WORKER('kz_amqp_assignments')
                   ,?WORKER('kz_amqp_history')
+                  ,?WORKER('kz_amqp_assignments')
                   ,?WORKER('kz_amqp_bootstrap')
                   ]).
 
@@ -49,6 +49,7 @@
          ,{'name', {'local', Pool}}
          ,{'size', Size}
          ,{'max_overflow', Overflow}
+         ,{'strategy', 'fifo'}
          ,{'neg_resp_threshold', ?POOL_THRESHOLD}
          ,{'amqp_broker', Broker}
          ,{'amqp_queuename_start', Pool}
@@ -83,7 +84,8 @@ pools() ->
 pool_name() ->
     case get('$amqp_pool') of
         'undefined' -> ?POOL_NAME;
-        Name -> Name
+        Name -> lager:debug("using pool with name ~s", [Name]),
+                Name
     end.
 
 -spec add_amqp_pool(atom() | binary(), binary(), integer(), integer()) -> sup_startchild_ret().
@@ -121,13 +123,13 @@ add_amqp_pool(UUID, Broker, PoolSize, PoolOverflow, Bindings, Exchanges) ->
       Exchanges :: exchanges(),
       ServerAck :: boolean().
 add_amqp_pool(Uuid, Broker, PoolSize, PoolOverflow, Bindings, Exchanges, ServerAck) ->
-    UUID = kz_util:to_atom(Uuid, 'true'),
+    UUID = kz_term:to_atom(Uuid, 'true'),
     Args = ?ADD_POOL_ARGS(UUID, Broker, PoolSize, PoolOverflow, Bindings, Exchanges, ServerAck),
     supervisor:start_child(?SERVER, ?POOL_NAME_ARGS(UUID, Args)).
 
 -spec pool_pid(atom() | binary()) -> api_pid().
 pool_pid(Pool) ->
-    ID = kz_util:to_atom(Pool, 'true'),
+    ID = kz_term:to_atom(Pool, 'true'),
     case [ Pid || {Id,Pid,_,_} <- supervisor:which_children(?SERVER), Id == ID] of
         [] -> 'undefined';
         [P | _] -> P
@@ -157,25 +159,26 @@ init([]) ->
     PoolSize =
         case kz_config:get(?CONFIG_SECTION, 'pool_size') of
             [] -> kz_config:get_integer(?CONFIG_SECTION, 'pool_size', ?DEFAULT_POOL_SIZE);
-            [Size|_] -> kz_util:to_integer(Size)
+            [Size|_] -> kz_term:to_integer(Size)
         end,
 
     PoolOverflow =
         case kz_config:get(?CONFIG_SECTION, 'pool_overflow') of
             [] -> kz_config:get_integer(?CONFIG_SECTION, 'pool_overflow', ?DEFAULT_POOL_OVERFLOW);
-            [Overflow|_] -> kz_util:to_integer(Overflow)
+            [Overflow|_] -> kz_term:to_integer(Overflow)
         end,
 
     PoolThreshold =
         case kz_config:get(?CONFIG_SECTION, 'pool_threshold') of
             [] -> ?POOL_THRESHOLD;
-            [Threshold|_] -> kz_util:to_integer(Threshold)
+            [Threshold|_] -> kz_term:to_integer(Threshold)
         end,
 
     PoolArgs = [{'worker_module', 'kz_amqp_worker'}
                ,{'name', {'local', ?POOL_NAME}}
                ,{'size', PoolSize}
                ,{'max_overflow', PoolOverflow}
+               ,{'strategy', 'fifo'}
                ,{'neg_resp_threshold', PoolThreshold}
                ],
 

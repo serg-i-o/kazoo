@@ -23,10 +23,8 @@
 
 -define(MOD_CONFIG_CAT, <<(?CONFIG_CAT)/binary, ".services">>).
 
--define(PVT_TYPE, <<"service">>).
--define(PVT_FUNS, [fun add_pvt_type/2]).
 -define(CB_LIST, <<"services/crossbar_listing">>).
--define(AUDIT_LOG_LIST, <<"services/audit_logs">>).
+-define(AUDIT_LOG_LIST, <<"services/audit_logs_by_creation">>).
 
 -define(PATH_PLAN, <<"plan">>).
 -define(PATH_AUDIT, <<"audit">>).
@@ -129,7 +127,7 @@ validate_services(Context, ?HTTP_POST) ->
     catch
         'throw':{Error, Reason} ->
             R = kz_json:set_value([<<"billing_id">>, <<"invalid">>], Reason, kz_json:new()),
-            crossbar_util:response('error', kz_util:to_binary(Error), 400, R, Context)
+            crossbar_util:response('error', kz_term:to_binary(Error), 400, R, Context)
     end.
 
 validate(Context, ?PATH_PLAN) ->
@@ -234,7 +232,7 @@ maybe_save_services(Context, Services) ->
             crossbar_util:response(kz_services:public_json(NewServices), Context)
     catch
         'throw':{Error, Reason} ->
-            crossbar_util:response('error', kz_util:to_binary(Error), 500, Reason, Context)
+            crossbar_util:response('error', kz_term:to_binary(Error), 500, Reason, Context)
     end.
 
 -spec load_audit_logs(cb_context:context()) -> cb_context:context().
@@ -251,21 +249,7 @@ load_audit_logs(Context) ->
 
 -spec normalize_audit_logs(kz_json:object(), kz_json:objects()) -> kz_json:objects().
 normalize_audit_logs(JObj, Acc) ->
-    [kz_json:get_value(<<"doc">>, JObj) || Acc].
-
-
-
-%%--------------------------------------------------------------------
-%% @private
-%% @doc
-%% @end
-%%--------------------------------------------------------------------
--spec pagination_page_size(cb_context:context()) ->pos_integer().
-pagination_page_size(Context) ->
-    case crossbar_doc:pagination_page_size(Context) of
-        'undefined' -> 'undefined';
-        PageSize -> PageSize + 1
-    end.
+    [kz_json:get_value(<<"doc">>, JObj) | Acc].
 
 %%--------------------------------------------------------------------
 %% @private
@@ -276,31 +260,17 @@ pagination_page_size(Context) ->
                                  {'ok', kz_proplist()} |
                                  cb_context:context().
 create_view_options(Context) ->
-    MaxRange = kapps_config:get_integer(?MOD_CONFIG_CAT
-                                       ,<<"maximum_range">>
-                                       ,(?SECONDS_IN_DAY * 31  + ?SECONDS_IN_HOUR)
-                                       ),
-    case cb_modules_util:range_view_options(Context, MaxRange) of
+    AccountId = cb_context:account_id(Context),
+    case cb_modules_util:range_view_options(Context) of
         {CreatedFrom, CreatedTo} ->
-            create_view_options(Context, CreatedFrom, CreatedTo);
+            {'ok', [{'startkey', CreatedTo}
+                   ,{'endkey', CreatedFrom}
+                   ,{'databases', lists:reverse(kazoo_modb:get_range(AccountId, CreatedFrom, CreatedTo))}
+                   ,'descending'
+                   ,'include_docs'
+                   ]};
         Context1 -> Context1
     end.
-
--spec create_view_options(cb_context:context(), gregorian_seconds(), gregorian_seconds()) ->
-                                 {'ok', kz_proplist()}.
-create_view_options(Context, CreatedFrom, CreatedTo) ->
-    {'ok', [{'startkey', CreatedTo}
-           ,{'endkey', CreatedFrom}
-           ,{'limit', pagination_page_size(Context)}
-           ,{'databases', ranged_modbs(Context, CreatedFrom, CreatedTo)}
-           ,'descending'
-           ,'include_docs'
-           ]}.
-
--spec ranged_modbs(cb_context:context(), gregorian_seconds(), gregorian_seconds()) ->
-                          ne_binaries().
-ranged_modbs(Context, From, To) ->
-    kazoo_modb:get_range(cb_context:account_id(Context), From, To).
 
 %%--------------------------------------------------------------------
 %% @private
@@ -333,12 +303,10 @@ create_status_payload(Context) ->
 
 -spec create_status_payload(boolean(), kz_json:object()) -> kz_json:object().
 create_status_payload('true', _JObj) ->
-    kz_json:from_list([{<<"in_good_standing">>, 'true'}]);
+    kz_json:from_list([{<<"in_good_standing">>, 'true'}
+                      ]);
 create_status_payload('false', JObj) ->
-    kz_json:from_list(
-      props:filter_undefined([
-                              {<<"in_good_standing">>, 'false'}
-                             ,{<<"reason">>, kzd_services:reason(JObj)}
-                             ,{<<"reason_code">>, kzd_services:reason_code(JObj)}
-                             ])
-     ).
+    kz_json:from_list([{<<"in_good_standing">>, 'false'}
+                      ,{<<"reason">>, kzd_services:reason(JObj)}
+                      ,{<<"reason_code">>, kzd_services:reason_code(JObj)}
+                      ]).

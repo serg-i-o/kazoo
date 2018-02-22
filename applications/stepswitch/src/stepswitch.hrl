@@ -1,7 +1,7 @@
 -ifndef(STEPSWITCH_HRL).
--include_lib("kazoo/include/kz_types.hrl").
--include_lib("kazoo/include/kz_log.hrl").
--include_lib("kazoo/include/kz_databases.hrl").
+-include_lib("kazoo_stdlib/include/kz_types.hrl").
+-include_lib("kazoo_stdlib/include/kz_log.hrl").
+-include_lib("kazoo_stdlib/include/kz_databases.hrl").
 -include_lib("kazoo_number_manager/include/knm_phone_number.hrl").
 
 -define(ROUTES_DB, ?KZ_OFFNET_DB).
@@ -36,7 +36,8 @@
 -define(RESOURCE_TYPES_HANDLED, [<<"audio">>, <<"video">>, <<"sms">>]).
 
 -define(DEFAULT_EMERGENCY_CID_NUMBER,
-        kapps_config:get_non_empty(?SS_CONFIG_CAT, <<"default_emergency_cid_number">>)).
+        kapps_config:get_ne_binary(?SS_CONFIG_CAT, <<"default_emergency_cid_number">>)
+       ).
 
 -define(STEPSWITCH_HRL, 'true').
 -endif.

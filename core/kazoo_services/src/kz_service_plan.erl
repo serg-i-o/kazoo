@@ -11,7 +11,7 @@
 -export([activation_charges/3]).
 -export([create_items/3]).
 
--include("kazoo_services.hrl").
+-include("services.hrl").
 
 %%--------------------------------------------------------------------
 %% @public
@@ -22,15 +22,23 @@
 %%--------------------------------------------------------------------
 -spec fetch(ne_binary(), ne_binary()) -> kzd_service_plan:api_doc().
 fetch(PlanId, VendorId) ->
-    VendorDb = kz_util:format_account_id(VendorId, 'encoded'),
-    case kz_datamgr:open_cache_doc(VendorDb, PlanId) of
+    VendorDb = kz_util:format_account_db(VendorId),
+    case fetch_plan(VendorDb, PlanId) of
         {'ok', ServicePlan} ->
-            lager:debug("found service plan ~s/~s", [VendorDb, PlanId]),
+            ?LOG_DEBUG("found service plan ~s/~s", [VendorDb, PlanId]),
             ServicePlan;
         {'error', _R} ->
             lager:debug("unable to open service plan ~s/~s: ~p", [VendorDb, PlanId, _R]),
             'undefined'
     end.
+
+-ifdef(TEST).
+fetch_plan(?A_MASTER_ACCOUNT_DB, ?A_MASTER_PLAN_ID) ->
+    kz_json:fixture(?APP, "a_master_plans.json").
+-else.
+fetch_plan(VendorDb, PlanId) ->
+    kz_datamgr:open_cache_doc(VendorDb, PlanId).
+-endif.
 
 %%--------------------------------------------------------------------
 %% @public
@@ -79,7 +87,8 @@ create_items(ServicePlan, ServiceItems, Services, CategoryId, _ItemId, 'undefine
             AccountId = kzd_service_plan:account_id(ServicePlan),
             ServicePlanId = kz_doc:id(ServicePlan),
             lager:warning("unable to create service plan item ~s/~s from ~s/~s for bookkeeper ~s"
-                         ,[CategoryId, _ItemId, AccountId, ServicePlanId, _Bookkeeper]),
+                         ,[CategoryId, _ItemId, AccountId, ServicePlanId, _Bookkeeper]
+                         ),
             ServiceItems
     end;
 create_items(ServicePlan, ServiceItems, Services, CategoryId, ItemId, ItemPlan) ->
@@ -258,11 +267,11 @@ get_quantity(CategoryId, ItemId, ItemPlan, Services) ->
 -spec get_flat_rate(non_neg_integer(), kzd_item_plan:doc()) -> api_float().
 get_flat_rate(Quantity, ItemPlan) ->
     Rates = kzd_item_plan:flat_rates(ItemPlan),
-    L1 = [kz_util:to_integer(K) || K <- kz_json:get_keys(Rates)],
+    L1 = [kz_term:to_integer(K) || K <- kz_json:get_keys(Rates)],
     case lists:dropwhile(fun(K) -> Quantity > K end, lists:sort(L1)) of
         [] -> 'undefined';
         Range ->
-            kz_json:get_float_value(kz_util:to_binary(hd(Range)), Rates)
+            kz_json:get_float_value(kz_term:to_binary(hd(Range)), Rates)
     end.
 
 %%--------------------------------------------------------------------
@@ -275,12 +284,12 @@ get_flat_rate(Quantity, ItemPlan) ->
 -spec get_quantity_rate(non_neg_integer(), kzd_item_plan:doc()) -> api_float().
 get_quantity_rate(Quantity, ItemPlan) ->
     Rates = kzd_item_plan:rates(ItemPlan),
-    L1 = [kz_util:to_integer(K) || K <- kz_json:get_keys(Rates)],
+    L1 = [kz_term:to_integer(K) || K <- kz_json:get_keys(Rates)],
     case lists:dropwhile(fun(K) -> Quantity > K end, lists:sort(L1)) of
         [] ->
             kzd_item_plan:rate(ItemPlan);
         Range ->
-            kz_json:get_float_value(kz_util:to_binary(hd(Range)), Rates)
+            kz_json:get_float_value(kz_term:to_binary(hd(Range)), Rates)
     end.
 
 %%--------------------------------------------------------------------

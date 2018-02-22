@@ -1,17 +1,18 @@
-### Temporal_rules_sets
+### Temporal Rules Sets
 
-#### About Temporal_rules_sets
+#### About Temporal Rules Sets
 
 #### Schema
 
 Schema for a temporal rules sets
 
+
+
 Key | Description | Type | Default | Required
 --- | ----------- | ---- | ------- | --------
 `name` | A friendly name for the temporal rule set | `string(1..128)` |   | `true`
-`temporal_rules` | Temporal Rules | `array(string)` |   | `false`
-`temporal_rules.[]` |   | `string` |   | `false`
-
+`temporal_rules.[]` |   | `string()` |   | `false`
+`temporal_rules` | Temporal Rules | `array(string())` |   | `false`
 
 
 

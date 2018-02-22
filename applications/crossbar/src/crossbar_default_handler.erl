@@ -26,12 +26,9 @@
                   {'ok', cowboy_req:req(), 'undefined'}.
 init({_Any, 'http'}, Req0, HandlerOpts) ->
     kz_util:put_callid(?LOG_SYSTEM_ID),
-
     {Path, Req1} = cowboy_req:path(Req0),
-
     case get_magic_token(Path) of
-        'undefined' ->
-            {'ok', Req1, 'undefined'};
+        'undefined' -> {'ok', Req1, 'undefined'};
         Magic ->
             case is_valid_magic_path(Magic) of
                 'true' ->
@@ -51,10 +48,9 @@ is_valid_magic_path(Path, Templates) ->
 
 path_matches_template(Path, Template) ->
     lager:debug("testing ~s against ~s", [Path, Template]),
-    path_matches_template_tokens(
-      binary:split(Path, <<"/">>, ['global'])
+    path_matches_template_tokens(binary:split(Path, <<"/">>, ['global'])
                                 ,binary:split(Template, <<"/">>, ['global'])
-     ).
+                                ).
 
 path_matches_template_tokens([], []) -> 'true';
 path_matches_template_tokens([_|PathTokens], [<<":", _/binary>>|TemplateTokens]) ->
@@ -65,11 +61,8 @@ path_matches_template_tokens(_, _) -> 'false'.
 
 -spec upgrade(cowboy_req:req(), kz_proplist(), any(), any()) -> cowboy_req:req().
 upgrade(Req, Env, _Handler, HandlerOpts) ->
-    cowboy_rest:upgrade(Req
-                       ,props:set_value('handler', 'api_resource', Env)
-                       ,'api_resource'
-                       ,HandlerOpts
-                       ).
+    NewEnv = props:set_value('handler', 'api_resource', Env),
+    cowboy_rest:upgrade(Req, NewEnv, 'api_resource', HandlerOpts).
 
 get_magic_token(Path) ->
     get_magic_token_from_path(binary:split(Path, <<"/">>, ['global'])).
@@ -86,8 +79,7 @@ get_magic_token_from_path([Path|Paths]) ->
 handle(Req, State) ->
     lager:debug("default handler executing"),
     Headers = [{<<"Content-Type">>, <<"text/plain; charset=UTF-8">>}],
-    Path = code:priv_dir('crossbar') ++ "/kazoo.txt",
-    {'ok', Bytes} = file:read_file(Path),
+    {'ok', Bytes} = file:read_file(filename:join(code:priv_dir(?APP), "kazoo.txt")),
     {'ok', Req1} = cowboy_req:reply(200, Headers, Bytes, Req),
     {'ok', Req1, State}.
 

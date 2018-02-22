@@ -10,13 +10,14 @@
 %%% Fix KAZOO-3406: Sponsored by Velvetech LLC, implemented by SIPLABS LLC
 %%%-------------------------------------------------------------------
 -ifndef(KAPI_DIALPLAN_HRL).
--include_lib("kazoo/include/kz_types.hrl").
+-include_lib("kazoo_stdlib/include/kz_types.hrl").
 
 %% For dialplan messages, what does the Invite-Format param accept as values?
 -define(INVITE_FORMAT_TUPLE, {<<"Invite-Format">>
                              ,[<<"username">>, <<"e164">>
                               ,<<"npan">>, <<"1npan">>
                               ,<<"route">>, <<"loopback">>
+                              ,<<"contact">>
                               ]
                              }).
 
@@ -85,11 +86,11 @@
                            ,{<<"Enable-T38-Gateway">>, [<<"self">>, <<"peer">>]}
                            ,?INSERT_AT_TUPLE
                            ]).
--define(BRIDGE_REQ_TYPES, [{<<"Endpoints">>, fun is_list/1}
+-define(BRIDGE_REQ_TYPES, [{<<"Endpoints">>, fun kz_json:are_json_objects/1}
                           ,{<<"Custom-SIP-Headers">>, fun kz_json:is_json_object/1}
                           ,{<<"Custom-Channel-Vars">>, fun kz_json:is_json_object/1}
-                          ,{<<"Continue-On-Fail">>, fun kz_util:is_boolean/1}
-                          ,{<<"Secure-RTP">>, fun kz_util:is_boolean/1}
+                          ,{<<"Continue-On-Fail">>, fun kz_term:is_boolean/1}
+                          ,{<<"Secure-RTP">>, fun kz_term:is_boolean/1}
                           ,{<<"B-Leg-Events">>, fun b_leg_events_v/1}
                           ]).
 
@@ -141,6 +142,7 @@
         ,<<"To-Username">>
         ,<<"Simplify-Loopback">>
         ,<<"Loopback-Bowout">>
+        ,<<"Endpoint-Actions">>
         ]).
 -define(BRIDGE_REQ_ENDPOINT_VALUES, [?INVITE_FORMAT_TUPLE
                                     ,{<<"Endpoint-Type">>, [<<"sip">>, <<"freetdm">>, <<"skype">>]}
@@ -150,8 +152,8 @@
 -define(BRIDGE_REQ_ENDPOINT_TYPES, [{<<"Custom-SIP-Headers">>, fun kz_json:is_json_object/1}
                                    ,{<<"Custom-Channel-Vars">>, fun kz_json:is_json_object/1}
                                    ,{<<"Endpoint-Options">>, fun kz_json:is_json_object/1}
-                                   ,{<<"Ignore-Early-Media">>, fun kz_util:is_boolean/1}
-                                   ,{<<"Bypass-Media">>, fun kz_util:is_boolean/1}
+                                   ,{<<"Ignore-Early-Media">>, fun kz_term:is_boolean/1}
+                                   ,{<<"Bypass-Media">>, fun kz_term:is_boolean/1}
                                    ]).
 
 %% Page Request
@@ -159,6 +161,7 @@
 -define(OPTIONAL_PAGE_REQ_HEADERS, [<<"Caller-ID-Name">>, <<"Caller-ID-Number">>
                                    ,<<"Callee-ID-Name">>, <<"Callee-ID-Number">>
                                    ,<<"Timeout">>, <<"Insert-At">>
+                                   ,<<"Page-Options">>
                                    ,<<"Custom-Channel-Vars">>, <<"Custom-SIP-Headers">>
                                    ]).
 -define(PAGE_REQ_VALUES, [{<<"Event-Category">>, <<"call">>}
@@ -187,7 +190,7 @@
                           ,?INSERT_AT_TUPLE
                           ]).
 -define(STORE_REQ_TYPES, [{<<"Additional-Headers">>, fun is_list/1}
-                         ,{<<"Suppress-Error-Report">>, fun kz_util:is_boolean/1}
+                         ,{<<"Suppress-Error-Report">>, fun kz_term:is_boolean/1}
                          ]).
 
 %% Store Fax
@@ -361,7 +364,7 @@
                            ,{<<"Application-Name">>, <<"hangup">>}
                            ,?INSERT_AT_TUPLE
                            ]).
--define(HANGUP_REQ_TYPES, [{<<"Other-Leg-Only">>, fun kz_util:is_boolean/1}
+-define(HANGUP_REQ_TYPES, [{<<"Other-Leg-Only">>, fun kz_term:is_boolean/1}
                           ]).
 
 %% Hold
@@ -447,7 +450,7 @@
                           ,{<<"Application-Name">>, <<"fetch">>}
                           ,?INSERT_AT_TUPLE
                           ]).
--define(FETCH_REQ_TYPES, [{<<"From-Other-Leg">>, fun kz_util:is_boolean/1}]).
+-define(FETCH_REQ_TYPES, [{<<"From-Other-Leg">>, fun kz_term:is_boolean/1}]).
 
 %% Call Pickup
 -define(CALL_PICKUP_REQ_HEADERS, [<<"Application-Name">>, <<"Call-ID">>, <<"Target-Call-ID">>]).
@@ -463,9 +466,9 @@
                                 ,{<<"Application-Name">>, <<"call_pickup">>}
                                 ,?INSERT_AT_TUPLE
                                 ]).
--define(CALL_PICKUP_REQ_TYPES, [{<<"Park-After-Pickup">>, fun kz_util:is_boolean/1}
-                               ,{<<"Hangup-After-Pickup">>, fun kz_util:is_boolean/1}
-                               ,{<<"Move-Channel-If-Necessary">>, fun kz_util:is_boolean/1}
+-define(CALL_PICKUP_REQ_TYPES, [{<<"Park-After-Pickup">>, fun kz_term:is_boolean/1}
+                               ,{<<"Hangup-After-Pickup">>, fun kz_term:is_boolean/1}
+                               ,{<<"Move-Channel-If-Necessary">>, fun kz_term:is_boolean/1}
                                ]).
 
 %% Call Pickup
@@ -483,10 +486,10 @@
                                 ,{<<"Application-Name">>, <<"connect_leg">>}
                                 ,?INSERT_AT_TUPLE
                                 ]).
--define(CONNECT_LEG_REQ_TYPES, [{<<"Park-After-Pickup">>, fun kz_util:is_boolean/1}
-                               ,{<<"Hangup-After-Pickup">>, fun kz_util:is_boolean/1}
-                               ,{<<"Move-Channel-If-Necessary">>, fun kz_util:is_boolean/1}
-                               ,{<<"Publish-Usurp">>, fun kz_util:is_boolean/1}
+-define(CONNECT_LEG_REQ_TYPES, [{<<"Park-After-Pickup">>, fun kz_term:is_boolean/1}
+                               ,{<<"Hangup-After-Pickup">>, fun kz_term:is_boolean/1}
+                               ,{<<"Move-Channel-If-Necessary">>, fun kz_term:is_boolean/1}
+                               ,{<<"Publish-Usurp">>, fun kz_term:is_boolean/1}
                                ,{<<"B-Leg-Events">>, fun b_leg_events_v/1}
                                ]).
 
@@ -502,7 +505,7 @@
                               ,{<<"Application-Name">>, <<"eavesdrop">>}
                               ,?INSERT_AT_TUPLE
                               ]).
--define(EAVESDROP_REQ_TYPES, [{<<"Move-Channel-If-Necessary">>, fun kz_util:is_boolean/1}]).
+-define(EAVESDROP_REQ_TYPES, [{<<"Move-Channel-If-Necessary">>, fun kz_term:is_boolean/1}]).
 
 %% Play Request
 -define(PLAY_REQ_HEADERS, [<<"Application-Name">>, <<"Call-ID">>, <<"Media-Name">>]).
@@ -572,6 +575,8 @@
                                           ,<<"Media-Name">>
                                           ,<<"Media-Recorder">>
                                           ,<<"Media-Recording-ID">>
+                                          ,<<"Media-Recording-Endpoint-ID">>
+                                          ,<<"Media-Recording-Origin">>
                                           ]).
 -define(RECORD_CALL_REQ_VALUES, [{<<"Event-Category">>, <<"call">>}
                                 ,{<<"Event-Name">>, <<"command">>}
@@ -722,10 +727,10 @@
                                ]).
 -define(CONFERENCE_REQ_TYPES, [{<<"Call-ID">>, fun is_binary/1}
                               ,{<<"Conference-ID">>, fun is_binary/1}
-                              ,{<<"Mute">>, fun kz_util:is_boolean/1}
-                              ,{<<"Deaf">>, fun kz_util:is_boolean/1}
-                              ,{<<"Moderator">>, fun kz_util:is_boolean/1}
-                              ,{<<"Reinvite">>, fun kz_util:is_boolean/1}
+                              ,{<<"Mute">>, fun kz_term:is_boolean/1}
+                              ,{<<"Deaf">>, fun kz_term:is_boolean/1}
+                              ,{<<"Moderator">>, fun kz_term:is_boolean/1}
+                              ,{<<"Reinvite">>, fun kz_term:is_boolean/1}
                               ]).
 
 %% Originate Ready
@@ -772,7 +777,7 @@
                              ,?INSERT_AT_TUPLE
                              ]).
 -define(STORE_VM_REQ_TYPES, [{<<"Additional-Headers">>, fun is_list/1}
-                            ,{<<"Suppress-Error-Report">>, fun kz_util:is_boolean/1}
+                            ,{<<"Suppress-Error-Report">>, fun kz_term:is_boolean/1}
                             ]).
 
 %% Transfer
@@ -790,10 +795,10 @@
                          ,{<<"Event-Name">>, <<"command">>}
                          ,{<<"Application-Name">>, <<"transfer">>}
                          ,{<<"Transfer-Type">>, [<<"blind">>, <<"attended">>]}
+                         ,{<<"Transfer-Leg">>, [<<"bleg">>, <<"both">>]}
                          ,?INSERT_AT_TUPLE
                          ]).
 -define(TRANSFER_TYPES, [{<<"Call-ID">>, fun is_binary/1}
-                        ,{<<"Transfer-Leg">>, fun(T) -> lists:member(T, [<<"bleg">>, <<"both">>]) end}
                         ]).
 
 %% media_macro

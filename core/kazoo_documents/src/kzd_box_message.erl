@@ -28,6 +28,8 @@
         ,source_id/1, set_source_id/2
         ,to_sip/1, to_sip/2, set_to_sip/2
         ,utc_seconds/1
+
+        ,get_msg_id/1
         ]).
 
 -include("kz_documents.hrl").
@@ -61,13 +63,6 @@
 -define(PVT_TYPE, <<"mailbox_message">>).
 -define(PVT_LEGACY_TYPE, <<"private_media">>).
 
--define(MSG_ID(Year, Month, Id),
-        <<(kz_util:to_binary(Year))/binary
-          ,(kz_util:pad_month(Month))/binary
-          ,"-"
-          ,(Id)/binary
-        >>).
-
 %%--------------------------------------------------------------------
 %% @public
 %% @doc Generate a mailbox message doc with the given properties
@@ -96,14 +91,14 @@
 %%--------------------------------------------------------------------
 -spec new(ne_binary(), kz_proplist()) -> doc().
 new(AccountId, Props) ->
-    UtcSeconds = props:get_value(<<"Message-Timestamp">>, Props, kz_util:current_tstamp()),
-    Timestamp  = props:get_value(<<"Document-Timestamp">>, Props, UtcSeconds),
+    UtcSeconds = props:get_integer_value(<<"Message-Timestamp">>, Props, kz_time:current_tstamp()),
+    Timestamp  = props:get_integer_value(<<"Document-Timestamp">>, Props, UtcSeconds),
     {{Year, Month, _}, _} = calendar:gregorian_seconds_to_datetime(Timestamp),
 
-    MediaId = props:get_value(<<"Media-ID">>, Props, kz_util:rand_hex_binary(16)),
+    MediaId = props:get_value(<<"Media-ID">>, Props, kz_binary:rand_hex(16)),
 
     Db = kazoo_modb:get_modb(AccountId, Year, Month),
-    MsgId = ?MSG_ID(Year, Month, MediaId),
+    MsgId = kazoo_modb_util:modb_id(Year, Month, MediaId),
 
     Name = create_message_name(props:get_value(<<"Box-Num">>, Props)
                               ,props:get_value(<<"Timezone">>, Props)
@@ -134,9 +129,9 @@ new(AccountId, Props) ->
 %%--------------------------------------------------------------------
 -spec create_message_name(ne_binary(), api_binary(), gregorian_seconds()) -> ne_binary().
 create_message_name(BoxNum, 'undefined', UtcSeconds) ->
-    create_message_name(BoxNum, ?DEFAULT_TIMEZONE, UtcSeconds);
+    create_message_name(BoxNum, kz_account:default_timezone(), UtcSeconds);
 create_message_name(BoxNum, Timezone, UtcSeconds) ->
-    UtcDateTime = calendar:gregorian_seconds_to_datetime(UtcSeconds),
+    UtcDateTime = calendar:gregorian_seconds_to_datetime(kz_term:to_integer(UtcSeconds)),
     case localtime:utc_to_local(UtcDateTime, Timezone) of
         {'error', 'unknown_tz'} ->
             lager:info("unknown timezone: ~s", [Timezone]),
@@ -150,12 +145,12 @@ create_message_name(BoxNum, Timezone, UtcSeconds) ->
 -spec message_name(ne_binary(), kz_datetime(), string()) -> ne_binary().
 message_name(BoxNum, {{Y,M,D},{H,I,S}}, TZ) ->
     list_to_binary(["mailbox ", BoxNum, " message "
-                   ,kz_util:to_binary(M), "-"
-                   ,kz_util:to_binary(D), "-"
-                   ,kz_util:to_binary(Y), " "
-                   ,kz_util:to_binary(H), ":"
-                   ,kz_util:to_binary(I), ":"
-                   ,kz_util:to_binary(S), TZ
+                   ,kz_term:to_binary(M), "-"
+                   ,kz_term:to_binary(D), "-"
+                   ,kz_term:to_binary(Y), " "
+                   ,kz_term:to_binary(H), ":"
+                   ,kz_term:to_binary(I), ":"
+                   ,kz_term:to_binary(S), TZ
                    ]).
 
 %%--------------------------------------------------------------------
@@ -167,18 +162,24 @@ message_name(BoxNum, {{Y,M,D},{H,I,S}}, TZ) ->
                                    doc().
 build_metadata_object(Length, Call, MediaId, CIDNumber, CIDName, Timestamp) ->
     kz_json:from_list(
-      props:filter_undefined(
-        [{?KEY_META_TIMESTAMP, Timestamp}
-        ,{?KEY_META_FROM, kapps_call:from(Call)}
-        ,{?KEY_META_TO, kapps_call:to(Call)}
-        ,{?KEY_META_CID_NUMBER, CIDNumber}
-        ,{?KEY_META_CID_NAME, CIDName}
-        ,{?KEY_META_CALL_ID, kapps_call:call_id(Call)}
-        ,{?VM_KEY_FOLDER, ?VM_FOLDER_NEW}
-        ,{?KEY_META_LENGTH, Length}
-        ,{?KEY_MEDIA_ID, MediaId}
-        ])
-     ).
+      [{?KEY_META_TIMESTAMP, Timestamp}
+      ,{?KEY_META_FROM, kapps_call:from(Call)}
+      ,{?KEY_META_TO, kapps_call:to(Call)}
+      ,{?KEY_META_CID_NUMBER, CIDNumber}
+      ,{?KEY_META_CID_NAME, CIDName}
+      ,{?KEY_META_CALL_ID, kapps_call:call_id(Call)}
+      ,{?VM_KEY_FOLDER, ?VM_FOLDER_NEW}
+      ,{?KEY_META_LENGTH, Length}
+      ,{?KEY_MEDIA_ID, MediaId}
+      ]).
+
+-spec get_msg_id(kz_json:object()) -> api_ne_binary().
+get_msg_id(JObj) ->
+    Paths = [<<"_id">>
+            ,<<"media_id">>
+            ,[<<"metadata">>, <<"media_id">>]
+            ],
+    kz_json:get_first_defined(Paths, JObj).
 
 %%--------------------------------------------------------------------
 %% @public
@@ -294,11 +295,11 @@ set_to_sip(To, Metadata) ->
 utc_seconds(JObj) ->
     kz_json:get_integer_value(?KEY_UTC_SEC, JObj, 0).
 
--spec source_id(doc()) -> ne_binary().
+-spec source_id(doc()) -> api_ne_binary().
 source_id(JObj) ->
-    kz_json:get_value(?KEY_SOURCE_ID, JObj).
+    kz_json:get_ne_binary_value(?KEY_SOURCE_ID, JObj).
 
--spec set_source_id(api_binary(), doc()) -> doc().
+-spec set_source_id(api_ne_binary(), doc()) -> doc().
 set_source_id(SourceId, JObj) ->
     kz_json:set_value(?KEY_SOURCE_ID, SourceId, JObj).
 
@@ -348,9 +349,8 @@ change_message_name(NBoxJ, MsgJObj) ->
 %%--------------------------------------------------------------------
 -spec change_to_sip_field(ne_binary(), doc(), doc()) -> doc().
 change_to_sip_field(AccountId, NBoxJ, MsgJObj) ->
-    Realm = kz_util:get_account_realm(AccountId),
+    Realm = kz_account:fetch_realm(AccountId),
     BoxNum = kzd_voicemail_box:mailbox_number(NBoxJ),
-
     Metadata = metadata(MsgJObj),
     To = <<BoxNum/binary, "@", Realm/binary>>,
     set_metadata(set_to_sip(To, Metadata), MsgJObj).

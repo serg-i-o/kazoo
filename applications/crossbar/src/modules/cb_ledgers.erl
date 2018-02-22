@@ -20,6 +20,7 @@
 -include("crossbar.hrl").
 -include_lib("kazoo_transactions/include/kazoo_transactions.hrl").
 
+-define(AVAILABLE, <<"available">>).
 -define(CREDIT, <<"credit">>).
 -define(DEBIT, <<"debit">>).
 
@@ -61,6 +62,8 @@ init() ->
 allowed_methods() ->
     [?HTTP_GET].
 
+allowed_methods(?AVAILABLE) ->
+    [?HTTP_GET];
 allowed_methods(?CREDIT) ->
     [?HTTP_PUT];
 allowed_methods(?DEBIT) ->
@@ -96,7 +99,7 @@ resource_exists(_, _) -> 'true'.
 -spec authorize(cb_context:context()) -> boolean().
 authorize(Context) -> cb_simple_authz:authorize(Context).
 
--spec authorize(cb_context:context(), path_token()) -> boolean().
+-spec authorize(cb_context:context(), path_token()) -> boolean() | {'halt', cb_context:context()}.
 authorize(Context, Path) ->
     authorize_request(Context, Path, cb_context:req_verb(Context)).
 
@@ -104,17 +107,22 @@ authorize(Context, Path) ->
 authorize(Context, _Path, _Id) ->
     cb_simple_authz:authorize(Context).
 
--spec authorize_request(cb_context:context(), path_token(), http_method()) -> boolean().
+-spec authorize_request(cb_context:context(), path_token(), http_method()) ->
+                               boolean() |
+                               {'halt', cb_context:context()}.
 authorize_request(Context, ?DEBIT, ?HTTP_PUT) ->
     authorize_create(Context);
 authorize_request(Context, ?CREDIT, ?HTTP_PUT) ->
     authorize_create(Context);
+authorize_request(_Context, ?AVAILABLE, ?HTTP_GET) ->
+    'true';
 authorize_request(Context, _, ?HTTP_PUT) ->
     {'halt', cb_context:add_system_error('forbidden', Context)};
 authorize_request(Context, _, ?HTTP_GET) ->
     cb_simple_authz:authorize(Context).
 
--spec authorize_create(cb_context:context()) -> boolean().
+-spec authorize_create(cb_context:context()) -> boolean() |
+                                                {'halt', cb_context:context()}.
 authorize_create(Context) ->
     IsAuthenticated = cb_context:is_authenticated(Context),
     IsSuperDuperAdmin = cb_context:is_superduper_admin(Context),
@@ -152,6 +160,12 @@ validate(Context, ?DEBIT) ->
     ReqData = cb_context:req_data(Context),
     JObj = kz_json:set_value([<<"usage">>, <<"type">>], ?DEBIT, ReqData),
     cb_context:validate_request_data(<<"ledgers">>, cb_context:set_req_data(Context, JObj));
+validate(Context, ?AVAILABLE) ->
+    Available = kz_ledgers:available_ledgers(cb_context:account_id(Context)),
+    Setters = [{fun cb_context:set_resp_status/2, 'success'}
+              ,{fun cb_context:set_resp_data/2, Available}
+              ],
+    cb_context:setters(Context, Setters);
 validate(Context, Id) ->
     validate_ledger(Context, Id, cb_context:req_verb(Context)).
 
@@ -254,16 +268,16 @@ maybe_impact_reseller(Context, Ledger) ->
 
 -spec maybe_impact_reseller(cb_context:context(), kz_json:object(), boolean(), api_binary()) -> cb_context:context().
 maybe_impact_reseller(Context, Ledger, 'false', _ResellerId) ->
-    crossbar_util:response(kz_json:public_fields(Ledger), Context);
+    crossbar_util:response(kz_doc:public_fields(Ledger), Context);
 maybe_impact_reseller(Context, Ledger, 'true', 'undefined') ->
-    crossbar_util:response(kz_json:public_fields(Ledger), Context);
+    crossbar_util:response(kz_doc:public_fields(Ledger), Context);
 maybe_impact_reseller(Context, Ledger, 'true', ResellerId) ->
     case kazoo_ledger:save(kz_doc:delete_revision(Ledger), ResellerId) of
-        {'ok', _} -> crossbar_util:response(kz_json:public_fields(Ledger), Context);
+        {'ok', _} -> crossbar_util:response(kz_doc:public_fields(Ledger), Context);
         {'error', Error} ->
             Props = kz_json:recursive_to_proplist(Ledger),
             kz_notify:detailed_alert(?NOTIFY_MSG, [ResellerId, Error], Props),
-            crossbar_util:response(kz_json:public_fields(Ledger), Context)
+            crossbar_util:response(kz_doc:public_fields(Ledger), Context)
     end.
 
 %%--------------------------------------------------------------------
@@ -274,17 +288,28 @@ maybe_impact_reseller(Context, Ledger, 'true', ResellerId) ->
 %%--------------------------------------------------------------------
 -spec read_ledgers(cb_context:context()) -> cb_context:context().
 read_ledgers(Context) ->
-    case kz_ledgers:get(cb_context:account_id(Context)) of
+    {From, To} = case cb_modules_util:range_view_options(Context) of
+                     {_CreatedFrom, _CreatedTo}=FromTo -> FromTo;
+                     _ContextWithError -> {undefined, undefined}
+                 end,
+    case kz_ledgers:get(cb_context:account_id(Context), From, To) of
         {'error', Reason} ->
-            crossbar_util:response('error', kz_util:to_binary(Reason), Context);
+            crossbar_util:response('error', kz_term:to_binary(Reason), Context);
         {'ok', Ledgers} ->
-            crossbar_util:response(kz_json:map(fun ledger_resume_to_dollars/2, Ledgers), Context)
+            crossbar_util:response(summary_to_dollars(Ledgers), Context)
     end.
 
--spec ledger_resume_to_dollars(K, kz_transaction:units()) ->
-                                      {K, kz_transaction:dollars()}.
-ledger_resume_to_dollars(K, V) ->
-    {K, wht_util:units_to_dollars(V)}.
+-spec summary_to_dollars(kz_json:object()) -> kz_json:object().
+summary_to_dollars(LedgersJObj) ->
+    kz_json:expand(
+      kz_json:from_list(
+        [{Path, maybe_convert_units(lists:last(Path), Value)}
+         || {Path, Value} <- kz_json:to_proplist(kz_json:flatten(LedgersJObj))
+        ])).
+
+-spec maybe_convert_units(ne_binary(), kz_transaction:units() | T) -> kz_transaction:dollars() | T when T::any().
+maybe_convert_units(<<"amount">>, Units) -> wht_util:units_to_dollars(Units);
+maybe_convert_units(_, Value) -> Value.
 
 %%--------------------------------------------------------------------
 %% @private
@@ -294,40 +319,45 @@ ledger_resume_to_dollars(K, V) ->
 %%--------------------------------------------------------------------
 -spec read_ledger(cb_context:context(), ne_binary()) -> cb_context:context().
 read_ledger(Context, Ledger) ->
-    case view_options(Context, Ledger) of
-        {'ok', ViewOptions} ->
-            crossbar_doc:load_view(?LEDGER_VIEW
-                                  ,ViewOptions
-                                  ,Context
-                                  ,fun normalize_view_results/3
-                                  );
-        Ctx -> Ctx
-    end.
-
--spec view_options(cb_context:context(), ne_binary()) ->
-                          {'ok', crossbar_doc:view_options()} |
-                          cb_context:context().
-view_options(Context, Ledger) ->
     case cb_modules_util:range_view_options(Context) of
         {CreatedFrom, CreatedTo} ->
             AccountId = cb_context:account_id(Context),
             Databases = kazoo_modb:get_range(AccountId, CreatedFrom, CreatedTo),
-            {'ok', [{'startkey', [Ledger, CreatedTo]}
-                   ,{'endkey', [Ledger, CreatedFrom]}
-                   ,{'limit', pagination_page_size(Context)}
-                   ,'descending'
-                   ,'include_docs'
-                   ,{'databases', Databases}
-                   ]
-            };
-        Ctx -> Ctx
+            ViewOptions = [{'startkey', [Ledger, CreatedTo]}
+                          ,{'endkey', [Ledger, CreatedFrom]}
+                          ,{'limit', pagination_page_size(Context)}
+                          ,'descending'
+                          ,'include_docs'
+                          ,{'databases', Databases}
+                          ],
+            C1 = crossbar_doc:load_view(?LEDGER_VIEW, ViewOptions, Context, fun normalize_view_results/3),
+            fix_start_keys(C1, cb_context:resp_status(C1));
+        Context1 ->
+            Context1
     end.
 
--spec pagination_page_size(cb_context:context()) -> pos_integer().
+-spec pagination_page_size(cb_context:context()) -> api_pos_integer().
 pagination_page_size(Context) ->
     case crossbar_doc:pagination_page_size(Context) of
         'undefined' -> 'undefined';
         PageSize -> PageSize + 1
+    end.
+
+-spec fix_start_keys(cb_context:context(), crossbar_status()) -> cb_context:context().
+fix_start_keys(Context, 'success') ->
+    cb_context:set_resp_envelope(Context
+                                ,lists:foldl(fun fix_start_keys_fold/2
+                                            ,cb_context:resp_envelope(Context)
+                                            ,[<<"start_key">>, <<"next_start_key">>]
+                                            )
+                                );
+fix_start_keys(Context, _) -> Context.
+
+-spec fix_start_keys_fold(kz_json:path(), kz_json:object()) -> kz_json:object().
+fix_start_keys_fold(Key, JObj) ->
+    case kz_json:get_value(Key, JObj) of
+        'undefined' -> JObj;
+        [_Ledger, Timestamp] -> kz_json:set_value(Key, Timestamp, JObj)
     end.
 
 -spec normalize_view_results(cb_context:context(), kz_json:object(), kz_json:objects()) ->
@@ -343,7 +373,7 @@ normalize_view_result(Context, JObj) ->
 normalize_view_result(_Context, <<"ledger">>, JObj) ->
     Value = wht_util:units_to_dollars(kazoo_ledger:amount(JObj)),
     Ledger = kazoo_ledger:set_amount(JObj, Value),
-    kz_json:public_fields(maybe_set_doc_modb_prefix(Ledger));
+    kz_doc:public_fields(maybe_set_doc_modb_prefix(Ledger));
 %% Legacy, this would be debit or credit from per-minute transactions
 normalize_view_result(Context, _DocType, JObj) ->
     Transaction = kz_transaction:from_json(JObj),
@@ -357,7 +387,7 @@ normalize_view_result(Context, _DocType, JObj) ->
                                  [{<<"id">>, kz_transaction:account_id(Transaction)}
                                  ,{<<"name">>, cb_context:account_name(Context)}
                                  ];
-                             Code when Code =:= ?CODE_SUB_ACCOUNT_PER_MINUTE_CALL ->
+                             Code when Code =:= ?CODE_PER_MINUTE_CALL_SUB_ACCOUNT ->
                                  [{<<"id">>, kz_transaction:sub_account_id(Transaction)}
                                  ,{<<"name">>, kz_transaction:sub_account_name(Transaction)}
                                  ]
@@ -379,9 +409,9 @@ maybe_set_doc_modb_prefix(JObj) ->
     case kz_doc:id(JObj) of
         ?MATCH_MODB_PREFIX(_,_,_) -> JObj;
         _ ->
-            {Year, Month, _} = kz_util:to_date(kz_doc:created(JObj)),
-            Id = <<(kz_util:to_binary(Year))/binary
-                   ,(kz_util:pad_month(Month))/binary
+            {Year, Month, _} = kz_term:to_date(kz_doc:created(JObj)),
+            Id = <<(kz_term:to_binary(Year))/binary
+                   ,(kz_date:pad_month(Month))/binary
                    ,"-"
                    ,(kz_doc:id(JObj))/binary
                  >>,
@@ -396,8 +426,8 @@ maybe_set_doc_modb_prefix(JObj) ->
 %%--------------------------------------------------------------------
 -spec read_ledger_doc(cb_context:context(), ne_binary(), ne_binary()) -> cb_context:context().
 read_ledger_doc(Context, Ledger, ?MATCH_MODB_PREFIX(YYYY, MM, SimpleId) = Id) ->
-    Year  = kz_util:to_integer(YYYY),
-    Month = kz_util:to_integer(MM),
+    Year  = kz_term:to_integer(YYYY),
+    Month = kz_term:to_integer(MM),
     Options = ?TYPE_CHECK_OPTION([<<"ledger">>, ?DEBIT, ?CREDIT]),
     Ctx = crossbar_doc:load(Id, cb_context:set_account_modb(Context, Year, Month), Options),
     case cb_context:resp_status(Ctx) =:= 'success'

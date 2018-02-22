@@ -4,7 +4,7 @@
 %%%
 %%% @end
 %%% @contributors
-%%% Peter Defebvre
+%%%   Peter Defebvre
 %%%-------------------------------------------------------------------
 -module(wht_util).
 
@@ -20,7 +20,6 @@
         ,previous_balance/3
         ,current_account_dollars/1
         ]).
--export([get_balance_from_account/2]).
 -export([call_cost/1]).
 -export([calculate_call/1, calculate_call/5]).
 -export([per_minute_cost/1]).
@@ -32,51 +31,71 @@
 -export([modb/1]).
 -export([rollup/1
         ,rollup/2
+        ,update_rollup/2
         ]).
 
--include("include/kazoo_transactions.hrl").
+-export([per_minute_call/0
+        ,sub_account_per_minute_call/0
+        ,feature_activation/0
+        ,sub_account_feature_activation/0
+        ,number_activation/0
+        ,sub_account_number_activation/0
+        ,manual_addition/0
+        ,sub_account_manual_addition/0
+        ,auto_addition/0
+        ,sub_account_auto_addition/0
+        ,admin_discretion/0
+        ,topup/0
+        ,database_rollup/0
+        ,recurring/0
+        ,monthly_recurring/0
+        ,recurring_prorate/0
+        ,mobile/0
+        ,unknown/0
+        ]).
+
+-include("kazoo_transactions.hrl").
 
 %% tracked in hundred-ths of a cent
 -define(DOLLAR_TO_UNIT, 10000).
 
--define(REASONS, [{<<"per_minute_call">>, ?CODE_PER_MINUTE_CALL}
-                 ,{<<"sub_account_per_minute_call">>, ?CODE_SUB_ACCOUNT_PER_MINUTE_CALL}
-                 ,{<<"feature_activation">>, ?CODE_FEATURE_ACTIVATION}
-                 ,{<<"sub_account_feature_activation">>, ?CODE_SUB_ACCOUNT_FEATURE_ACTIVATION}
-                 ,{<<"number_activation">>, ?CODE_NUMBER_ACTIVATION}
-                 ,{<<"sub_account_number_activation">>, ?CODE_SUB_ACCOUNT_NUMBER_ACTIVATION}
-                 ,{<<"manual_addition">>, ?CODE_MANUAL_ADDITION}
-                 ,{<<"sub_account_manual_addition">>, ?CODE_SUB_ACCOUNT_MANUAL_ADDITION}
-                 ,{<<"auto_addition">>, ?CODE_AUTO_ADDITION}
-                 ,{<<"sub_account_auto_addition">>, ?CODE_SUB_ACCOUNT_AUTO_ADDITION}
-                 ,{<<"admin_discretion">>, ?CODE_ADMIN_DISCRETION}
-                 ,{<<"topup">>, ?CODE_TOPUP}
-                 ,{<<"database_rollup">>, ?CODE_DATABASE_ROLLUP}
-                 ,{<<"recurring">>, ?CODE_RECURRING}
-                 ,{<<"monthly_recurring">>, ?CODE_MONTHLY_RECURRING}
-                 ,{<<"recurring_prorate">>, ?CODE_RECURRING_PRORATE}
-                 ,{<<"mobile">>, ?CODE_MOBILE}
-                 ,{<<"unknown">>, ?CODE_UNKNOWN}
-                 ]).
-
--spec reasons() -> kz_proplist().
--spec reasons(integer()) -> kz_proplist().
--spec reasons(integer(), integer()) -> kz_proplist().
--spec reasons(integer(), integer(), kz_proplist(), kz_proplist()) ->
-                     ne_binaries().
+-spec reasons() -> #{ne_binary() => 1000..9999}.
 reasons() ->
-    ?REASONS.
+    #{per_minute_call() => ?CODE_PER_MINUTE_CALL
+     ,sub_account_per_minute_call() => ?CODE_PER_MINUTE_CALL_SUB_ACCOUNT
+     ,feature_activation() => ?CODE_FEATURE_ACTIVATION
+     ,sub_account_feature_activation() => ?CODE_FEATURE_ACTIVATION_SUB_ACCOUNT
+     ,number_activation() => ?CODE_NUMBER_ACTIVATION
+     ,sub_account_number_activation() => ?CODE_NUMBER_ACTIVATION_SUB_ACCOUNT
+     ,manual_addition() => ?CODE_MANUAL_ADDITION
+     ,sub_account_manual_addition() => ?CODE_MANUAL_ADDITION_SUB_ACCOUNT
+     ,auto_addition() => ?CODE_AUTO_ADDITION
+     ,sub_account_auto_addition() => ?CODE_SUB_ACCOUNT_AUTO_ADDITION
+     ,admin_discretion() => ?CODE_ADMIN_DISCRETION
+     ,topup() => ?CODE_TOPUP
+     ,database_rollup() => ?CODE_DATABASE_ROLLUP
+     ,recurring() => ?CODE_RECURRING
+     ,monthly_recurring() => ?CODE_MONTHLY_RECURRING
+     ,recurring_prorate() => ?CODE_RECURRING_PRORATE
+     ,mobile() => ?CODE_MOBILE
+     ,unknown() => ?CODE_UNKNOWN
+     }.
+
+-spec reasons(integer()) -> ne_binaries().
+-spec reasons(integer(), integer()) -> ne_binaries().
+
 reasons(Min) ->
     reasons(Min, 10000).
-reasons(Min, Max) ->
-    reasons(Min, Max, ?REASONS, []).
-reasons(_, _, [], Acc) ->
-    Acc;
-reasons(Min, Max, [{R, C} | T], Acc) when C > Min
-                                          andalso C < Max ->
-    reasons(Min, Max, T, [R | Acc]);
-reasons(Min, Max, [_ | T], Acc) ->
-    reasons(Min, Max, T, Acc).
+
+reasons(Min, Max)
+  when is_integer(Min),
+       is_integer(Max),
+       Min < Max ->
+    [Reason
+     || {Reason, Code} <- maps:to_list(reasons()),
+        Min < Code,
+        Code < Max
+    ].
 
 %%--------------------------------------------------------------------
 %% @public
@@ -88,7 +107,7 @@ reasons(Min, Max, [_ | T], Acc) ->
 dollars_to_units(Dollars) when is_number(Dollars) ->
     round(Dollars * ?DOLLAR_TO_UNIT);
 dollars_to_units(Dollars) ->
-    dollars_to_units(kz_util:to_float(Dollars)).
+    dollars_to_units(kz_term:to_float(Dollars)).
 
 %%--------------------------------------------------------------------
 %% @public
@@ -100,12 +119,12 @@ dollars_to_units(Dollars) ->
 units_to_dollars(Units) when is_number(Units) ->
     trunc(Units) / ?DOLLAR_TO_UNIT;
 units_to_dollars(Units) ->
-    units_to_dollars(kz_util:to_integer(Units)).
+    units_to_dollars(kz_term:to_integer(Units)).
 
 %% @public
 -spec pretty_print_dollars(dollars()) -> ne_binary().
 pretty_print_dollars(Amount) ->
-    kz_util:to_binary(io_lib:format("$~.2f", [Amount])).
+    kz_term:to_binary(io_lib:format("$~.2f", [Amount])).
 
 %%--------------------------------------------------------------------
 %% @public
@@ -126,14 +145,18 @@ base_call_cost(RateCost, RateMin, RateSurcharge)
 %%
 %% @end
 %%--------------------------------------------------------------------
--spec current_balance(ne_binary()) -> units().
-current_balance(Account) -> get_balance(Account, []).
+-type balance_ret() :: {'ok', units() | dollars()} | {'error', any()}.
 
--spec previous_balance(ne_binary(), ne_binary(), ne_binary()) -> units().
+-spec current_balance(ne_binary()) -> balance_ret().
+current_balance(Account) ->
+    get_balance(Account, []).
+
+-spec previous_balance(ne_binary(), ne_binary(), ne_binary()) -> balance_ret().
 previous_balance(Account, Year, Month) ->
-    get_balance(Account, [{'year', Year}, {'month', Month}]).
+    Options = [{'year', kz_term:to_binary(Year)}, {'month', kz_date:pad_month(Month)}],
+    get_balance(Account, Options).
 
--spec get_balance(ne_binary(), kazoo_modb:view_options()) -> units().
+-spec get_balance(ne_binary(), kazoo_modb:view_options()) -> balance_ret().
 get_balance(Account, Options) ->
     View = <<"transactions/credit_remaining">>,
     ViewOptions = ['reduce'
@@ -146,15 +169,13 @@ get_balance(Account, Options) ->
         {'ok', [ViewRes|_]} ->
             Balance = kz_json:get_integer_value(<<"value">>, ViewRes, 0),
             maybe_rollup(Account, Options, Balance);
-        {'error', _E} ->
+        {'error', _E} = Error ->
             lager:warning("unable to get current balance for ~s: ~p", [Account, _E]),
-            0
+            Error
     end.
 
--spec get_balance_from_previous(ne_binary(), kazoo_modb:view_options()) ->
-                                       units().
--spec get_balance_from_previous(ne_binary(), kazoo_modb:view_options(), integer()) ->
-                                       units().
+-spec get_balance_from_previous(ne_binary(), kazoo_modb:view_options()) -> balance_ret().
+-spec get_balance_from_previous(ne_binary(), kazoo_modb:view_options(), integer()) -> balance_ret().
 get_balance_from_previous(Account, ViewOptions) ->
     Retries = props:get_value('retry', ViewOptions, 3),
     get_balance_from_previous(Account, ViewOptions, Retries).
@@ -164,18 +185,17 @@ get_balance_from_previous(Account, ViewOptions, Retries) when Retries >= 0 ->
     Y = props:get_integer_value('year', ViewOptions, DefaultYear),
     M = props:get_integer_value('month', ViewOptions, DefaultMonth),
     {Year, Month} = kazoo_modb_util:prev_year_month(Y, M),
-
     VOptions = [{'year', Year}
                ,{'month', Month}
-               ,{'retry', Retries-1}
+               ,{'retry', Retries - 1}
                ],
     lager:warning("could not find current balance trying previous month: ~p", [VOptions]),
     get_balance(Account, VOptions);
-get_balance_from_previous(Account, ViewOptions, _) ->
-    lager:warning("3rd attempt to find balance in previous modb getting from account"),
-    get_balance_from_account(Account, ViewOptions).
+get_balance_from_previous(_Account, _ViewOptions, _) ->
+    lager:warning("3rd attempt to find balance in previous modb getting from account ~s", [_Account]),
+    {'error', 'retries_exceeded'}.
 
--spec maybe_rollup(ne_binary(), kz_proplist(), units()) -> units().
+-spec maybe_rollup(ne_binary(), kz_proplist(), units()) -> balance_ret().
 maybe_rollup(Account, ViewOptions, Balance) ->
     case props:get_integer_value('retry', ViewOptions) of
         'undefined' when Balance =< 0 ->
@@ -185,36 +205,34 @@ maybe_rollup(Account, ViewOptions, Balance) ->
         'undefined' ->
             %% NOTE: if the balance is positive the rollup likey
             %%   occured without issue
-            Balance;
+            {'ok', Balance};
         _Else ->
             %% NOTE: if the balance required retries try to
             %%   create the rollup for this month
             maybe_rollup_previous_month(Account, Balance)
     end.
 
--spec verify_monthly_rollup_exists(ne_binary(), units()) -> units().
+-spec verify_monthly_rollup_exists(ne_binary(), units()) -> balance_ret().
 verify_monthly_rollup_exists(Account, Balance) ->
     case kazoo_modb:open_doc(Account, <<"monthly_rollup">>) of
-        {'ok', _} -> Balance;
+        {'ok', _} -> {'ok', Balance};
         {'error', 'not_found'} ->
             %% NOTE: if the monthly_rollup is not in the current modb
             %%   then try to rollup the value
             maybe_rollup_previous_month(Account, Balance);
-        {'error', _R} -> Balance
+        {'error', _R} -> {'ok', Balance}
     end.
 
--spec maybe_rollup_previous_month(ne_binary(), units()) -> units().
+-spec maybe_rollup_previous_month(ne_binary(), units()) -> balance_ret().
 maybe_rollup_previous_month(Account, Balance) ->
     case get_rollup_from_previous(Account) of
-        {'error', _} -> Balance;
+        {'error', _} -> {'ok', Balance};
         {'ok', PrevBalance} ->
             _ = rollup(Account, PrevBalance),
-            Balance - PrevBalance
+            {'ok', Balance - PrevBalance}
     end.
 
--spec get_rollup_from_previous(ne_binary()) ->
-                                      {'ok', units()} |
-                                      {'error', any()}.
+-spec get_rollup_from_previous(ne_binary()) -> balance_ret().
 get_rollup_from_previous(Account) ->
     {Y, M, _} = erlang:date(),
     {Year, Month} = kazoo_modb_util:prev_year_month(Y, M),
@@ -226,19 +244,12 @@ get_rollup_from_previous(Account) ->
             %% NOTE: the previous modb had a rollup, use its balance as
             %%  the value for the current rollup.
             get_rollup_balance(Account, ModbOptions);
-        {'error', 'not_found'} ->
-            %% NOTE: the previous modb did not have a rollup, this must be
-            %%   the first rollup of this series, move the balance from the
-            %%   account
-            {'ok', get_balance_from_account(Account, ModbOptions)};
         {'error', _R}=E ->
             lager:warning("unable to get previous monthly_rollup: ~p", [_R]),
             E
     end.
 
--spec get_rollup_balance(ne_binary(), kazoo_modb:view_options()) ->
-                                {'ok', units()} |
-                                {'error', any()}.
+-spec get_rollup_balance(ne_binary(), kazoo_modb:view_options()) -> balance_ret().
 get_rollup_balance(Account, Options) ->
     View = <<"transactions/credit_remaining">>,
     ViewOptions = ['reduce'
@@ -251,9 +262,7 @@ get_rollup_balance(Account, Options) ->
         {'ok', [ViewRes|_]} ->
             {'ok', kz_json:get_integer_value(<<"value">>, ViewRes, 0)};
         {'error', _R}=E ->
-            lager:warning("unable to get rollup balance for ~s: ~p"
-                         ,[Account, _R]
-                         ),
+            lager:warning("unable to get rollup balance for ~s: ~p", [Account, _R]),
             E
     end.
 
@@ -263,29 +272,11 @@ get_rollup_balance(Account, Options) ->
 %%
 %% @end
 %%--------------------------------------------------------------------
--spec current_account_dollars(ne_binary()) -> dollars().
+-spec current_account_dollars(ne_binary()) -> balance_ret().
 current_account_dollars(Account) ->
-    Units = current_balance(Account),
-    units_to_dollars(Units).
-
-%%--------------------------------------------------------------------
-%% @public
-%% @doc
-%%
-%% @end
-%%--------------------------------------------------------------------
--spec get_balance_from_account(ne_binary(), kazoo_modb:view_options()) -> units().
-get_balance_from_account(Account, ViewOptions0) ->
-    View = <<"transactions/credit_remaining">>,
-    AccountId = kz_util:format_account_id(Account),
-    AccountDb = kz_util:format_account_db(AccountId),
-    ViewOptions = ['first_when_multiple' | ViewOptions0],
-    case kz_datamgr:get_results(AccountDb, View, kazoo_modb:strip_modb_options(ViewOptions)) of
-        {'ok', ViewRes} ->
-            kz_json:get_integer_value(<<"value">>, ViewRes, 0);
-        {'error', _R} ->
-            lager:warning("unable to get current balance for ~s: ~p", [AccountId, _R]),
-            0
+    case current_balance(Account) of
+        {'ok', Units} -> {'ok', units_to_dollars(Units)};
+        {'error', _} = Error -> Error
     end.
 
 %%--------------------------------------------------------------------
@@ -325,7 +316,14 @@ calculate_call(JObj) ->
             Surcharge = get_integer_value(<<"Surcharge">>, CCVs),
             {ChargedSeconds, Cost} = calculate_call(Rate, RateIncr, RateMin, Surcharge, BillingSecs),
             Discount = trunc((get_integer_value(<<"Discount-Percentage">>, CCVs) * 0.01) * Cost),
-            lager:info("rate $~p/~ps, minimum ~ps, surcharge $~p, for ~ps (~ps), no charge time ~ps, sub total $~p, discount $~p, total $~p"
+            lager:info("rate $~p/~ps,"
+                       " minimum ~ps,"
+                       " surcharge $~p,"
+                       " for ~ps (~ps),"
+                       " no charge time ~ps,"
+                       " sub total $~p,"
+                       " discount $~p,"
+                       " total $~p"
                       ,[units_to_dollars(Rate)
                        ,RateIncr, RateMin
                        ,units_to_dollars(Surcharge)
@@ -346,7 +344,8 @@ get_integer_value(Key, JObj) ->
 -spec get_integer_value(ne_binary(), kz_json:object(), any()) -> integer().
 get_integer_value(Key, JObj, Default) ->
     Keys = [Key, kz_json:normalize_key(Key)],
-    kz_util:to_integer(kz_json:get_first_defined(Keys, JObj, Default)).
+    kz_term:to_integer(
+      kz_json:get_first_defined(Keys, JObj, Default)).
 
 %%--------------------------------------------------------------------
 %% @public
@@ -399,8 +398,8 @@ calculate_call(R, RI, RM, Sur, Secs) ->
         'true' ->
             {RM, trunc(Sur + ((RM / 60) * R))};
         'false' ->
-            {kz_util:ceiling( Secs / RI ) * RI
-            ,trunc(Sur + ((RM / 60) * R) + (kz_util:ceiling((Secs - RM) / RI) * ((RI / 60) * R)))
+            {kz_term:ceiling( Secs / RI ) * RI
+            ,trunc(Sur + ((RM / 60) * R) + (kz_term:ceiling((Secs - RM) / RI) * ((RI / 60) * R)))
             }
     end.
 
@@ -411,7 +410,45 @@ calculate_call(R, RI, RM, Sur, Secs) ->
 %% @end
 %%--------------------------------------------------------------------
 -spec default_reason() -> ne_binary().
-default_reason() -> <<"unknown">>.
+default_reason() -> unknown().
+
+-spec per_minute_call() -> ne_binary().
+-spec sub_account_per_minute_call() -> ne_binary().
+-spec feature_activation() -> ne_binary().
+-spec sub_account_feature_activation() -> ne_binary().
+-spec number_activation() -> ne_binary().
+-spec sub_account_number_activation() -> ne_binary().
+-spec manual_addition() -> ne_binary().
+-spec sub_account_manual_addition() -> ne_binary().
+-spec auto_addition() -> ne_binary().
+-spec sub_account_auto_addition() -> ne_binary().
+-spec admin_discretion() -> ne_binary().
+-spec topup() -> ne_binary().
+-spec database_rollup() -> ne_binary().
+-spec recurring() -> ne_binary().
+-spec monthly_recurring() -> ne_binary().
+-spec recurring_prorate() -> ne_binary().
+-spec mobile() -> ne_binary().
+-spec unknown() -> ne_binary().
+
+per_minute_call() -> <<"per_minute_call">>.
+sub_account_per_minute_call() -> <<"sub_account_per_minute_call">>.
+feature_activation() -> <<"feature_activation">>.
+sub_account_feature_activation() -> <<"sub_account_feature_activation">>.
+number_activation() -> <<"number_activation">>.
+sub_account_number_activation() -> <<"sub_account_number_activation">>.
+manual_addition() -> <<"manual_addition">>.
+sub_account_manual_addition() -> <<"sub_account_manual_addition">>.
+auto_addition() -> <<"auto_addition">>.
+sub_account_auto_addition() -> <<"sub_account_auto_addition">>.
+admin_discretion() -> <<"admin_discretion">>.
+topup() -> <<"topup">>.
+database_rollup() -> <<"database_rollup">>.
+recurring() -> <<"recurring">>.
+monthly_recurring() -> <<"monthly_recurring">>.
+recurring_prorate() -> <<"recurring_prorate">>.
+mobile() -> <<"mobile">>.
+unknown() -> <<"unknown">>.
 
 %%--------------------------------------------------------------------
 %% @public
@@ -421,7 +458,7 @@ default_reason() -> <<"unknown">>.
 %%--------------------------------------------------------------------
 -spec is_valid_reason(ne_binary()) -> boolean().
 is_valid_reason(Reason) ->
-    lists:keyfind(Reason, 1, ?REASONS) =/= 'false'.
+    maps:is_key(Reason, reasons()).
 
 %%--------------------------------------------------------------------
 %% @public
@@ -431,10 +468,7 @@ is_valid_reason(Reason) ->
 %%--------------------------------------------------------------------
 -spec reason_code(ne_binary()) -> pos_integer().
 reason_code(Reason) ->
-    case lists:keyfind(Reason, 1, ?REASONS) of
-        'false' -> ?CODE_UNKNOWN;
-        {_, Code} -> Code
-    end.
+    maps:get(Reason, reasons(), ?CODE_UNKNOWN).
 
 %%--------------------------------------------------------------------
 %% @public
@@ -442,10 +476,10 @@ reason_code(Reason) ->
 %%
 %% @end
 %%--------------------------------------------------------------------
--spec code_reason(pos_integer()) -> api_binary().
+-spec code_reason(pos_integer()) -> api_ne_binary().
 code_reason(Code) ->
-    case lists:keyfind(Code, 2, ?REASONS) of
-        'false' -> <<"unknown">>;
+    case lists:keyfind(Code, 2, maps:to_list(reasons())) of
+        'false' -> default_reason();
         {Reason, _} -> Reason
     end.
 
@@ -457,10 +491,7 @@ code_reason(Code) ->
 %%--------------------------------------------------------------------
 -spec collapse_call_transactions(kz_json:objects()) -> kz_json:objects().
 collapse_call_transactions(Transactions) ->
-    collapse_call_transactions(Transactions
-                              ,dict:new()
-                              ,[]
-                              ).
+    collapse_call_transactions(Transactions, dict:new(), []).
 
 %%--------------------------------------------------------------------
 %% @public
@@ -469,12 +500,34 @@ collapse_call_transactions(Transactions) ->
 %% @end
 %%--------------------------------------------------------------------
 -spec modb(ne_binary()) -> 'ok'.
+modb(?MATCH_MODB_SUFFIX_RAW(_AccountId, Year, Month) = AccountMODb) ->
+    {Y, M, _} = erlang:date(),
+    case {kz_term:to_binary(Y), kz_date:pad_month(M)} of
+        {Year, Month} -> rollup_current_modb(AccountMODb, 3);
+        _ -> lager:debug("~s is not current month, ignoring...", [AccountMODb])
+    end;
+modb(?MATCH_MODB_SUFFIX_ENCODED(_AccountId, Year, Month) = AccountMODb) ->
+    {Y, M, _} = erlang:date(),
+    case {kz_term:to_binary(Y), kz_date:pad_month(M)} of
+        {Year, Month} -> rollup_current_modb(AccountMODb, 3);
+        _ -> lager:debug("~s is not current month, ignoring...", [AccountMODb])
+    end;
 modb(AccountMODb) ->
-    Routines = [fun kazoo_modb_util:prev_year_month/1
-               ,fun({Year, Month}) -> previous_balance(AccountMODb, Year, Month) end
-               ,fun(Balance) -> rollup(AccountMODb, Balance) end
-               ],
-    lists:foldl(fun(F, A) -> F(A) end, AccountMODb, Routines).
+    lager:debug("~s was not matched as a account modb database, ignoring...", [AccountMODb]).
+
+-spec rollup_current_modb(ne_binary(), 0..3) -> 'ok'.
+rollup_current_modb(_AccountMODb, 0) ->
+    lager:debug("retries exceeded during rollup current modb ~s", [_AccountMODb]);
+rollup_current_modb(AccountMODb, Loop) ->
+    {PYear, PMonth} = kazoo_modb_util:prev_year_month(AccountMODb),
+    case previous_balance(AccountMODb, PYear, PMonth) of
+        {'ok', Balance} ->
+            rollup(AccountMODb, Balance);
+        {'error', 'timeout'} ->
+            rollup_current_modb(AccountMODb, Loop - 1);
+        {'error', _R} ->
+            lager:debug("failed to rollup current modb ~s: ~p", [AccountMODb, _R])
+    end.
 
 -spec rollup(kz_transaction:transaction()) -> 'ok'.
 -spec rollup(ne_binary(), integer()) -> 'ok'.
@@ -483,19 +536,47 @@ rollup(Transaction) ->
     Transaction2 = kz_transaction:set_description(<<"monthly rollup">>, Transaction1),
     case kz_transaction:save(Transaction2) of
         {'error', 'conflict'} ->
-            lager:warning("monthly rollup transaction failed: document already exist", []);
+            lager:warning("monthly rollup transaction failed: document already exist");
         {'error', _E} ->
             lager:error("monthly rollup transaction failed: ~p", [_E]);
         {'ok', _} ->
-            lager:debug("monthly rollup transaction success", [])
+            lager:debug("monthly rollup transaction success")
     end.
 
-rollup(<<_/binary>> = AccountMODb, Balance) when Balance >= 0 ->
+rollup(?NE_BINARY = AccountMODb, Balance) when Balance >= 0 ->
     AccountId = kz_util:format_account_id(AccountMODb, 'raw'),
+    lager:debug("creating monthly rollup for ~s as a credit for ~p", [AccountMODb, Balance]),
     rollup(kz_transaction:credit(AccountId, Balance));
-rollup(<<_/binary>> = AccountMODb, Balance) ->
+rollup(?NE_BINARY = AccountMODb, Balance) ->
     AccountId = kz_util:format_account_id(AccountMODb, 'raw'),
+    lager:debug("creating monthly rollup for ~s as a debit for ~p", [AccountMODb, Balance]),
     rollup(kz_transaction:debit(AccountId, -1*Balance)).
+
+-spec update_rollup(ne_binary(), integer()) -> 'ok'.
+update_rollup(Account, Balance) ->
+    case kazoo_modb:open_doc(Account, <<"monthly_rollup">>) of
+        {'ok', JObj} -> update_rollup(Account, Balance, JObj);
+        {'error', _R} -> rollup(Account, Balance)
+    end.
+
+-spec update_rollup(ne_binary(), integer(), kz_json:object()) -> 'ok'.
+update_rollup(Account, Balance, JObj) ->
+    Transaction = kz_transaction:from_json(JObj),
+    case kz_transaction:type(Transaction) of
+        <<"credit">> when Balance >= 0 ->
+            update_existing_rollup(Account, Balance, Transaction);
+        <<"debit">> when Balance < 0 ->
+            update_existing_rollup(Account, Balance, Transaction);
+        _Else ->
+            EncodedMODb = kz_util:format_account_modb(kazoo_modb:get_modb(Account), 'encoded'),
+            {'ok', _} = kz_datamgr:del_doc(EncodedMODb, JObj),
+            rollup(Account, abs(Balance))
+    end.
+
+-spec update_existing_rollup(ne_binary(), integer(), kz_transaction:transaction()) -> 'ok'.
+update_existing_rollup(_Account, Balance, Transaction) ->
+    {'ok', _} = kz_transaction:save(kz_transaction:set_amount_and_type(Balance, Transaction)),
+    lager:debug("updated rollup in ~s with new balance ~p", [_Account, Balance]).
 
 %%--------------------------------------------------------------------
 %% @private
@@ -509,8 +590,8 @@ collapse_call_transactions([], Calls, Transactions) ->
     clean_transactions(Transactions ++ dict:to_list(Calls));
 collapse_call_transactions([JObj|JObjs], Calls, Transactions) ->
     case kz_json:get_integer_value(<<"pvt_code">>, JObj) of
-        Code when Code >= 1000
-                  andalso Code < 2000 ->
+        Code when Code >= 1000,
+                  Code < 2000 ->
             C = collapse_call_transaction(JObj, Calls),
             collapse_call_transactions(JObjs, C, Transactions);
         _Else ->
@@ -519,12 +600,6 @@ collapse_call_transactions([JObj|JObjs], Calls, Transactions) ->
             collapse_call_transactions(JObjs, Calls, [NJObj|Transactions])
     end.
 
-%%--------------------------------------------------------------------
-%% @private
-%% @doc
-%%
-%% @end
-%%--------------------------------------------------------------------
 -spec collapse_call_transaction(kz_json:object(), dict:dict()) -> dict:dict().
 -spec collapse_call_transaction(binary(), kz_json:object(), dict:dict()) -> dict:dict().
 collapse_call_transaction(JObj, Calls) ->
@@ -538,8 +613,7 @@ collapse_call_transaction(JObj, Calls) ->
 collapse_call_transaction(CallId, JObj, Calls) ->
     case dict:find(CallId, Calls) of
         'error' ->
-            Amount = get_amount(JObj),
-            NJObj = kz_json:set_value(<<"amount">>, Amount, JObj),
+            NJObj = kz_json:set_value(<<"amount">>, get_amount(JObj), JObj),
             dict:store(CallId, NJObj, Calls);
         {'ok', Call} ->
             Routines = [fun(C) -> collapse_created_time(C, JObj) end
@@ -551,12 +625,6 @@ collapse_call_transaction(CallId, JObj, Calls) ->
             dict:store(CallId, C, Calls)
     end.
 
-%%--------------------------------------------------------------------
-%% @private
-%% @doc
-%%
-%% @end
-%%--------------------------------------------------------------------
 -spec collapse_created_time(kz_json:object(), kz_json:object()) ->
                                    kz_json:object().
 collapse_created_time(Call, JObj) ->
@@ -567,12 +635,6 @@ collapse_created_time(Call, JObj) ->
         'false' -> kz_json:set_value(<<"created">>, MaybeCreated, Call)
     end.
 
-%%--------------------------------------------------------------------
-%% @private
-%% @doc
-%%
-%% @end
-%%--------------------------------------------------------------------
 -spec collapse_ended_time(kz_json:object(), kz_json:object()) ->
                                  kz_json:object().
 collapse_ended_time(Call, JObj) ->
@@ -583,26 +645,13 @@ collapse_ended_time(Call, JObj) ->
         'false' -> kz_json:set_value(<<"ended">>, MaybeEnd, Call)
     end.
 
-%%--------------------------------------------------------------------
-%% @private
-%% @doc
-%%
-%% @end
-%%--------------------------------------------------------------------
 -spec collapse_amount(kz_json:object(), kz_json:object()) ->
                              kz_json:object().
 collapse_amount(Call, JObj) ->
-    CurrentAmount = kz_json:get_value(<<"amount">>, Call, 0),
+    CurrentAmount = kz_json:get_integer_value(<<"amount">>, Call, 0),
     MaybeAmount = get_amount(JObj),
-    kz_json:set_value(<<"amount">>, MaybeAmount+CurrentAmount, Call).
+    kz_json:set_value(<<"amount">>, MaybeAmount + CurrentAmount, Call).
 
-
-%%--------------------------------------------------------------------
-%% @private
-%% @doc
-%%
-%% @end
-%%--------------------------------------------------------------------
 -spec collapse_metadata(kz_json:object(), kz_json:object()) ->
                                kz_json:object().
 collapse_metadata(Call, JObj) ->
@@ -615,27 +664,14 @@ collapse_metadata(Call, JObj) ->
         _ -> Call
     end.
 
-%%--------------------------------------------------------------------
-%% @private
-%% @doc
-%%
-%% @end
-%%--------------------------------------------------------------------
 -spec get_amount(kz_json:object()) -> dollars().
 get_amount(Call) ->
-    Amount = kz_json:get_value(<<"amount">>, Call, 0),
-    Type = kz_json:get_value(<<"type">>, Call),
-    case Type of
-        <<"debit">> -> Amount*-1;
-        _ -> Amount
+    Amount = kz_json:get_integer_value(<<"amount">>, Call, 0),
+    case <<"debit">> =:= kz_json:get_value(<<"type">>, Call) of
+        true -> -1 * Amount;
+        false -> Amount
     end.
 
-%%--------------------------------------------------------------------
-%% @private
-%% @doc
-%%
-%% @end
-%%--------------------------------------------------------------------
 -spec clean_transactions(kz_json:objects()) ->
                                 kz_json:objects().
 -spec clean_transactions(kz_json:objects(), kz_json:objects()) ->
@@ -670,52 +706,27 @@ clean_transaction(Transaction) ->
                ],
     lists:foldl(fun(F, T) -> F(T) end, Transaction, Routines).
 
-%%--------------------------------------------------------------------
-%% @private
-%% @doc
-%%
-%% @end
-%%--------------------------------------------------------------------
 -spec clean_amount(kz_json:object()) -> kz_json:object().
 clean_amount(Transaction) ->
     Amount = kz_json:get_value(<<"amount">>, Transaction),
     case Amount < 0 of
         'true' ->
-            kz_json:set_values([{<<"type">>, <<"debit">>}
-                               ,{<<"amount">>, Amount*-1}
-                               ]
-                              ,Transaction
-                              );
+            Values = [{<<"type">>, <<"debit">>}
+                     ,{<<"amount">>, -1 * Amount}
+                     ],
+            kz_json:set_values(Values, Transaction);
         'false' ->
             kz_json:set_value(<<"type">>, <<"credit">>, Transaction)
     end.
 
-%%--------------------------------------------------------------------
-%% @private
-%% @doc
-%%
-%% @end
-%%--------------------------------------------------------------------
 -spec clean_version(kz_json:object()) -> kz_json:object().
 clean_version(Transaction) ->
     kz_json:delete_key(<<"version">>, Transaction).
 
-%%--------------------------------------------------------------------
-%% @private
-%% @doc
-%%
-%% @end
-%%--------------------------------------------------------------------
 -spec clean_event(kz_json:object()) -> kz_json:object().
 clean_event(Transaction) ->
     kz_json:delete_key(<<"event">>, Transaction).
 
-%%--------------------------------------------------------------------
-%% @private
-%% @doc
-%%
-%% @end
-%%--------------------------------------------------------------------
 -spec clean_id(kz_json:object()) -> kz_json:object().
 clean_id(Transaction) ->
     kz_json:delete_key(<<"id">>, Transaction).

@@ -1,5 +1,5 @@
 %%%-------------------------------------------------------------------
-%%% @copyright (c) 2010-2017, 2600Hz
+%%% @copyright (c) 2015-2017, 2600Hz
 %%% @doc
 %%%
 %%% @end
@@ -31,8 +31,7 @@
                ,logport :: pos_integer()
                ,timer :: api_reference()
                ,counter :: pos_integer()
-               }
-       ).
+               }).
 -type state() :: #state{}.
 
 %%%===================================================================
@@ -43,8 +42,8 @@
 %% @doc Starts the server
 %%--------------------------------------------------------------------
 -spec start_link([ci_parsers_util:parser_args()]) -> startlink_ret().
-start_link([Parser]=Args) ->
-    ServerName = ci_parsers_util:make_name(Parser),
+start_link(Args) ->
+    ServerName = ci_parsers_util:make_name(Args),
     gen_server:start_link({'local', ServerName}, ?MODULE, Args, []).
 
 %%%===================================================================
@@ -338,7 +337,7 @@ all_whitespace(_) -> 'false'.
 -spec strip_truncating_pieces([ne_binary()]) -> [ne_binary()].
 strip_truncating_pieces(Data) ->
     [case re:run(Line, "(\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}\\.\\d{6} \\[[A-Z]+\\] )") of
-         {'match', [{Offset,_}|_]} -> kz_util:truncate_right_binary(Line, Offset);
+         {'match', [{Offset,_}|_]} -> kz_binary:truncate_right(Line, Offset);
          'nomatch' -> Line
      end
      || Line <- Data

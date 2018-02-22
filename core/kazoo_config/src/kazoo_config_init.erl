@@ -60,15 +60,25 @@ set_env() ->
     AppEnv = load_file(),
     lager:notice("loaded settings : ~p", [AppEnv]),
     set_zone(AppEnv),
-    application:set_env(?APP_NAME_ATOM, 'kz_config', AppEnv).
+    application:set_env(?APP, 'kz_config', AppEnv).
 
 set_zone(AppEnv) ->
     erlang:put(?SETTINGS_KEY, AppEnv),
-    [Local] = kz_config:get(kz_config:get_node_section_name(), 'zone', ['local']),
-    Zone = kz_util:to_atom(Local, 'true'),
+    Zone = maybe_zone_from_env(),
     lager:notice("setting zone to ~p", [Zone]),
-    application:set_env(?APP_NAME_ATOM, 'zone', Zone).
+    application:set_env(?APP, 'zone', Zone).
 
+-spec maybe_zone_from_env() -> atom().
+maybe_zone_from_env() ->
+    case os:getenv("KAZOO_ZONE", "noenv") of
+        "noenv" -> zone_from_ini();
+        Zone -> kz_term:to_atom(Zone, 'true')
+    end.
+
+-spec zone_from_ini() -> atom().
+zone_from_ini() ->
+    [Local] = kz_config:get(kz_config:get_node_section_name(), 'zone', ['local']),
+    kz_term:to_atom(Local, 'true').
 
 -spec reload() -> 'ok'.
 reload() ->
@@ -91,17 +101,17 @@ cleanup_section(Props) ->
 cleanup_section_prop({'zone', Zone}=Prop) when is_atom(Zone) ->
     Prop;
 cleanup_section_prop({'zone', Zone}) ->
-    {'zone', kz_util:to_atom(Zone, 'true')};
+    {'zone', kz_term:to_atom(Zone, 'true')};
 cleanup_section_prop(Prop) -> Prop.
 
 cleanup_zone(Zone) ->
     [cleanup_zone_prop(Prop) || Prop <- Zone].
 cleanup_zone_prop({'name', Name}=Prop) when is_atom(Name) -> Prop;
 cleanup_zone_prop({'name', Name}) ->
-    {'name', kz_util:to_atom(Name, 'true')};
+    {'name', kz_term:to_atom(Name, 'true')};
 cleanup_zone_prop({'amqp_uri', URI}=Prop) when is_list(URI) -> Prop;
 cleanup_zone_prop({'amqp_uri', URI}) ->
-    {'amqp_uri', kz_util:to_list(URI)};
+    {'amqp_uri', kz_term:to_list(URI)};
 cleanup_zone_prop(Prop) -> Prop.
 
 %%--------------------------------------------------------------------

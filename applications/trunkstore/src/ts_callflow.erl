@@ -32,6 +32,7 @@
         ,get_failover/1
         ,get_endpoint_data/1
         ,get_account_id/1
+        ,get_kapps_call/1
         ]).
 
 -include("ts.hrl").
@@ -59,6 +60,7 @@ init(RouteReqJObj, Type) ->
                               ,route_req_jobj=RouteReqJObj
                               ,acctid=AccountId
                               ,acctdb=kz_util:format_account_id(AccountId, 'encoded')
+                              ,kapps_call=kapps_call:from_route_req(RouteReqJObj)
                               }
     end.
 
@@ -84,7 +86,7 @@ send_park(#ts_callflow_state{route_req_jobj=JObj
            ,{<<"Routes">>, []}
            ,{<<"Pre-Park">>, pre_park_action()}
            ,{<<"Method">>, <<"park">>}
-           ,{<<"From-Realm">>, kz_util:get_account_realm(AccountId)}
+           ,{<<"From-Realm">>, kz_account:fetch_realm(AccountId)}
            ,{<<"Custom-Channel-Vars">>, kz_json:get_value(<<"Custom-Channel-Vars">>, JObj, kz_json:new())}
             | kz_api:default_headers(get_worker_queue(State)
                                     ,?APP_NAME, ?APP_VERSION
@@ -114,7 +116,7 @@ wait_for_win(State, _Timeout, {'error', 'timeout'}) ->
     {'lost', State}.
 
 -spec route_won(state(), kz_json:object()) -> {'won', state()}.
-route_won(#ts_callflow_state{amqp_worker=Worker}=State, RouteWin) ->
+route_won(#ts_callflow_state{amqp_worker=Worker, kapps_call=Call}=State, RouteWin) ->
     gen_listener:add_binding(Worker
                             ,'call'
                             ,[{'callid', kapi_route:call_id(RouteWin)}]
@@ -122,7 +124,10 @@ route_won(#ts_callflow_state{amqp_worker=Worker}=State, RouteWin) ->
 
     lager:info("callflow has received a route win, taking control of the call"),
 
-    {'won', State#ts_callflow_state{callctl_q=kapi_route:control_queue(RouteWin)}}.
+    {'won', State#ts_callflow_state{callctl_q=kapi_route:control_queue(RouteWin)
+                                   ,kapps_call=kapps_call:from_route_win(RouteWin, Call)
+                                   }
+    }.
 
 -spec wait_for_bridge(state(), api_integer()) ->
                              {'hangup' | 'error' | 'bridged', state()}.
@@ -151,14 +156,18 @@ wait_for_bridge(State, Timeout, {'error', 'timeout'}) ->
 process_event_for_bridge(State, JObj) ->
     process_event_for_bridge(State, JObj, get_event_type(JObj)).
 
-process_event_for_bridge(State, JObj, {<<"resource">>, <<"offnet_resp">>, _}) ->
+process_event_for_bridge(#ts_callflow_state{aleg_callid=ALeg} = State
+                        ,JObj
+                        ,{<<"resource">>, <<"offnet_resp">>, _}
+                        ) ->
+    CallId = kz_json:get_value(<<"Call-ID">>, JObj, ALeg),
     case is_success(<<"Response-Message">>, JObj)
         orelse was_bridge_blocked(JObj)
     of
-        'true' ->
+        'true' when CallId =:= ALeg ->
             lager:info("offnet bridge has finished"),
             {'hangup', State};
-        'false' ->
+        'false' when CallId =:= ALeg ->
             Failure = kz_json:get_first_defined([<<"Error-Message">>
                                                 ,<<"Response-Code">>
                                                 ]
@@ -167,7 +176,10 @@ process_event_for_bridge(State, JObj, {<<"resource">>, <<"offnet_resp">>, _}) ->
             lager:info("offnet failed: ~s ~s"
                       ,[Failure, kz_json:get_value(<<"Response-Message">>, JObj)]
                       ),
-            {'error', State}
+            {'error', State};
+        _Else ->
+            lager:debug("ignoring offnet response for call id ~s", [CallId]),
+            'ignore'
     end;
 process_event_for_bridge(#ts_callflow_state{aleg_callid=ALeg
                                            ,callctl_q=CtlQ
@@ -212,7 +224,7 @@ process_event_for_bridge(_State, _JObj, {<<"call_event">>, <<"CHANNEL_EXECUTE_CO
     'ignore';
 process_event_for_bridge(#ts_callflow_state{aleg_callid=ALeg}=State
                         ,JObj
-                        ,{<<"call_event">>, <<"CHANNEL_BRIDGE">>, _}
+                        ,{<<"call_event">>, <<"CHANNEL_ANSWER">>, _}
                         ) ->
     BLeg = kz_call_event:other_leg_call_id(JObj),
     lager:debug("channel ~s bridged to ~s", [ALeg, BLeg]),
@@ -331,18 +343,37 @@ set_failover(State, Failover) -> State#ts_callflow_state{failover=Failover}.
 get_failover(#ts_callflow_state{failover=Fail}) -> Fail.
 
 -spec is_trunkstore_acct(kz_json:object(), api_binary() | api_binaries()) -> boolean().
-is_trunkstore_acct(JObj, [Type|Types]) ->
-    is_trunkstore_acct(JObj, Type)
-        orelse is_trunkstore_acct(JObj, Types);
-is_trunkstore_acct(_JObj, []) -> 'false';
-is_trunkstore_acct(JObj, <<"sys_info">> = Type) ->
-    Type =:= kz_json:get_value([<<"Custom-Channel-Vars">>, <<"Authorizing-Type">>], JObj)
-        orelse kz_json:get_value([<<"Custom-Channel-Vars">>, <<"Trunkstore-ID">>], JObj) =/= 'undefined'
-        andalso (kz_json:get_value([<<"Custom-Channel-Vars">>, <<"Referred-By">>], JObj) =/= 'undefined'
-                 orelse kz_json:get_value([<<"Custom-Channel-Vars">>, <<"Redirected-By">>], JObj) =/= 'undefined');
+is_trunkstore_acct(RouteReqJObj, Type) ->
+    CCVs = kz_json:get_json_value(<<"Custom-Channel-Vars">>, RouteReqJObj, kz_json:new()),
+    lager:info("checking type(s) ~p against CCVs ~s", [Type, kz_json:encode(CCVs)]),
+    check_ccvs_for_type(CCVs, Type).
 
-is_trunkstore_acct(JObj, Type) ->
-    Type =:= kz_json:get_value([<<"Custom-Channel-Vars">>, <<"Authorizing-Type">>], JObj).
+-spec check_ccvs_for_type(kz_json:object(), api_binary() | api_binaries()) -> boolean().
+check_ccvs_for_type(CCVs, [Type|Types]) ->
+    check_ccvs_for_type(CCVs, Type)
+        orelse check_ccvs_for_type(CCVs, Types);
+check_ccvs_for_type(_CCVs, []) ->
+    lager:info("no types left to check, not a trunkstore account"),
+    'false';
+check_ccvs_for_type(CCVs, <<"sys_info">> = Type) ->
+    is_authorized(CCVs, Type)
+        orelse has_trunkstore_id(CCVs)
+        andalso is_not_redirected(CCVs);
+check_ccvs_for_type(CCVs, Type) ->
+    is_authorized(CCVs, Type).
+
+-spec is_authorized(kz_json:object(), api_ne_binary()) -> boolean().
+is_authorized(CCVs, Type) ->
+    Type =:= kz_json:get_ne_binary_value([<<"Authorizing-Type">>], CCVs).
+
+-spec has_trunkstore_id(kz_json:object()) -> boolean().
+has_trunkstore_id(CCVs) ->
+    'undefined' =/= kz_json:get_ne_binary_value([<<"Trunkstore-ID">>], CCVs).
+
+-spec is_not_redirected(kz_json:object()) -> boolean().
+is_not_redirected(CCVs) ->
+    'undefined' =/= kz_json:get_ne_binary_value([<<"Referred-By">>], CCVs)
+        orelse 'undefined' =/= kz_json:get_ne_binary_value([<<"Redirected-By">>], CCVs).
 
 -spec pre_park_action() -> ne_binary().
 pre_park_action() ->
@@ -357,3 +388,6 @@ is_success(Key, JObj) ->
     kz_json:get_value(Key, JObj) =:= <<"SUCCESS">>.
 is_success(Key, JObj, Default) ->
     kz_json:get_first_defined(Key, JObj, Default) =:= <<"SUCCESS">>.
+
+-spec get_kapps_call(state()) -> kapps_call:call().
+get_kapps_call(#ts_callflow_state{kapps_call=Call}) -> Call.

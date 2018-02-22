@@ -16,11 +16,12 @@
         ,get_inherited_value/2
         ,get_inherited_value/3
 
-        ,name/1, name/2, set_name/2
-        ,realm/1, realm/2, set_realm/2
-        ,language/1, set_language/2
-        ,timezone/1, timezone/2, set_timezone/2
+        ,fetch_name/1, name/1, name/2, set_name/2
+        ,fetch_realm/1, realm/1, realm/2, set_realm/2
+        ,language/1, language/2, set_language/2
+        ,timezone/1, timezone/2, set_timezone/2, default_timezone/0
         ,parent_account_id/1
+        ,get_parent_account/1, get_parent_account_id/1
         ,tree/1, tree/2 ,set_tree/2
         ,notification_preference/1, set_notification_preference/2
         ,is_enabled/1, enable/1, disable/1
@@ -44,6 +45,9 @@
         ,topup_threshold/1, topup_threshold/2, set_topup_threshold/2
         ,sent_initial_registration/1, set_initial_registration_sent/2
         ,sent_initial_call/1, set_initial_call_sent/2
+        ,home_zone/1, home_zone/2, set_home_zone/2
+
+        ,preflow_id/1
         ]).
 
 -include("kz_documents.hrl").
@@ -54,6 +58,7 @@
 -define(LANGUAGE, <<"language">>).
 -define(TIMEZONE, <<"timezone">>).
 -define(THRESHOLD, <<"threshold">>).
+-define(HOME_ZONE, [<<"zones">>, <<"home">>]).
 -define(TREE, <<"pvt_tree">>).
 -define(IS_ENABLED, <<"pvt_enabled">>).
 -define(API_KEY, <<"pvt_api_key">>).
@@ -76,8 +81,6 @@
 -define(SENT_INITIAL_REGISTRATION, [<<"notifications">>, <<"first_occurrence">>, <<"sent_initial_registration">>]).
 -define(SENT_INITIAL_CALL, [<<"notifications">>, <<"first_occurrence">>, <<"sent_initial_call">>]).
 
--define(PVT_TYPE, <<"account">>).
-
 -type doc() :: kz_json:object().
 -export_type([doc/0]).
 
@@ -93,31 +96,22 @@ get_inherited_value(Account, ValueFun, Default) ->
     case check_account(Account, ValueFun) of
         'undefined' ->
             check_reseller(Account, ValueFun, Default);
-
-        Value ->
-            Value
+        Value -> Value
     end.
 
 -spec check_account(api_binary(), fun()) -> any().
 check_account(Account, ValueFun) ->
     case fetch(Account) of
-        {'error', _Err} ->
-            'undefined';
-
-        {'ok', JObj} ->
-            ValueFun(JObj)
+        {'error', _Err} -> 'undefined';
+        {'ok', JObj} -> ValueFun(JObj)
     end.
 
 -spec check_reseller(api_binary(), fun(), any()) -> any().
 check_reseller(Account, ValueFun, Default) ->
     Reseller = kz_services:find_reseller_id(Account),
-
     case check_account(Reseller, ValueFun) of
-        'undefined' ->
-            Default;
-
-        Value ->
-            Value
+        'undefined' -> Default;
+        Value -> Value
     end.
 
 %%--------------------------------------------------------------------
@@ -127,7 +121,7 @@ check_reseller(Account, ValueFun, Default) ->
 %%--------------------------------------------------------------------
 -spec new() -> doc().
 new() ->
-    kz_doc:set_type(kz_json:new(), ?PVT_TYPE).
+    kz_doc:set_type(kz_json:new(), type()).
 
 %%--------------------------------------------------------------------
 %% @public
@@ -135,7 +129,7 @@ new() ->
 %% @end
 %%--------------------------------------------------------------------
 -spec type() -> ne_binary().
-type() -> ?PVT_TYPE.
+type() -> <<"account">>.
 
 %%--------------------------------------------------------------------
 %% @public
@@ -151,30 +145,47 @@ id(JObj) ->
 %% @doc
 %% @end
 %%--------------------------------------------------------------------
--spec fetch(api_binary()) -> {'ok', doc()} |
-                             {'error', any()}.
+-spec fetch(api_ne_binary()) -> {'ok', doc()} |
+                                {'error', any()}.
 fetch('undefined') ->
     {'error', 'invalid_db_name'};
-fetch(<<_/binary>> = Account) ->
+fetch(Account=?NE_BINARY) ->
     fetch(Account, 'account').
 
--spec fetch(api_binary(), 'account' | 'accounts') -> {'ok', doc()} |
-                                                     {'error', any()}.
+-spec fetch(api_ne_binary(), 'account' | 'accounts') -> {'ok', doc()} |
+                                                        {'error', any()}.
 fetch('undefined', _) ->
     {'error', 'invalid_db_name'};
 fetch(Account, 'account') ->
     AccountId = kz_util:format_account_id(Account, 'raw'),
     AccountDb = kz_util:format_account_id(Account, 'encoded'),
-    kz_datamgr:open_cache_doc(AccountDb, AccountId, ['cache_failures']);
+    open_cache_doc(AccountDb, AccountId);
 fetch(AccountId, 'accounts') ->
-    kz_datamgr:open_cache_doc(?KZ_ACCOUNTS_DB, AccountId, ['cache_failures']).
+    open_cache_doc(?KZ_ACCOUNTS_DB, AccountId).
+
+-ifdef(TEST).
+open_cache_doc(_, ?MATCH_ACCOUNT_RAW(AccountId)) ->
+    kz_json:fixture(?APP, <<"fixtures/account/", AccountId/binary, ".json">>).
+-else.
+open_cache_doc(Db, AccountId) ->
+    kz_datamgr:open_cache_doc(Db, AccountId, [{cache_failures,false}]).
+-endif.
 
 %%--------------------------------------------------------------------
 %% @public
 %% @doc
 %% @end
 %%--------------------------------------------------------------------
--spec name(doc()) -> api_binary().
+-spec fetch_name(ne_binary()) -> api_ne_binary().
+fetch_name(Account) ->
+    case fetch(Account) of
+        {ok, JObj} -> name(JObj);
+        {error, _R} ->
+            lager:error("error opening account doc ~p", [Account]),
+            undefined
+    end.
+
+-spec name(doc()) -> api_ne_binary().
 -spec name(doc(), Default) -> ne_binary() | Default.
 name(JObj) ->
     name(JObj, 'undefined').
@@ -195,7 +206,21 @@ set_name(JObj, Name) ->
 %% @doc
 %% @end
 %%--------------------------------------------------------------------
--spec realm(doc()) -> api_binary().
+-spec fetch_realm(ne_binary()) -> api_ne_binary().
+fetch_realm(Account) ->
+    case fetch(Account) of
+        {ok, JObj} -> realm(JObj);
+        {error, _R} ->
+            lager:error("error opening account doc ~p", [Account]),
+            undefined
+    end.
+
+%%--------------------------------------------------------------------
+%% @public
+%% @doc
+%% @end
+%%--------------------------------------------------------------------
+-spec realm(doc()) -> api_ne_binary().
 -spec realm(doc(), Default) -> ne_binary() | Default.
 realm(JObj) ->
     realm(JObj, 'undefined').
@@ -216,9 +241,12 @@ set_realm(JObj, Realm) ->
 %% @doc
 %% @end
 %%--------------------------------------------------------------------
--spec language(doc()) -> api_binary().
+-spec language(doc()) -> api_ne_binary().
+-spec language(doc(), Default) -> ne_binary() | Default.
 language(JObj) ->
-    kz_json:get_value(?LANGUAGE, JObj).
+    language(JObj, 'undefined').
+language(JObj, Default) ->
+    kz_json:get_ne_binary_value(?LANGUAGE, JObj, Default).
 
 %%--------------------------------------------------------------------
 %% @public
@@ -234,29 +262,50 @@ set_language(JObj, Language) ->
 %% @doc
 %% @end
 %%--------------------------------------------------------------------
--spec timezone(ne_binary() | doc()) -> api_binary().
--spec timezone(ne_binary() | doc(), Default) -> ne_binary() | Default.
-timezone(AccountId)
-  when is_binary(AccountId) ->
-    {'ok', JObj} = fetch(AccountId),
-    timezone(JObj);
+-spec timezone(api_ne_binary() | doc()) -> ne_binary().
+timezone('undefined') -> default_timezone();
+timezone(AccountId) when is_binary(AccountId) ->
+    case fetch(AccountId) of
+        {'ok', JObj} -> timezone(JObj);
+        {'error', _R} ->
+            lager:debug("failed to open account ~s definition, returning system's default timezone"),
+            default_timezone()
+    end;
 timezone(JObj) ->
     timezone(JObj, 'undefined').
-timezone(AccountId, Default)
-  when is_binary(AccountId) ->
-    {'ok', JObj} = fetch(AccountId),
-    timezone(JObj, Default);
+
+-spec timezone(api_ne_binary() | doc(), Default) -> ne_binary() | Default.
+timezone('undefined', 'undefined') ->
+    default_timezone();
+timezone('undefined', <<"inherit">>) -> %% UI-1808
+    default_timezone();
+timezone('undefined', Default) ->
+    Default;
+timezone(AccountId, Default) when is_binary(AccountId) ->
+    case fetch(AccountId) of
+        {'ok', JObj} -> timezone(JObj, Default);
+        {'error', _R} when Default =:= 'undefined';
+                           Default =:= <<"inherit">> -> %% UI-1808
+            lager:debug("failed to open account ~s definition, returning system's default timezone"),
+            default_timezone();
+        {'error', _} ->
+            Default
+    end;
 timezone(JObj, Default) ->
     case kz_json:get_value(?TIMEZONE, JObj, Default) of
-        <<"inherit">> -> parent_timezone(kz_doc:account_id(JObj), parent_account_id(JObj));
+        <<"inherit">> -> parent_timezone(kz_doc:account_id(JObj), parent_account_id(JObj)); %% UI-1808
         'undefined' -> parent_timezone(kz_doc:account_id(JObj), parent_account_id(JObj));
         TZ -> TZ
     end.
 
--spec parent_timezone(ne_binary(), api_binary()) -> ne_binary().
-parent_timezone(AccountId, AccountId) -> ?DEFAULT_TIMEZONE;
-parent_timezone(_AccountId, 'undefined') -> ?DEFAULT_TIMEZONE;
+-spec parent_timezone(ne_binary(), api_ne_binary()) -> ne_binary().
+parent_timezone(AccountId, AccountId) -> default_timezone();
+parent_timezone(_AccountId, 'undefined') -> default_timezone();
 parent_timezone(_AccountId, ParentId) -> timezone(ParentId).
+
+-spec default_timezone() -> ne_binary().
+default_timezone() ->
+    kapps_config:get_ne_binary(<<"accounts">>, <<"default_timezone">>, <<"America/Los_Angeles">>).
 
 %%--------------------------------------------------------------------
 %% @public
@@ -267,6 +316,30 @@ parent_timezone(_AccountId, ParentId) -> timezone(ParentId).
 set_timezone(JObj, Timezone) ->
     kz_json:set_value(?TIMEZONE, Timezone, JObj).
 
+-spec home_zone(ne_binary() | doc()) -> api_binary().
+home_zone(AccountId) when is_binary(AccountId) ->
+    case fetch(AccountId) of
+        {'error', _R} -> 'undefined';
+        {'ok', JObj}  -> home_zone(JObj, 'undefined')
+    end;
+
+home_zone(JObj) ->
+    home_zone(JObj, 'undefined').
+
+-spec home_zone(ne_binary() | doc(), api_binary()) -> api_binary().
+home_zone(AccountId, Default) when is_binary(AccountId) ->
+    case fetch(AccountId) of
+        {'error', _R} -> Default;
+        {'ok', JObj}  -> home_zone(JObj, Default)
+    end;
+
+home_zone(JObj, Default) ->
+    kz_json:get_value(?HOME_ZONE, JObj, Default).
+
+-spec set_home_zone(doc(), api_binary()) -> doc().
+set_home_zone(JObj, Zone) ->
+    kz_json:set_value(?HOME_ZONE, Zone, JObj).
+
 %%--------------------------------------------------------------------
 %% @public
 %% @doc
@@ -274,8 +347,7 @@ set_timezone(JObj, Timezone) ->
 %%--------------------------------------------------------------------
 -spec low_balance_threshold(ne_binary() | doc()) -> api_float().
 low_balance_threshold(Thing) ->
-    ConfigCat = <<"notify.low_balance">>,
-    Default = kapps_config:get_float(ConfigCat, <<"threshold">>, 5.00),
+    Default = kapps_config:get_float(<<"notify.low_balance">>, <<"threshold">>, 5.00),
     low_balance_threshold(Thing, Default).
 
 -spec low_balance_threshold(ne_binary() | doc(), Default) -> float() | Default.
@@ -343,7 +415,7 @@ low_balance_tstamp(JObj) ->
 
 -spec set_low_balance_tstamp(doc()) -> doc().
 set_low_balance_tstamp(JObj) ->
-    TStamp = kz_util:current_tstamp(),
+    TStamp = kz_time:current_tstamp(),
     set_low_balance_tstamp(JObj, TStamp).
 
 -spec set_low_balance_tstamp(doc(), number()) -> doc().
@@ -408,6 +480,33 @@ parent_account_id(JObj) ->
     case tree(JObj) of
         [] -> 'undefined';
         Ancestors -> lists:last(Ancestors)
+    end.
+
+%%--------------------------------------------------------------------
+%% @public
+%% @doc
+%% @end
+%%--------------------------------------------------------------------
+-spec get_parent_account(ne_binary()) -> {'ok', doc()} | {'error', any()}.
+get_parent_account(AccountId) ->
+    case get_parent_account_id(AccountId) of
+        'undefined' -> {'error', 'not_found'};
+        ParentId ->
+            fetch(ParentId)
+    end.
+
+%%--------------------------------------------------------------------
+%% @public
+%% @doc
+%% @end
+%%--------------------------------------------------------------------
+-spec get_parent_account_id(ne_binary()) -> api_binary().
+get_parent_account_id(AccountId) ->
+    case fetch(AccountId) of
+        {'ok', JObj} -> parent_account_id(JObj);
+        {'error', _R} ->
+            lager:debug("failed to open account's ~s parent: ~p", [AccountId, _R]),
+            'undefined'
     end.
 
 %%--------------------------------------------------------------------
@@ -545,7 +644,7 @@ allow_number_additions(JObj) ->
 
 -spec set_allow_number_additions(doc(), boolean()) -> doc().
 set_allow_number_additions(JObj, IsAllowed) ->
-    kz_json:set_value(?ALLOW_NUMBER_ADDITIONS, kz_util:is_true(IsAllowed), JObj).
+    kz_json:set_value(?ALLOW_NUMBER_ADDITIONS, kz_term:is_true(IsAllowed), JObj).
 
 -spec trial_expiration(doc()) -> api_integer().
 -spec trial_expiration(doc(), Default) -> integer() | Default.
@@ -573,11 +672,11 @@ set_trial_expiration(JObj, Expiration) ->
 -spec trial_time_left(doc()) -> integer().
 -spec trial_time_left(doc(), gregorian_seconds()) -> integer().
 trial_time_left(JObj) ->
-    trial_time_left(JObj, kz_util:current_tstamp()).
+    trial_time_left(JObj, kz_time:current_tstamp()).
 trial_time_left(JObj, Now) ->
     case trial_expiration(JObj) of
         'undefined' -> 0;
-        Expiration -> kz_util:elapsed_s(Now, Expiration)
+        Expiration -> kz_time:elapsed_s(Now, Expiration)
     end.
 
 %%--------------------------------------------------------------------
@@ -588,7 +687,7 @@ trial_time_left(JObj, Now) ->
 -spec trial_has_expired(doc()) -> boolean().
 -spec trial_has_expired(doc(), gregorian_seconds()) -> boolean().
 trial_has_expired(JObj) ->
-    trial_has_expired(JObj, kz_util:current_tstamp()).
+    trial_has_expired(JObj, kz_time:current_tstamp()).
 trial_has_expired(JObj, Now) ->
     trial_expiration(JObj) =/= 'undefined'
         andalso trial_time_left(JObj, Now) =< 0.
@@ -621,7 +720,8 @@ is_trial_account(JObj) ->
 %%--------------------------------------------------------------------
 -spec is_reseller(doc()) -> boolean().
 is_reseller(JObj) ->
-    kz_json:is_true(?RESELLER, JObj).
+    kz_json:is_true(?RESELLER, JObj)
+        orelse is_superduper_admin(JObj).
 
 %%--------------------------------------------------------------------
 %% @public
@@ -639,7 +739,6 @@ promote(JObj) ->
 %%--------------------------------------------------------------------
 -spec demote(doc()) -> doc().
 demote(JObj) ->
-    io:format("demote~n", []),
     kz_json:set_value(?RESELLER, 'false', JObj).
 
 %%--------------------------------------------------------------------
@@ -685,3 +784,11 @@ fax_settings(JObj) ->
         'undefined' -> kz_json:set_value(?FAX_TIMEZONE_KEY, timezone(JObj), FaxSettings);
         _ -> FaxSettings
     end.
+
+-spec preflow_id(doc()) -> api_ne_binary().
+-spec preflow_id(doc(), Default) -> ne_binary() | Default.
+preflow_id(Doc) ->
+    preflow_id(Doc, 'undefined').
+
+preflow_id(Doc, Default) ->
+    kz_json:get_ne_binary_value([<<"preflow">>, <<"always">>], Doc, Default).

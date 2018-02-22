@@ -11,11 +11,12 @@
 -module(kapps_config).
 
 -include("kazoo_config.hrl").
--include_lib("kazoo_json/include/kazoo_json.hrl").
+-include_lib("kazoo_stdlib/include/kazoo_json.hrl").
 
 -export([get/2, get/3, get/4
         ,get_all_kvs/1
         ,get_current/2, get_current/3, get_current/4
+        ,get_category/1
         ]).
 
 -export([get_node_value/2, get_node_value/3, get_node_value/4]).
@@ -23,15 +24,24 @@
 -export([get_string/2, get_string/3, get_string/4]).
 -export([get_binary/2, get_binary/3, get_binary/4]).
 -export([get_json/2, get_json/3, get_json/4]).
+-export([get_jsons/2, get_jsons/3, get_jsons/4]).
 -export([get_atom/2, get_atom/3, get_atom/4]).
 -export([get_integer/2, get_integer/3, get_integer/4]).
+-export([get_pos_integer/2, get_pos_integer/3, get_pos_integer/4]).
+-export([get_non_neg_integer/2, get_non_neg_integer/3, get_non_neg_integer/4]).
 -export([get_float/2, get_float/3, get_float/4]).
 -export([get_is_false/2, get_is_false/3, get_is_false/4]).
 -export([get_is_true/2, get_is_true/3, get_is_true/4]).
--export([get_non_empty/2, get_non_empty/3, get_non_empty/4]).
 -export([get_ne_binary/2, get_ne_binary/3, get_ne_binary/4]).
+-export([get_ne_binaries/2, get_ne_binaries/3, get_ne_binaries/4]).
+-export([get_ne_binary_or_ne_binaries/2, get_ne_binary_or_ne_binaries/3, get_ne_binary_or_ne_binaries/4]).
 
--export([set_string/3, set_integer/3, set_float/3, set_boolean/3, set_json/3]).
+-export([set_string/3
+        ,set_integer/3
+        ,set_float/3
+        ,set_boolean/3
+        ,set_json/3
+        ]).
 -export([set/3, set/4, set_default/3, set_node/4
         ,update_default/3, update_default/4
         ]).
@@ -55,7 +65,9 @@
 
 %%-----------------------------------------------------------------------------
 %% @public
-%% @doc Get a configuration key for a given category and cast it as a list
+%% @doc
+%% Get a configuration key for a given category and cast it as a list
+%% @end
 %%-----------------------------------------------------------------------------
 -spec get_string(config_category(), config_key()) -> api_string().
 -spec get_string(config_category(), config_key(), Default) ->
@@ -66,16 +78,18 @@
 get_string(Category, Key) ->
     case get(Category, Key) of
         'undefined' -> 'undefined';
-        Else -> kz_util:to_list(Else)
+        Else -> kz_term:to_list(Else)
     end.
 get_string(Category, Key, Default) ->
-    get_string(Category, Key, Default, kz_util:to_binary(node())).
+    get_string(Category, Key, Default, kz_term:to_binary(node())).
 get_string(Category, Key, Default, Node) ->
-    kz_util:to_list(get(Category, Key, Default, Node)).
+    kz_term:to_list(get(Category, Key, Default, Node)).
 
 %%-----------------------------------------------------------------------------
 %% @public
-%% @doc Get a configuration key for a given category and cast it as a binary
+%% @doc
+%% Get a configuration key for a given category and cast it as a binary
+%% @end
 %%-----------------------------------------------------------------------------
 -spec get_binary(config_category(), config_key()) -> api_binary().
 -spec get_binary(config_category(), config_key(), Default) -> binary() | Default.
@@ -84,16 +98,18 @@ get_string(Category, Key, Default, Node) ->
 get_binary(Category, Key) ->
     case get(Category, Key) of
         'undefined' -> 'undefined';
-        Else -> kz_util:to_binary(Else)
+        Else -> kz_term:to_binary(Else)
     end.
 get_binary(Category, Key, Default) ->
-    get_binary(Category, Key, Default, kz_util:to_binary(node())).
+    get_binary(Category, Key, Default, kz_term:to_binary(node())).
 get_binary(Category, Key, Default, Node) ->
-    kz_util:to_binary(get(Category, Key, Default, Node)).
+    kz_term:to_binary(get(Category, Key, Default, Node)).
 
 %%-----------------------------------------------------------------------------
 %% @public
-%% @doc Get a configuration key for a given category and cast it as a json
+%% @doc
+%% Get a configuration key for a given category and cast it as a json
+%% @end
 %%-----------------------------------------------------------------------------
 -spec get_json(config_category(), config_key()) ->
                       api_object().
@@ -104,28 +120,52 @@ get_binary(Category, Key, Default, Node) ->
 
 get_json(Category, Key) ->
     V = get(Category, Key),
-    as_json_value(V).
+    as_json_value(V, undefined).
 
--spec as_json_value(any()) -> api_object().
-as_json_value('undefined') -> 'undefined';
-as_json_value(V) ->
-    case kz_json:is_json_object(V) of
-        'true' -> V;
-        'false' -> 'undefined'
-    end.
-
-get_json(Category, Key, Default) ->
-    get_json(Category, Key, Default, kz_util:to_binary(node())).
-get_json(Category, Key, Default, Node) ->
-    V = get(Category, Key, Default, Node),
+-spec as_json_value(any(), api_object()) -> api_object().
+as_json_value(undefined, Default) -> Default;
+as_json_value(V, Default) ->
     case kz_json:is_json_object(V) of
         'true' -> V;
         'false' -> Default
     end.
 
+get_json(Category, Key, Default) ->
+    get_json(Category, Key, Default, kz_term:to_binary(node())).
+get_json(Category, Key, Default, Node) ->
+    V = get(Category, Key, Default, Node),
+    as_json_value(V, Default).
+
+-spec get_jsons(config_category(), config_key()) ->
+                       kz_json:objects().
+-spec get_jsons(config_category(), config_key(), Default) ->
+                       kz_json:objects() | Default.
+-spec get_jsons(config_category(), config_key(), Default, ne_binary()) ->
+                       kz_json:objects() | Default.
+
+get_jsons(Category, Key) ->
+    V = get(Category, Key),
+    as_jsons_value(V, []).
+
+-spec as_jsons_value(any(), kz_json:objects()) -> kz_json:objects().
+as_jsons_value(undefined, Default) -> Default;
+as_jsons_value(V, Default) ->
+    case lists:all(fun kz_json:is_json_object/1, V) of
+        true -> V;
+        false -> Default
+    end.
+
+get_jsons(Category, Key, Default) ->
+    get_jsons(Category, Key, Default, kz_term:to_binary(node())).
+get_jsons(Category, Key, Default, Node) ->
+    V = get(Category, Key, Default, Node),
+    as_jsons_value(V, Default).
+
 %%-----------------------------------------------------------------------------
 %% @public
-%% @doc Get a configuration key for a given category and cast it as a atom
+%% @doc
+%% Get a configuration key for a given category and cast it as a atom
+%% @end
 %%-----------------------------------------------------------------------------
 -spec get_atom(config_category(), config_key()) -> api_atom().
 -spec get_atom(config_category(), config_key(), Default) -> atom() | Default.
@@ -134,16 +174,18 @@ get_json(Category, Key, Default, Node) ->
 get_atom(Category, Key) ->
     case get(Category, Key) of
         'undefined' -> 'undefined';
-        Else -> kz_util:to_atom(Else, 'true')
+        Else -> kz_term:to_atom(Else, 'true')
     end.
 get_atom(Category, Key, Default) ->
-    get_atom(Category, Key, Default, kz_util:to_binary(node())).
+    get_atom(Category, Key, Default, kz_term:to_binary(node())).
 get_atom(Category, Key, Default, Node) ->
-    kz_util:to_atom(get(Category, Key, Default, Node), 'true').
+    kz_term:to_atom(get(Category, Key, Default, Node), 'true').
 
 %%-----------------------------------------------------------------------------
 %% @public
-%% @doc Get a configuration key for a given category and cast it as a integer
+%% @doc
+%% Get a configuration key for a given category and cast it as a integer
+%% @end
 %%-----------------------------------------------------------------------------
 -spec get_integer(config_category(), config_key()) -> api_integer().
 -spec get_integer(config_category(), config_key(), Default) -> integer() | Default.
@@ -152,16 +194,76 @@ get_atom(Category, Key, Default, Node) ->
 get_integer(Category, Key) ->
     case get(Category, Key) of
         'undefined' -> 'undefined';
-        Else -> kz_util:to_integer(Else)
+        Else -> kz_term:to_integer(Else)
     end.
+
 get_integer(Category, Key, Default) ->
-    get_integer(Category, Key, Default, kz_util:to_binary(node())).
+    get_integer(Category, Key, Default, kz_term:to_binary(node())).
 get_integer(Category, Key, Default, Node) ->
-    kz_util:to_integer(get(Category, Key, Default, Node)).
+    case get(Category, Key, Default, Node) of
+        'undefined' -> 'undefined';
+        Else -> kz_term:to_integer(Else)
+    end.
 
 %%-----------------------------------------------------------------------------
 %% @public
-%% @doc Get a configuration key for a given category and cast it as a float
+%% @doc
+%% Get a configuration key for a given category and cast it as a pos_integer
+%% @end
+%%-----------------------------------------------------------------------------
+-spec get_pos_integer(config_category(), config_key()) -> api_pos_integer().
+-spec get_pos_integer(config_category(), config_key(), Default) -> pos_integer() | Default.
+-spec get_pos_integer(config_category(), config_key(), Default, ne_binary()) -> pos_integer() | Default.
+
+get_pos_integer(Category, Key) ->
+    case get(Category, Key) of
+        'undefined' -> 'undefined';
+        Else -> to_pos_integer(Else, undefined)
+    end.
+get_pos_integer(Category, Key, Default) ->
+    get_pos_integer(Category, Key, Default, kz_term:to_binary(node())).
+get_pos_integer(Category, Key, Default, Node) ->
+    to_pos_integer(get(Category, Key, Default, Node), Default).
+
+to_pos_integer(Value, Default) ->
+    case kz_term:to_integer(Value) of
+        PosInteger when is_integer(Value), Value > 0 ->
+            PosInteger;
+        _ -> Default
+    end.
+
+%%-----------------------------------------------------------------------------
+%% @public
+%% @doc
+%% Get a configuration key for a given category and cast it as a pos_integer
+%% @end
+%%-----------------------------------------------------------------------------
+-spec get_non_neg_integer(config_category(), config_key()) -> api_non_neg_integer().
+-spec get_non_neg_integer(config_category(), config_key(), Default) -> non_neg_integer() | Default.
+-spec get_non_neg_integer(config_category(), config_key(), Default, ne_binary()) -> non_neg_integer() | Default.
+
+get_non_neg_integer(Category, Key) ->
+    case get(Category, Key) of
+        'undefined' -> 'undefined';
+        Else -> to_non_neg_integer(Else, undefined)
+    end.
+get_non_neg_integer(Category, Key, Default) ->
+    get_non_neg_integer(Category, Key, Default, kz_term:to_binary(node())).
+get_non_neg_integer(Category, Key, Default, Node) ->
+    to_non_neg_integer(get(Category, Key, Default, Node), Default).
+
+to_non_neg_integer(Value, Default) ->
+    case kz_term:to_integer(Value) of
+        NonNegInteger when is_integer(Value), Value >= 0 ->
+            NonNegInteger;
+        _ -> Default
+    end.
+
+%%-----------------------------------------------------------------------------
+%% @public
+%% @doc
+%% Get a configuration key for a given category and cast it as a float
+%% @end
 %%-----------------------------------------------------------------------------
 -spec get_float(config_category(), config_key()) -> api_float().
 -spec get_float(config_category(), config_key(), Default) -> float() | Default.
@@ -170,16 +272,18 @@ get_integer(Category, Key, Default, Node) ->
 get_float(Category, Key) ->
     case get(Category, Key) of
         'undefined' -> 'undefined';
-        Else -> kz_util:to_float(Else)
+        Else -> kz_term:to_float(Else)
     end.
 get_float(Category, Key, Default) ->
-    get_float(Category, Key, Default, kz_util:to_binary(node())).
+    get_float(Category, Key, Default, kz_term:to_binary(node())).
 get_float(Category, Key, Default, Node) ->
-    kz_util:to_float(get(Category, Key, Default, Node)).
+    kz_term:to_float(get(Category, Key, Default, Node)).
 
 %%-----------------------------------------------------------------------------
 %% @public
-%% @doc Get a configuration key for a given category and cast it as a is_false
+%% @doc
+%% Get a configuration key for a given category and cast it as a is_false
+%% @end
 %%-----------------------------------------------------------------------------
 -spec get_is_false(config_category(), config_key()) -> api_boolean().
 -spec get_is_false(config_category(), config_key(), Default) -> boolean() | Default.
@@ -188,16 +292,18 @@ get_float(Category, Key, Default, Node) ->
 get_is_false(Category, Key) ->
     case get(Category, Key) of
         'undefined' -> 'undefined';
-        Else -> kz_util:is_false(Else)
+        Else -> kz_term:is_false(Else)
     end.
 get_is_false(Category, Key, Default) ->
-    get_is_false(Category, Key, Default, kz_util:to_binary(node())).
+    get_is_false(Category, Key, Default, kz_term:to_binary(node())).
 get_is_false(Category, Key, Default, Node) ->
-    kz_util:is_false(get(Category, Key, Default, Node)).
+    kz_term:is_false(get(Category, Key, Default, Node)).
 
 %%-----------------------------------------------------------------------------
 %% @public
-%% @doc Get a configuration key for a given category and cast it as a is_true
+%% @doc
+%% Get a configuration key for a given category and cast it as a is_true
+%% @end
 %%-----------------------------------------------------------------------------
 -spec get_is_true(config_category(), config_key()) -> api_boolean().
 -spec get_is_true(config_category(), config_key(), Default) -> boolean() | Default.
@@ -206,45 +312,68 @@ get_is_false(Category, Key, Default, Node) ->
 get_is_true(Category, Key) ->
     case get(Category, Key) of
         'undefined' -> 'undefined';
-        Else -> kz_util:is_true(Else)
+        Else -> kz_term:is_true(Else)
     end.
 get_is_true(Category, Key, Default) ->
-    get_is_true(Category, Key, Default, kz_util:to_binary(node())).
+    get_is_true(Category, Key, Default, kz_term:to_binary(node())).
 get_is_true(Category, Key, Default, Node) ->
-    kz_util:is_true(get(Category, Key, Default, Node)).
+    kz_term:is_true(get(Category, Key, Default, Node)).
 
-%%-----------------------------------------------------------------------------
-%% @public
-%% @doc Get a configuration key for a given category and cast it as a is_true
-%%-----------------------------------------------------------------------------
--spec get_non_empty(config_category(), config_key()) -> _ | 'undefined'.
--spec get_non_empty(config_category(), config_key(), Default) -> _ | Default.
--spec get_non_empty(config_category(), config_key(), Default, ne_binary()) -> _ | Default.
+-spec get_ne_binary_or_ne_binaries(config_category(), config_key()) -> api_ne_binary() | ne_binaries().
+-spec get_ne_binary_or_ne_binaries(config_category(), config_key(), Default) -> ne_binary() | ne_binaries() | Default.
+-spec get_ne_binary_or_ne_binaries(config_category(), config_key(), Default, ne_binary()) -> ne_binary() | ne_binaries() | Default.
 
-get_non_empty(Category, Key) ->
-    get_non_empty(Category, Key, 'undefined').
-get_non_empty(Category, Key, Default) ->
-    get_non_empty(Category, Key, Default, kz_util:to_binary(node())).
-get_non_empty(Category, Key, Default, Node) ->
-    Value = get(Category, Key, Default, Node),
-    case kz_util:is_empty(Value) of
+get_ne_binary_or_ne_binaries(Category, Key) ->
+    get_ne_binary_or_ne_binaries(Category, Key, 'undefined').
+get_ne_binary_or_ne_binaries(Category, Key, Default) ->
+    get_ne_binary_or_ne_binaries(Category, Key, Default, kz_term:to_binary(node())).
+get_ne_binary_or_ne_binaries(Category, Key, Default, Node) ->
+    ValueOrValues = get(Category, Key, Default, Node),
+    case kz_term:is_empty(ValueOrValues) of
         'true' -> Default;
-        'false' -> Value
+        'false' ->
+            case ValueOrValues of
+                Value=?NE_BINARY -> Value;
+                Values when is_list(Values) ->
+                    [kz_term:to_binary(Value)
+                     || Value <- Values,
+                        kz_term:is_not_empty(Value)
+                    ]
+            end
     end.
 
--spec get_ne_binary(config_category(), config_key()) -> api_binary().
+-spec get_ne_binary(config_category(), config_key()) -> api_ne_binary().
 -spec get_ne_binary(config_category(), config_key(), Default) -> ne_binary() | Default.
 -spec get_ne_binary(config_category(), config_key(), Default, ne_binary()) -> ne_binary() | Default.
 
 get_ne_binary(Category, Key) ->
     get_ne_binary(Category, Key, 'undefined').
 get_ne_binary(Category, Key, Default) ->
-    get_ne_binary(Category, Key, Default, kz_util:to_binary(node())).
+    get_ne_binary(Category, Key, Default, kz_term:to_binary(node())).
 get_ne_binary(Category, Key, Default, Node) ->
     Value = get(Category, Key, Default, Node),
-    case kz_util:is_empty(Value) of
+    case kz_term:is_empty(Value) of
         'true' -> Default;
-        'false' -> kz_util:to_binary(Value)
+        'false' -> kz_term:to_binary(Value)
+    end.
+
+-spec get_ne_binaries(config_category(), config_key()) -> ne_binaries().
+-spec get_ne_binaries(config_category(), config_key(), Default) -> ne_binaries() | Default.
+-spec get_ne_binaries(config_category(), config_key(), Default, ne_binary()) -> ne_binaries() | Default.
+
+get_ne_binaries(Category, Key) ->
+    get_ne_binaries(Category, Key, undefined).
+get_ne_binaries(Category, Key, Default) ->
+    get_ne_binaries(Category, Key, Default, kz_term:to_binary(node())).
+get_ne_binaries(Category, Key, Default, Node) ->
+    Values = get(Category, Key, Default, Node),
+    case kz_term:is_empty(Values) of
+        'true' -> Default;
+        'false' ->
+            [kz_term:to_binary(Value)
+             || Value <- Values,
+                kz_term:is_not_empty(Value)
+            ]
     end.
 
 
@@ -253,7 +382,6 @@ get_ne_binary(Category, Key, Default, Node) ->
 %% @doc
 %% Get a configuration key for a given category but only if its configured
 %%  explicitly for the node
-%%
 %% @end
 %%-----------------------------------------------------------------------------
 -spec get_node_value(config_category(), config_key()) -> any() | 'undefined'.
@@ -267,15 +395,15 @@ get_node_value(Category, Key, Default) ->
     get_node_value(Category, Key, Default, node()).
 
 get_node_value(Category, Key, Default, Node) when not is_list(Key) ->
-    get_node_value(Category, [kz_util:to_binary(Key)], Default, Node);
+    get_node_value(Category, [kz_term:to_binary(Key)], Default, Node);
 get_node_value(Category, Keys, Default, Node) when not is_binary(Category) ->
-    get_node_value(kz_util:to_binary(Category), Keys, Default, Node);
+    get_node_value(kz_term:to_binary(Category), Keys, Default, Node);
 get_node_value(Category, Keys, Default, Node) when not is_binary(Node) ->
-    get_node_value(Category, Keys, Default, kz_util:to_binary(Node));
+    get_node_value(Category, Keys, Default, kz_term:to_binary(Node));
 get_node_value(Category, Keys, Default, Node) ->
     case get_category(Category) of
         {'ok', JObj} ->
-            Node = kz_util:to_binary(node()),
+            Node = kz_term:to_binary(node()),
             kz_json:get_value([Node | Keys], JObj);
         {'error', 'not_found'} ->
             lager:debug("missing category ~s ~p: ~p", [Category, Keys, Default]),
@@ -295,15 +423,6 @@ get_node_value(Category, Keys, Default, Node) ->
 -spec get(config_category(), config_key(), Default) -> any() | Default.
 -spec get(config_category(), config_key(), Default, ne_binary() | atom()) -> any() | Default.
 
--ifdef(TEST).
-get(_, _) -> 'undefined'.
-get(_, _, Default) -> Default.
-get(_, _, Default, _) -> Default.
-get_current(_, _) -> 'undefined'.
-get_current(_, _, Default) -> Default.
-get_current(_, _, Default, _) -> Default.
--else.
-
 get(Category, Key) ->
     get(Category, Key, 'undefined').
 
@@ -313,11 +432,11 @@ get(Category, Key, Default) ->
 get(Category, Key, Default, 'undefined') ->
     get(Category, Key, Default, ?KEY_DEFAULT);
 get(Category, Key, Default, Node) when not is_list(Key) ->
-    get(Category, [kz_util:to_binary(Key)], Default, Node);
+    get(Category, [kz_term:to_binary(Key)], Default, Node);
 get(Category, Keys, Default, Node) when not is_binary(Category) ->
-    get(kz_util:to_binary(Category), Keys, Default, Node);
+    get(kz_term:to_binary(Category), Keys, Default, Node);
 get(Category, Keys, Default, Node) when not is_binary(Node) ->
-    get(Category, Keys, Default, kz_util:to_binary(Node));
+    get(Category, Keys, Default, kz_term:to_binary(Node));
 get(Category, Keys, Default, Node) ->
     case get_category(Category) of
         {'ok', JObj} -> get_value(Category, Node, Keys, Default, JObj);
@@ -342,11 +461,11 @@ get_current(Category, Key, Default) ->
 get_current(Category, Key, Default, 'undefined') ->
     get_current(Category, Key, Default, ?KEY_DEFAULT);
 get_current(Category, Key, Default, Node) when not is_list(Key) ->
-    get_current(Category, [kz_util:to_binary(Key)], Default, Node);
+    get_current(Category, [kz_term:to_binary(Key)], Default, Node);
 get_current(Category, Keys, Default, Node) when not is_binary(Category) ->
-    get_current(kz_util:to_binary(Category), Keys, Default, Node);
+    get_current(kz_term:to_binary(Category), Keys, Default, Node);
 get_current(Category, Keys, Default, Node) when not is_binary(Node) ->
-    get_current(Category, Keys, Default, kz_util:to_binary(Node));
+    get_current(Category, Keys, Default, kz_term:to_binary(Node));
 get_current(Category, Keys, Default, Node) ->
     case get_category(Category, 'false') of
         {'ok', JObj} -> get_value(Category, Node, Keys, Default, JObj);
@@ -372,7 +491,7 @@ get_value(Category, Node, Keys, Default, JObj) ->
 -spec get_zone_value(config_category(), config_key(), config_key(), Default, kz_json:object()) ->
                             Default | any().
 get_zone_value(Category, _Node, Keys, Default, JObj) ->
-    Zone = kz_util:to_binary(kz_config:zone()),
+    Zone = kz_term:to_binary(kz_config:zone()),
     case kz_json:get_value([Zone | Keys], JObj) of
         'undefined' -> get_default_value(Category, Keys, Default, JObj);
         Else -> Else
@@ -389,17 +508,17 @@ get_default_value(Category, Keys, Default, JObj) ->
         Else -> Else
     end.
 
--endif.
-
 %%-----------------------------------------------------------------------------
 %% @public
-%% @doc Get all Key-Value pairs for a given category
+%% @doc
+%% Get all Key-Value pairs for a given category
+%% @end
 %%-----------------------------------------------------------------------------
 -spec get_all_kvs(ne_binary()) -> kz_proplist().
 get_all_kvs(Category) ->
     case get_category(Category) of
         {'error', _} -> [];
-        {'ok', JObj} -> get_all_kvs(kz_util:to_binary(node()), JObj)
+        {'ok', JObj} -> get_all_kvs(kz_term:to_binary(node()), JObj)
     end.
 
 -spec get_all_kvs(ne_binary(), kz_json:object()) -> kz_proplist().
@@ -422,34 +541,35 @@ get_all_default_kvs(JObj) ->
 %% @end
 %%-----------------------------------------------------------------------------
 -spec set_string(config_category(), config_key(), text() | binary() | string()) ->
-                        {ok, kz_json:object()}.
+                        {'ok', kz_json:object()}.
 -spec set_integer(config_category(), config_key(), text() | integer()) ->
-                         {ok, kz_json:object()}.
+                         {'ok', kz_json:object()}.
 -spec set_float(config_category(), config_key(), text() | float()) ->
-                       {ok, kz_json:object()}.
+                       {'ok', kz_json:object()}.
 -spec set_boolean(config_category(), config_key(), text() | boolean()) ->
-                         {ok, kz_json:object()}.
+                         {'ok', kz_json:object()}.
 -spec set_json(config_category(), config_key(), text() | kz_json:object()) ->
-                      {ok, kz_json:object()}.
+                      {'ok', kz_json:object()}.
 
 set_string(Category, Key, Value) ->
-    set(Category, Key, kz_util:to_binary(Value)).
+    set(Category, Key, kz_term:to_binary(Value)).
 
 set_integer(Category, Key, Value) ->
-    set(Category, Key, kz_util:to_integer(Value)).
+    set(Category, Key, kz_term:to_integer(Value)).
 
 set_float(Category, Key, Value) ->
-    set(Category, Key, kz_util:to_float(Value)).
+    set(Category, Key, kz_term:to_float(Value)).
 
 set_boolean(Category, Key, Value) ->
-    set(Category, Key, kz_util:to_boolean(Value)).
+    set(Category, Key, kz_term:to_boolean(Value)).
 
 set_json(Category, Key, Value) ->
     set(Category, Key, kz_json:decode(Value)).
 
 %%-----------------------------------------------------------------------------
 %% @public
-%% @doc Set the key to the value in the given category but specific to this node
+%% @doc
+%% Set the key to the value in the given category but specific to this node
 %% @end
 %%-----------------------------------------------------------------------------
 -spec set(config_category(), config_key(), any()) ->
@@ -480,32 +600,37 @@ update_default(Category, Key, Value, Options) ->
     update_category(Category, Key, Value, ?KEY_DEFAULT, Options).
 
 -spec set_node(config_category(), config_key(), any(), ne_binary() | atom()) ->
+                      'ok' |
                       {'ok', kz_json:object()}.
 set_node(Category, _, _, 'undefined') -> get_category(Category);
 set_node(Category, Key, Value, Node) ->
     update_category(Category, Key, Value, Node, [{'node_specific', 'true'}]).
 
 -spec update_category(config_category(), config_key(), any(), ne_binary() | atom(), update_options()) ->
+                             'ok' |
                              {'ok', kz_json:object()} |
                              {'error', any()}.
+-ifdef(TEST).
+update_category(_, _, _, _, _) -> 'ok'.
+-else.
 update_category('undefined', _, _, _, _) -> 'ok';
 update_category(_, 'undefined', _, _, _) -> 'ok';
 update_category(_, _, 'undefined', _, _) -> 'ok';
 update_category(Category, Key, Value, 'undefined', Options) ->
     update_category(Category, Key, Value, ?KEY_DEFAULT, Options);
 update_category(Category, Key, Value, Node, Options) when not is_list(Key) ->
-    update_category(Category, [kz_util:to_binary(Key)], Value, Node, Options);
+    update_category(Category, [kz_term:to_binary(Key)], Value, Node, Options);
 update_category(Category, Key, Value, Node, Options) when not is_binary(Category) ->
-    update_category(kz_util:to_binary(Category), Key, Value, Node, Options);
+    update_category(kz_term:to_binary(Category), Key, Value, Node, Options);
 update_category(Category, Key, Value, Node, Options) when not is_binary(Node) ->
-    update_category(Category, Key, Value, kz_util:to_binary(Node), Options);
+    update_category(Category, Key, Value, kz_term:to_binary(Node), Options);
 update_category(Category, Keys, Value, Node, Options) ->
     lager:debug("setting ~s(~p): ~p", [Category, Keys, Value]),
     case kz_datamgr:open_cache_doc(?KZ_CONFIG_DB, Category) of
         {'ok', JObj} ->
             lager:debug("updating category ~s(~s).~s to ~p", [Category
                                                              ,Node
-                                                             ,kz_util:join_binary(Keys)
+                                                             ,kz_binary:join(Keys)
                                                              ,Value
                                                              ]),
             update_category(Category, Keys, Value, Node, Options, JObj);
@@ -539,7 +664,7 @@ update_category(Category, JObj, PvtFields) ->
         {'error', 'conflict'} ->
             lager:debug("conflict saving ~s, merging and saving", [Category]),
             {'ok', Updated} = kz_datamgr:open_doc(?KZ_CONFIG_DB, Category),
-            Merged = kz_json:merge_jobjs(Updated, kz_json:public_fields(JObj)),
+            Merged = kz_json:merge_jobjs(Updated, kz_doc:public_fields(JObj)),
             lager:debug("updating from ~s to ~s", [kz_doc:revision(JObj), kz_doc:revision(Merged)]),
             update_category(Category, Merged, PvtFields)
     end.
@@ -597,10 +722,13 @@ update_pvt_fields(Category, JObj, 'undefined') ->
 update_pvt_fields(Category, JObj, PvtFields) ->
     Base = update_pvt_fields(Category, JObj, 'undefined'),
     kz_json:merge_jobjs(Base, PvtFields).
+-endif.
 
 %%-----------------------------------------------------------------------------
 %% @public
-%% @doc Lock configuration document
+%% @doc
+%% Lock configuration document
+%% @end
 %%-----------------------------------------------------------------------------
 -spec lock_db() -> 'ok'.
 -spec lock_db(text() | boolean()) -> 'ok'.
@@ -612,13 +740,15 @@ lock_db('true') ->
 lock_db('false') ->
     kz_config:unset('kazoo_apps', 'lock_system_config');
 lock_db(Value) when is_binary(Value) ->
-    lock_db(kz_util:to_atom(Value));
+    lock_db(kz_term:to_atom(Value));
 lock_db(Value) ->
     lager:warning("wrong parameter ~p. use either 'true' or 'false'", [Value]).
 
 %%-----------------------------------------------------------------------------
 %% @public
-%% @doc Check if configuration document locked or not
+%% @doc
+%% Check if configuration document locked or not
+%% @end
 %%-----------------------------------------------------------------------------
 -spec is_locked() -> boolean().
 is_locked() ->
@@ -629,7 +759,9 @@ is_locked() ->
 
 %%-----------------------------------------------------------------------------
 %% @public
-%% @doc Flush the configuration cache
+%% @doc
+%% Flush the configuration cache
+%% @end
 %%-----------------------------------------------------------------------------
 -spec flush() -> 'ok'.
 flush() ->
@@ -652,9 +784,9 @@ flush(Category, Key, <<"undefined">>) ->
 flush(Category, Key, Node) when not is_list(Key) ->
     flush(Category, [Key], Node);
 flush(Category, Keys, Node) when not is_binary(Category) ->
-    flush(kz_util:to_binary(Category), Keys, Node);
+    flush(kz_term:to_binary(Category), Keys, Node);
 flush(Category, Keys, Node) when not is_binary(Node) ->
-    flush(Category, Keys, kz_util:to_binary(Node));
+    flush(Category, Keys, kz_term:to_binary(Node));
 flush(Category, Keys, Node) ->
     case get_category(Category) of
         {'error', _} -> 'ok';
@@ -678,10 +810,19 @@ flush(Category, Keys, Node) ->
 get_category(Category) ->
     get_category(Category, 'true').
 
+-ifdef(TEST).
+get_category(?TEST_CAT, _) ->
+    {'ok', kapps_config_util:fixture("test_cat_system")};
+get_category(?TEST_CAT_EMPTY, _) ->
+    {'ok', kz_json:new()};
+get_category(_, _) ->
+    {'error', 'not_found'}.
+-else.
 get_category(Category, 'true') ->
     kz_datamgr:open_cache_doc(?KZ_CONFIG_DB, Category, [{'cache_failures', ['not_found']}]);
 get_category(Category, 'false') ->
     kz_datamgr:open_doc(?KZ_CONFIG_DB, Category).
+-endif.
 
 %%--------------------------------------------------------------------
 %% @public
@@ -692,7 +833,7 @@ get_category(Category, 'false') ->
 %%  In the event that both the source and destination exist but
 %%  have different values it will not make any change.  The parameter
 %%  is only removed from the source after a successsful save of the
-%%  the destiation.
+%%  the destination.
 %% @end
 %%--------------------------------------------------------------------
 -type migrate_setting() :: {ne_binary(), config_key()}.
@@ -768,9 +909,6 @@ get_category(Category, 'false') ->
         ,{{<<"number_manager">>, <<"aging_expiry_d">>}
          ,{<<"tasks">>, <<"aging_expiry_d">>}
          }
-        ,{{<<"number_manager">>, <<"deleted_expiry_d">>}
-         ,{<<"tasks">>, <<"deleted_expiry_d">>}
-         }
         ,{{<<"number_manager">>, <<"discovery_expiry_d">>}
          ,{<<"tasks">>, <<"discovery_expiry_d">>}
          }
@@ -782,6 +920,9 @@ get_category(Category, 'false') ->
          }
         ,{{<<"number_manager.port_request">>, <<"crawler_delay_time_ms">>}
          ,{<<"tasks">>, <<"crawler_delay_time_ms">>}
+         }
+        ,{{<<"number_manager">>, <<"porting_module_name">>}
+         ,{<<"number_manager">>, <<"port_in_module_name">>}
          }
 
         ,{{<<"notify.account_crawler">>, <<"interaccount_delay">>}
@@ -806,6 +947,9 @@ get_category(Category, 'false') ->
         ,{{<<"crossbar">>, <<"soft_delete_pause_ms">>}
          ,{<<"tasks">>, <<"soft_delete_pause_ms">>}
          }
+        ,{{<<"crossbar">>, <<"token_auth_expiry">>}
+         ,{<<"crossbar.auth">>, <<"token_auth_expiry_s">>}
+         }
         ,{{<<"cb_modb">>, <<"maybe_archive_modbs">>}
          ,{<<"tasks">>, <<"should_archive_modbs">>}
          }
@@ -813,19 +957,33 @@ get_category(Category, 'false') ->
          ,{<<"tasks">>, <<"unfinished_port_request_lifetime_s">>}
          }
 
+        ,{{<<"callflow">>, <<"privacy_name">>}
+         ,{<<"privacy">>, <<"privacy_name">>}
+         }
+        ,{{<<"callflow">>, <<"privacy_number">>}
+         ,{<<"privacy">>, <<"privacy_number">>}
+         }
+        ,{{<<"stepswitch">>, <<"block_anonymous_caller_id">>}
+         ,{<<"privacy">>, <<"block_anonymous_caller_id">>}
+         }
+
+        ,{{<<"fax">>, <<"conversion_command">>}
+         ,{<<"fax">>, <<"conversion_pdf_command">>}
+         }
+
+        ,{{<<"media">>, <<"tts_cache">>}
+         ,{<<"speech">>, <<"tts_cache">>}
+         }
         ]).
 
 -spec migrate() -> 'ok'.
 migrate() ->
-    _ = [migrate_config_setting(From, To)
-         || {From, To} <- ?CONFIG_MIGRATIONS
-        ],
-    'ok'.
+    lists:foreach(fun migrate_config_setting/1, ?CONFIG_MIGRATIONS).
 
--spec migrate_config_setting(migrate_setting(), migrate_setting()) ->
+-spec migrate_config_setting({migrate_setting(), migrate_setting()}) ->
                                     'ok' |
                                     {'error', any()}.
-migrate_config_setting(From, To) ->
+migrate_config_setting({From, To}) ->
     case remove_config_setting(From) of
         {'ok', _, []} -> 'ok';
         {'ok', JObj, Removed} ->
@@ -837,20 +995,24 @@ migrate_config_setting(From, To) ->
 -spec migrate_config_setting(kz_json:object(), migrate_values(), migrate_setting()) ->
                                     'ok' |
                                     {'error', any()}.
-migrate_config_setting(UpdatedFrom, Removed, To) ->
-    case add_config_setting(To, Removed) of
-        {'ok', UpdatedTo} ->
-            {'ok', _} = kz_datamgr:save_doc(?KZ_CONFIG_DB, UpdatedTo),
-            {'ok', _} = kz_datamgr:save_doc(?KZ_CONFIG_DB, UpdatedFrom),
-            'ok';
-        {'error', Reason} -> {'error', {'add', Reason}}
+migrate_config_setting(UpdatedFrom, Removed, {ToId, ToSetting}) ->
+    case ToId =:= kz_doc:id(UpdatedFrom) of
+        true ->
+            case add_config_setting(UpdatedFrom, ToSetting, Removed) of
+                {error, Reason} -> {error, {add, Reason}};
+                {ok, Updated} ->
+                    {ok, _} = kz_datamgr:save_doc(?KZ_CONFIG_DB, Updated),
+                    ok
+            end;
+        false ->
+            case add_config_setting(ToId, ToSetting, Removed) of
+                {'error', Reason} -> {'error', {'add', Reason}};
+                {'ok', UpdatedTo} ->
+                    {'ok', _} = kz_datamgr:save_doc(?KZ_CONFIG_DB, UpdatedTo),
+                    {'ok', _} = kz_datamgr:save_doc(?KZ_CONFIG_DB, UpdatedFrom),
+                    'ok'
+            end
     end.
-
--spec add_config_setting(migrate_setting(), migrate_values()) ->
-                                'ok' |
-                                {'error', any()}.
-add_config_setting({Id, Setting}, Values) ->
-    add_config_setting(Id, Setting, Values).
 
 -spec add_config_setting(ne_binary(), config_key(), migrate_values()) ->
                                 'ok' |
@@ -859,15 +1021,11 @@ add_config_setting(Id, Setting, Values) when is_binary(Id) ->
     case kz_datamgr:open_doc(?KZ_CONFIG_DB, Id) of
         {'ok', JObj} -> add_config_setting(JObj, Setting, Values);
         {'error', 'not_found'} ->
-            add_config_setting(
-              kz_doc:update_pvt_parameters(
-                kz_doc:set_id(kz_json:new(), Id)
-                                          ,?KZ_CONFIG_DB
-                                          ,[{'type', <<"config">>}]
-               )
-                              ,Setting
-                              ,Values
-             );
+            New = kz_doc:update_pvt_parameters(kz_doc:set_id(kz_json:new(), Id)
+                                              ,?KZ_CONFIG_DB
+                                              ,[{'type', <<"config">>}]
+                                              ),
+            add_config_setting(New, Setting, Values);
         {'error', _}=Error -> Error
     end;
 add_config_setting(JObj, _, []) -> {'ok', JObj};
@@ -876,27 +1034,24 @@ add_config_setting(JObj, ToSetting, [{FromId, Node, FromSetting, Value} | Values
     Key = config_setting_key(Node, ToSetting),
     case kz_json:get_value(Key, JObj) of
         'undefined' ->
-            io:format(
-              "migrating setting from ~s ~s.~s to ~s ~s.~s value ~p~n"
+            io:format("migrating setting from ~s ~s.~s to ~s ~s.~s value ~p~n"
                      ,[FromId, Node, FromSetting
                       ,ToId, Node, ToSetting
                       ,Value
-                      ]
-             ),
-            add_config_setting(
-              kz_json:set_value(Key, Value, JObj)
+                      ]),
+            add_config_setting(kz_json:set_value(Key, Value, JObj)
                               ,ToSetting
                               ,Values
-             );
+                              );
         Value -> add_config_setting(JObj, ToSetting, Values);
         _Else ->
-            io:format("the system tried to move the parameter listed below but found a different setting already there, you need to correct this disparity manually!~n", []),
+            io:format("the system tried to move the parameter listed below"
+                      " but found a different setting already there."
+                      " You need to correct this disparity manually!~n"),
             io:format("  Source~n    db: ~s~n    id: ~s~n    key: ~s ~s~n    value: ~p~n"
-                     ,[?KZ_CONFIG_DB, FromId, Node, FromSetting, Value]
-                     ),
+                     ,[?KZ_CONFIG_DB, FromId, Node, FromSetting, Value]),
             io:format("  Destination~n    db: ~s~n    id: ~s~n    key: ~s ~s~n    value: ~p~n"
-                     ,[?KZ_CONFIG_DB, ToId, Node, ToSetting, _Else]
-                     ),
+                     ,[?KZ_CONFIG_DB, ToId, Node, ToSetting, _Else]),
             {'error', 'disparity'}
     end.
 
@@ -916,10 +1071,9 @@ remove_config_setting(Id, Setting) when is_binary(Id) ->
     end;
 remove_config_setting(JObj, Setting) ->
     Id = kz_doc:id(JObj),
-    Keys =
-        [{Id, Node, Setting}
-         || Node <- kz_json:get_public_keys(JObj)
-        ],
+    Keys = [{Id, Node, Setting}
+            || Node <- kz_doc:get_public_keys(JObj)
+           ],
     remove_config_setting(Keys, JObj, []).
 
 -spec remove_config_setting([{ne_binary(), ne_binary(), config_key()}], kz_json:object(), migrate_values()) ->

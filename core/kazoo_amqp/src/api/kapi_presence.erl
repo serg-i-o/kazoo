@@ -9,9 +9,11 @@
 -module(kapi_presence).
 
 -export([search_req/1, search_req_v/1
+        ,search_partial_resp/1, search_partial_resp_v/1
         ,search_resp/1, search_resp_v/1
         ]).
 -export([subscribe/1, subscribe_v/1]).
+-export([dialog/1, dialog_v/1]).
 -export([update/1, update_v/1]).
 -export([probe/1, probe_v/1]).
 -export([mwi_update/1, mwi_update_v/1
@@ -24,8 +26,10 @@
 -export([reset/1, reset_v/1]).
 
 -export([publish_search_req/1
+        ,publish_search_partial_resp/2, publish_search_partial_resp/3
         ,publish_search_resp/2
         ,publish_subscribe/1, publish_subscribe/2
+        ,publish_dialog/1, publish_dialog/2
         ,publish_update/1, publish_update/2
         ,publish_probe/1, publish_probe/2
         ,publish_mwi_update/1, publish_mwi_update/2
@@ -47,129 +51,8 @@
 
 -export([declare_exchanges/0]).
 
--include_lib("amqp_util.hrl").
-
--define(PRESENCE_STATES, [<<"trying">>, <<"early">>
-                         ,<<"confirmed">>, <<"terminated">>
-                         ,<<"online">>, <<"offline">>
-                         ]).
-
-%% Search request for active subscriptions
--define(SEARCH_REQ_HEADERS, [<<"Realm">>]).
--define(OPTIONAL_SEARCH_REQ_HEADERS, [<<"Username">>, <<"Event-Package">>]).
--define(SEARCH_REQ_VALUES, [{<<"Event-Category">>, <<"presence">>}
-                           ,{<<"Event-Name">>, <<"search_req">>}
-                           ]).
--define(SEARCH_REQ_TYPES, []).
-
-%% Search response for active subscriptions
--define(SEARCH_RESP_HEADERS, []).
--define(OPTIONAL_SEARCH_RESP_HEADERS, [<<"Subscriptions">>]).
--define(SEARCH_RESP_VALUES, [{<<"Event-Category">>, <<"presence">>}
-                            ,{<<"Event-Name">>, <<"search_resp">>}
-                            ]).
--define(SEARCH_RESP_TYPES, []).
-
-%% Presence subscription from Kamailio
--define(SUBSCRIBE_HEADERS, [<<"User">>, <<"Expires">>]).
--define(OPTIONAL_SUBSCRIBE_HEADERS, [<<"Queue">>, <<"From">>
-                                    ,<<"Event-Package">>, <<"Call-ID">>
-                                    ,<<"From-Tag">>, <<"To-Tag">>
-                                    ,<<"Contact">>
-                                    ]).
--define(SUBSCRIBE_VALUES, [{<<"Event-Category">>, <<"presence">>}
-                          ,{<<"Event-Name">>, <<"subscription">>}
-                          ]).
--define(SUBSCRIBE_TYPES, [{<<"Expires">>, fun(V) -> is_integer(kz_util:to_integer(V)) end}]).
-
-%% Presence state updates
--define(UPDATE_HEADERS, [<<"Presence-ID">>, <<"State">>]).
--define(OPTIONAL_UPDATE_HEADERS, [<<"To">>, <<"To-Tag">>
-                                 ,<<"From">>, <<"From-Tag">>
-                                 ,<<"Call-Direction">>, <<"Call-ID">>
-                                 ,<<"Target-Call-ID">>, <<"Switch-URI">>
-                                 ,<<"Event-Package">>
-                                 ]).
--define(UPDATE_VALUES, [{<<"Event-Category">>, <<"presence">>}
-                       ,{<<"Event-Name">>, <<"update">>}
-                       ,{<<"State">>, ?PRESENCE_STATES}
-                       ]).
--define(UPDATE_TYPES, []).
-
-%% Presence_Probe
--define(PROBE_HEADERS, [<<"Username">>, <<"Realm">>, <<"Event-Package">>]).
--define(OPTIONAL_PROBE_HEADERS, [<<"From-User">>, <<"From-Realm">>
-                                ,<<"To-User">>, <<"To-Realm">>
-                                ,<<"Expires">>, <<"Call-ID">>
-                                ]).
--define(PROBE_VALUES, [{<<"Event-Category">>, <<"presence">>}
-                      ,{<<"Event-Name">>, <<"probe">>}
-                      ]).
--define(PROBE_TYPES, []).
-
-%% MWI Update
--define(MWI_REQ_HEADERS, [<<"To">>
-                         ,<<"Messages-New">>
-                         ,<<"Messages-Saved">>
-                         ]).
--define(OPTIONAL_MWI_REQ_HEADERS, [<<"Messages-Urgent">>
-                                  ,<<"Messages-Urgent-Saved">>
-                                  ,<<"Call-ID">>
-                                  ]).
--define(MWI_REQ_VALUES, [{<<"Event-Category">>, <<"presence">>}
-                        ,{<<"Event-Name">>, <<"mwi_update">>}
-                        ]).
--define(MWI_UNSOLICITED_REQ_VALUES, [{<<"Event-Category">>, <<"presence">>}
-                                    ,{<<"Event-Name">>, <<"mwi_unsolicited_update">>}
-                                    ]).
--define(MWI_REQ_TYPES, [{<<"Messages-New">>, fun is_integer/1}
-                       ,{<<"Messages-Saved">>, fun is_integer/1}
-                       ,{<<"Messages-Urgent">>, fun is_integer/1}
-                       ,{<<"Messages-Urgent-Saved">>, fun is_integer/1}
-                       ]).
-
-%% MWI Query
--define(MWI_QUERY_HEADERS, [<<"Username">>, <<"Realm">>]).
--define(OPTIONAL_MWI_QUERY_HEADERS, [<<"Call-ID">>]).
--define(MWI_QUERY_VALUES, [{<<"Event-Category">>, <<"presence">>}
-                          ,{<<"Event-Name">>, <<"mwi_query">>}
-                          ]).
--define(MWI_QUERY_TYPES, []).
-
-%% Register_Overwrite
--define(REGISTER_OVERWRITE_HEADERS, [<<"Previous-Contact">>, <<"Contact">>
-                                    ,<<"Username">>, <<"Realm">>
-                                    ]).
--define(OPTIONAL_REGISTER_OVERWRITE_HEADERS, []).
--define(REGISTER_OVERWRITE_VALUES, [{<<"Event-Category">>, <<"presence">>}
-                                   ,{<<"Event-Name">>, <<"register_overwrite">>}
-                                   ]).
--define(REGISTER_OVERWRITE_TYPES, []).
-
-%% Flush presence dialog cache
--define(FLUSH_HEADERS, [<<"Type">>]).
--define(OPTIONAL_FLUSH_HEADERS, [<<"User">>, <<"Event-Package">>]).
--define(FLUSH_VALUES, [{<<"Event-Category">>, <<"presence">>}
-                      ,{<<"Event-Name">>, <<"flush">>}
-                      ]).
--define(FLUSH_TYPES, []).
-
-%% Reset presence dialog cache entry
--define(RESET_HEADERS, [<<"Realm">>, <<"Username">>]).
--define(OPTIONAL_RESET_HEADERS, [<<"Event-Package">>]).
--define(RESET_VALUES, [{<<"Event-Category">>, <<"presence">>}
-                      ,{<<"Event-Name">>, <<"reset">>}
-                      ]).
--define(RESET_TYPES, []).
-
-%% Sync presence
--define(SYNC_HEADERS, [<<"Action">>]).
--define(OPTIONAL_SYNC_HEADERS, [<<"Event-Package">>]).
--define(SYNC_VALUES, [{<<"Event-Category">>, <<"presence">>}
-                     ,{<<"Event-Name">>, <<"sync">>}
-                     ,{<<"Action">>, [<<"Request">>, <<"Start">>, <<"End">>]}
-                     ]).
--define(SYNC_TYPES, []).
+-include_lib("kazoo_amqp/src/amqp_util.hrl").
+-include("kapi_presence.hrl").
 
 %%--------------------------------------------------------------------
 %% @doc
@@ -206,6 +89,34 @@ search_req_routing_key(Realm) when is_binary(Realm) ->
     list_to_binary([<<"presence.search_req.">>, amqp_util:encode(Realm)]);
 search_req_routing_key(Req) ->
     search_req_routing_key(kz_json:get_value(<<"Realm">>, Req)).
+
+%%--------------------------------------------------------------------
+%% @doc
+%%
+%% @end
+%%--------------------------------------------------------------------
+-spec search_partial_resp(api_terms()) -> {'ok', iolist()} | {'error', string()}.
+search_partial_resp(Prop) when is_list(Prop) ->
+    case search_partial_resp_v(Prop) of
+        'true' -> kz_api:build_message(Prop, ?SEARCH_PARTIAL_RESP_HEADERS, ?OPTIONAL_SEARCH_PARTIAL_RESP_HEADERS);
+        'false' -> {'error', "Proplist failed validation for search_resp"}
+    end;
+search_partial_resp(JObj) ->
+    search_partial_resp(kz_json:to_proplist(JObj)).
+
+-spec search_partial_resp_v(api_terms()) -> boolean().
+search_partial_resp_v(Prop) when is_list(Prop) ->
+    kz_api:validate(Prop, ?SEARCH_PARTIAL_RESP_HEADERS, ?SEARCH_PARTIAL_RESP_VALUES, ?SEARCH_PARTIAL_RESP_TYPES);
+search_partial_resp_v(JObj) ->
+    search_partial_resp_v(kz_json:to_proplist(JObj)).
+
+-spec publish_search_partial_resp(ne_binary(), api_terms()) -> 'ok'.
+-spec publish_search_partial_resp(ne_binary(), api_terms(), binary()) -> 'ok'.
+publish_search_partial_resp(Queue, JObj) ->
+    publish_search_partial_resp(Queue, JObj, ?DEFAULT_CONTENT_TYPE).
+publish_search_partial_resp(Queue, Resp, ContentType) ->
+    {'ok', Payload} = kz_api:prepare_api_payload(Resp, ?SEARCH_PARTIAL_RESP_VALUES, fun search_partial_resp/1),
+    amqp_util:targeted_publish(Queue, Payload, ContentType).
 
 %%--------------------------------------------------------------------
 %% @doc
@@ -302,23 +213,70 @@ publish_update(Req, ContentType) ->
 -spec update_routing_key(ne_binary() | api_terms()) -> ne_binary().
 -spec update_routing_key(ne_binary(), ne_binary()) -> ne_binary().
 update_routing_key(Req) when is_list(Req) ->
-    update_routing_key(props:get_value(<<"State">>, Req)
+    update_routing_key(props:get_value(<<"Call-ID">>, Req)
                       ,props:get_value(<<"Presence-ID">>, Req)
                       );
 update_routing_key(Req) ->
-    update_routing_key(kz_json:get_value(<<"State">>, Req)
+    update_routing_key(kz_json:get_value(<<"Call-ID">>, Req)
                       ,kz_json:get_value(<<"Presence-ID">>, Req)
                       ).
 
-update_routing_key(State, PresenceID) when is_binary(State) ->
-    R = case binary:split(PresenceID, <<"@">>) of
-            [_To, Realm] -> amqp_util:encode(Realm);
-            [Realm] -> amqp_util:encode(Realm)
-        end,
+update_routing_key(CallId, PresenceID) ->
     list_to_binary([<<"update.">>
-                   ,amqp_util:encode(State)
+                   ,amqp_util:encode(realm_from_presence_id(PresenceID))
                    ,"."
-                   ,amqp_util:encode(R)
+                   ,amqp_util:encode(CallId)
+                   ]).
+
+-spec realm_from_presence_id(ne_binary()) -> ne_binary().
+realm_from_presence_id(PresenceID) ->
+    case binary:split(PresenceID, <<"@">>) of
+        [_To, Realm] -> Realm;
+        [Realm] -> Realm
+    end.
+
+%%--------------------------------------------------------------------
+%% @doc
+%%
+%% @end
+%%--------------------------------------------------------------------
+-spec dialog(api_terms()) -> {'ok', iolist()} | {'error', string()}.
+dialog(Prop) when is_list(Prop) ->
+    case dialog_v(Prop) of
+        'true' -> kz_api:build_message(Prop, ?DIALOG_HEADERS, ?OPTIONAL_DIALOG_HEADERS);
+        'false' -> {'error', "Proplist failed validation for update"}
+    end;
+dialog(JObj) -> dialog(kz_json:to_proplist(JObj)).
+
+-spec dialog_v(api_terms()) -> boolean().
+dialog_v(Prop) when is_list(Prop) ->
+    kz_api:validate(Prop, ?DIALOG_HEADERS, ?DIALOG_VALUES, ?DIALOG_TYPES);
+dialog_v(JObj) -> dialog_v(kz_json:to_proplist(JObj)).
+
+-spec publish_dialog(api_terms()) -> 'ok'.
+-spec publish_dialog(api_terms(), ne_binary()) -> 'ok'.
+publish_dialog(JObj) ->
+    publish_dialog(JObj, ?DEFAULT_CONTENT_TYPE).
+publish_dialog(Req, ContentType) ->
+    {'ok', Payload} = kz_api:prepare_api_payload(Req, ?DIALOG_VALUES, fun dialog/1),
+    amqp_util:presence_publish(dialog_routing_key(Req), Payload, ContentType).
+
+-spec dialog_routing_key(ne_binary() | api_terms()) -> ne_binary().
+-spec dialog_routing_key(ne_binary(), ne_binary()) -> ne_binary().
+dialog_routing_key(Req) when is_list(Req) ->
+    dialog_routing_key(props:get_value(<<"Call-ID">>, Req)
+                      ,props:get_value(<<"Presence-ID">>, Req)
+                      );
+dialog_routing_key(Req) ->
+    dialog_routing_key(kz_json:get_value(<<"Call-ID">>, Req)
+                      ,kz_json:get_value(<<"Presence-ID">>, Req)
+                      ).
+
+dialog_routing_key(CallId, PresenceID) ->
+    list_to_binary([<<"dialog.">>
+                   ,amqp_util:encode(realm_from_presence_id(PresenceID))
+                   ,"."
+                   ,amqp_util:encode(CallId)
                    ]).
 
 %%--------------------------------------------------------------------
@@ -358,10 +316,30 @@ probe_routing_key(JObj) ->
 %% Takes proplist, creates JSON string or error
 %% @end
 %%--------------------------------------------------------------------
+-spec mwi_extended_update(kz_proplist()) -> kz_proplist().
+mwi_extended_update(Prop) ->
+    MessagesNew = props:get_integer_value(<<"Messages-New">>, Prop, 0),
+    MessagesWaiting = case MessagesNew of 0 -> <<"no">>; _ -> <<"yes">> end,
+    To = props:get_value(<<"To">>, Prop),
+    [ToUsername, ToRealm] = binary:split(To, <<"@">>),
+    CallId = ?FAKE_CALLID(To),
+    props:delete(<<"Call-ID">>, Prop)
+        ++ [{<<"From">>, <<"sip:", To/binary>>}
+           ,{<<"From-User">>, ToUsername}
+           ,{<<"From-Realm">>, ToRealm}
+           ,{<<"Message-Account">>, <<"sip:", To/binary>>}
+           ,{<<"Messages-Waiting">>, MessagesWaiting}
+           ,{<<"Messages-New">>, MessagesNew}
+           ,{<<"Messages-Saved">>, 0}
+           ,{<<"Messages-Urgent">>, 0}
+           ,{<<"Messages-Urgent-Saved">>, 0}
+           ,{<<"Call-ID">>, CallId}
+           ].
+
 -spec mwi_update(api_terms()) -> {'ok', iolist()} | {'error', string()}.
 mwi_update(Prop) when is_list(Prop) ->
     case mwi_update_v(Prop) of
-        'true' -> kz_api:build_message(Prop, ?MWI_REQ_HEADERS, ?OPTIONAL_MWI_REQ_HEADERS);
+        'true' -> kz_api:build_message(mwi_extended_update(Prop), ?MWI_REQ_HEADERS, ?OPTIONAL_MWI_REQ_HEADERS);
         'false' -> {'error', "Proplist failed validation for mwi_req"}
     end;
 mwi_update(JObj) -> mwi_update(kz_json:to_proplist(JObj)).
@@ -382,13 +360,18 @@ publish_mwi_update(Req, ContentType) ->
 mwi_update_routing_key(Prop) when is_list(Prop) ->
     mwi_update_routing_key(props:get_value(<<"To">>, Prop));
 mwi_update_routing_key(To) when is_binary(To) ->
-    R = case binary:split(To, <<"@">>) of
-            [_To, Realm] -> amqp_util:encode(Realm);
-            [Realm] -> amqp_util:encode(Realm)
-        end,
-    <<"mwi_updates.", R/binary>>;
+    [User, Realm] = binary:split(To, <<"@">>),
+    mwi_update_routing_key(User, Realm);
 mwi_update_routing_key(JObj) ->
     mwi_update_routing_key(kz_json:get_value(<<"To">>, JObj)).
+
+-spec mwi_update_routing_key(ne_binary(), ne_binary()) -> ne_binary().
+mwi_update_routing_key(User, Realm) ->
+    list_to_binary([<<"mwi_updates.">>
+                   ,amqp_util:encode(Realm)
+                   ,"."
+                   ,amqp_util:encode(User)
+                   ]).
 
 -spec mwi_unsolicited_update(api_terms()) -> {'ok', iolist()} | {'error', string()}.
 mwi_unsolicited_update(Prop) when is_list(Prop) ->
@@ -447,7 +430,7 @@ publish_mwi_query(Req, ContentType) ->
     {'ok', Payload} = kz_api:prepare_api_payload(Req, ?MWI_QUERY_VALUES, fun mwi_query/1),
     amqp_util:presence_publish(mwi_query_routing_key(Req), Payload, ContentType).
 
-%% <<"Notify-User">>, <<"Notify-Realm">>
+-spec mwi_query_routing_key(api_terms() | ne_binary()) -> ne_binary().
 mwi_query_routing_key(Prop) when is_list(Prop) ->
     mwi_query_routing_key(props:get_value(<<"Realm">>, Prop));
 mwi_query_routing_key(Realm) when is_binary(Realm) ->
@@ -614,9 +597,15 @@ bind_q(Queue, ['subscribe'|Restrict], Props) ->
     amqp_util:bind_q_to_presence(Queue, RoutingKey),
     bind_q(Queue, Restrict, Props);
 bind_q(Queue, ['update'|Restrict], Props) ->
-    State = props:get_value('state', Props, <<"*">>),
-    PresenceId = props:get_value('presence-id', Props, <<"*">>),
-    RoutingKey = update_routing_key(State, PresenceId),
+    PresenceId = props:get_value('presence-id', Props, <<"*@*">>),
+    CallId = props:get_value('call', Props, <<"*">>),
+    RoutingKey = update_routing_key(CallId, PresenceId),
+    amqp_util:bind_q_to_presence(Queue, RoutingKey),
+    bind_q(Queue, Restrict, Props);
+bind_q(Queue, ['dialog'|Restrict], Props) ->
+    PresenceId = props:get_value('presence-id', Props, <<"*@*">>),
+    CallId = props:get_value('call', Props, <<"*">>),
+    RoutingKey = dialog_routing_key(CallId, PresenceId),
     amqp_util:bind_q_to_presence(Queue, RoutingKey),
     bind_q(Queue, Restrict, Props);
 bind_q(Queue, ['probe'|Restrict], Props) ->
@@ -626,7 +615,8 @@ bind_q(Queue, ['probe'|Restrict], Props) ->
     bind_q(Queue, Restrict, Props);
 bind_q(Queue, ['mwi_update'|Restrict], Props) ->
     User = props:get_value('user', Props, <<"*">>),
-    RoutingKey = mwi_update_routing_key(User),
+    Realm = props:get_value('realm', Props, <<"*">>),
+    RoutingKey = mwi_update_routing_key(User, Realm),
     amqp_util:bind_q_to_presence(Queue, RoutingKey),
     bind_q(Queue, Restrict, Props);
 bind_q(Queue, ['mwi_unsolicited_update'|Restrict], Props) ->
@@ -679,9 +669,15 @@ unbind_q(Queue, ['subscribe'|Restrict], Props) ->
     amqp_util:unbind_q_from_presence(Queue, RoutingKey),
     unbind_q(Queue, Restrict, Props);
 unbind_q(Queue, ['update'|Restrict], Props) ->
-    State = props:get_value('state', Props, <<"*">>),
     PresenceId = props:get_value('presence-id', Props, <<"*">>),
-    RoutingKey = update_routing_key(State, PresenceId),
+    CallId = props:get_value('call', Props, <<"*">>),
+    RoutingKey = update_routing_key(CallId, PresenceId),
+    amqp_util:unbind_q_from_presence(Queue, RoutingKey),
+    unbind_q(Queue, Restrict, Props);
+unbind_q(Queue, ['dialog'|Restrict], Props) ->
+    PresenceId = props:get_value('presence-id', Props, <<"*@*">>),
+    CallId = props:get_value('call', Props, <<"*">>),
+    RoutingKey = dialog_routing_key(CallId, PresenceId),
     amqp_util:unbind_q_from_presence(Queue, RoutingKey),
     unbind_q(Queue, Restrict, Props);
 unbind_q(Queue, ['probe'|Restrict], Props) ->
@@ -691,7 +687,8 @@ unbind_q(Queue, ['probe'|Restrict], Props) ->
     unbind_q(Queue, Restrict, Props);
 unbind_q(Queue, ['mwi_update'|Restrict], Props) ->
     User = props:get_value('user', Props, <<"*">>),
-    RoutingKey = mwi_update_routing_key(User),
+    Realm = props:get_value('realm', Props, <<"*">>),
+    RoutingKey = mwi_update_routing_key(User, Realm),
     amqp_util:unbind_q_from_presence(Queue, RoutingKey),
     unbind_q(Queue, Restrict, Props);
 unbind_q(Queue, ['mwi_unsolicited_update'|Restrict], Props) ->

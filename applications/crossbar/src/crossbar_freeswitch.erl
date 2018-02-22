@@ -52,7 +52,7 @@
 
 -record(state, {config = 'undefined' :: api_binary()
                ,is_running = 'false' :: boolean()
-               ,monitor :: reference()
+               ,monitor :: api_reference()
                ,hourly_timer = hourly_timer() :: reference()
                }).
 -type state() :: #state{}.
@@ -197,15 +197,15 @@ hourly_timer() ->
 
 -spec zip_directory(file:filename_all()) -> string().
 zip_directory(WorkDir0) ->
-    WorkDir = kz_util:to_list(WorkDir0),
+    WorkDir = kz_term:to_list(WorkDir0),
     ZipName = lists:concat([WorkDir, ".zip"]),
-    Files = [kz_util:to_list(F) || F <- filelib:wildcard("*", WorkDir)],
+    Files = [kz_term:to_list(F) || F <- filelib:wildcard("*", WorkDir)],
     {'ok', _} = zip:zip(ZipName , Files, [{'cwd', WorkDir}]),
     ZipName.
 
 -spec setup_directory() -> file:filename_all().
 setup_directory() ->
-    TopDir = kz_util:rand_hex_binary(8),
+    TopDir = kz_binary:rand_hex(8),
     WorkRootDir = kapps_config:get_binary(?MOD_CONFIG_CAT, <<"work_dir">>, <<"/tmp/">>),
     WorkDir = filename:join([WorkRootDir, TopDir]),
     kz_util:make_dir(WorkDir),
@@ -219,7 +219,7 @@ setup_directory() ->
                            ,xml_file_from_config(T)
                            )
          || {D, T} <- Files,
-            lists:member(kz_util:to_binary(T), Filter)
+            lists:member(kz_term:to_binary(T), Filter)
         ],
     _ = put(<<"WorkDir">>, WorkDir),
     _ = put(<<"Realms">>, []),
@@ -235,7 +235,7 @@ process_realms() ->
     Filter = kapps_config:get(?MOD_CONFIG_CAT, <<"realm_templates_to_process">>, ?FS_REALM_TEMPLATES),
     _ = [process_realms(Realms, D, T)
          || {D, T} <- Templates,
-            lists:member(kz_util:to_binary(T), Filter)
+            lists:member(kz_term:to_binary(T), Filter)
         ],
     'ok'.
 
@@ -269,13 +269,13 @@ build_freeswitch(Pid) ->
     lists:foreach(fun crawl_numbers_db/1, knm_util:get_all_number_dbs()),
     process_realms(),
     File = zip_directory(WorkDir),
-    del_dir(kz_util:to_list(WorkDir)),
+    kz_util:delete_dir(kz_term:to_list(WorkDir)),
     gen_server:cast(Pid, {'completed', File}).
 
 -spec crawl_numbers_db(ne_binary()) -> 'ok'.
 crawl_numbers_db(NumberDb) ->
     lager:debug("getting all numbers from ~s",[NumberDb]),
-    Db = kz_util:to_binary(http_uri:encode(kz_util:to_list(NumberDb))),
+    Db = kz_term:to_binary(http_uri:encode(kz_term:to_list(NumberDb))),
     try kz_datamgr:all_docs(Db) of
         {'ok', []} ->
             lager:debug("no number docs in ~s",[NumberDb]);
@@ -391,7 +391,7 @@ process_callflow(_, _, _, _) -> 'ok'.
 
 -spec process_device(ne_binary(), ne_binary(), kz_json:object()) -> 'ok'.
 process_device(Number, AccountId, JObj) ->
-    AccountRealm = kz_util:get_account_realm(AccountId),
+    AccountRealm = kz_account:fetch_realm(AccountId),
     Realm = kz_device:sip_realm(JObj, AccountRealm),
     Username = kz_device:sip_username(JObj),
     case query_registrar(Realm, Username) of
@@ -446,7 +446,7 @@ render_templates(Number, AccountId, Username, Realm, Props) ->
                 ],
     Filter = kapps_config:get(?MOD_CONFIG_CAT, <<"templates_to_process">>, ?DEFAULT_FS_TEMPLATES),
     _ = [render_template(Number, AccountId, Username, Realm, Props, D, T)
-         || {D, T} <- Templates, lists:member(kz_util:to_binary(T), Filter)
+         || {D, T} <- Templates, lists:member(kz_term:to_binary(T), Filter)
         ],
     'ok'.
 
@@ -488,10 +488,7 @@ query_registrar(Realm, Username) ->
 
 -spec template_file(atom()) -> string().
 template_file(Module) ->
-    filename:join([code:priv_dir('crossbar')
-                  ,"freeswitch"
-                  ,template_file_name(Module)
-                  ]).
+    filename:join([code:priv_dir(?APP), "freeswitch", template_file_name(Module)]).
 
 -spec template_file_name(?FS_CHATPLAN | ?FS_DIALPLAN | ?FS_DIRECTORY | ?FS_DIRECTORY_REALM) -> string().
 template_file_name(?FS_DIALPLAN) -> "dialplan_template.xml";
@@ -501,17 +498,17 @@ template_file_name(?FS_DIRECTORY_REALM) -> "directory_realm_template.xml".
 
 -spec compile_templates() -> ok.
 compile_templates() ->
-    F = fun (T) -> compile_template(kz_util:to_atom(T, 'true')) end,
+    F = fun (T) -> compile_template(kz_term:to_atom(T, 'true')) end,
     lists:foreach(F, ?FS_ALL_TEMPLATES).
 
 -spec compile_template(atom()) -> 'ok'.
 compile_template(Module) ->
-    compile_template(Module, kapps_config:get_binary(?MOD_CONFIG_CAT, kz_util:to_binary(Module))).
+    compile_template(Module, kapps_config:get_binary(?MOD_CONFIG_CAT, kz_term:to_binary(Module))).
 
 -spec compile_template(atom(), api_binary()) -> 'ok'.
 compile_template(Module, 'undefined') ->
     {'ok', Contents} = file:read_file(template_file(Module)),
-    kapps_config:set(?MOD_CONFIG_CAT, kz_util:to_binary(Module), Contents),
+    kapps_config:set(?MOD_CONFIG_CAT, kz_term:to_binary(Module), Contents),
     compile_template(Module, Contents);
 compile_template(Module, Template) ->
     _ = kz_template:compile(Template, Module),
@@ -519,10 +516,7 @@ compile_template(Module, Template) ->
 
 -spec xml_file(atom()) -> string().
 xml_file(Module) ->
-    filename:join([code:priv_dir('crossbar')
-                  ,"freeswitch"
-                  ,xml_file_name(Module)
-                  ]).
+    filename:join([code:priv_dir(?APP), "freeswitch", xml_file_name(Module)]).
 
 -spec xml_file_name(?FS_CHATPLAN | ?FS_DIALPLAN | ?FS_DIRECTORY) -> string().
 xml_file_name(?FS_DIALPLAN) -> "dialplan.xml";
@@ -532,7 +526,7 @@ xml_file_name(?FS_DIRECTORY) -> "directory.xml".
 -spec xml_file_from_config(?FS_CHATPLAN | ?FS_DIALPLAN | ?FS_DIRECTORY) -> ne_binary().
 -spec xml_file_from_config(?FS_CHATPLAN | ?FS_DIALPLAN | ?FS_DIRECTORY, ne_binary()) -> ne_binary().
 xml_file_from_config(Module) ->
-    KeyName = <<(kz_util:to_binary(Module))/binary,"_top_dir_file_content">>,
+    KeyName = <<(kz_term:to_binary(Module))/binary,"_top_dir_file_content">>,
     xml_file_from_config(Module, KeyName).
 xml_file_from_config(Module, KeyName) ->
     xml_file_from_config(Module, kapps_config:get_binary(?MOD_CONFIG_CAT, KeyName), KeyName).
@@ -543,27 +537,3 @@ xml_file_from_config(Module, 'undefined', KeyName) ->
     kapps_config:set(?MOD_CONFIG_CAT, KeyName, Contents),
     Contents;
 xml_file_from_config(_, Contents, _) -> Contents.
-
--spec del_dir(string()) -> 'ok'.
-%% TODO: This should be moved to a kz_file helper
-%%    when kz_util is cleaned-up
-del_dir(Dir) ->
-    lists:foreach(fun(D) -> 'ok' = file:del_dir(D) end
-                 ,del_all_files([Dir], [])
-                 ).
-
--spec del_all_files(strings(), strings()) -> strings().
-del_all_files([], EmptyDirs) -> EmptyDirs;
-del_all_files([Dir | T], EmptyDirs) ->
-    {'ok', FilesInDir} = file:list_dir(Dir),
-    {Files, Dirs} = lists:foldl(fun(F, {Fs, Ds}) ->
-                                        Path = Dir ++ "/" ++ F,
-                                        case filelib:is_dir(Path) of
-                                            'true' ->
-                                                {Fs, [Path | Ds]};
-                                            'false' ->
-                                                {[Path | Fs], Ds}
-                                        end
-                                end, {[],[]}, FilesInDir),
-    lists:foreach(fun kz_util:delete_file/1, Files),
-    del_all_files(T ++ Dirs, [Dir | EmptyDirs]).

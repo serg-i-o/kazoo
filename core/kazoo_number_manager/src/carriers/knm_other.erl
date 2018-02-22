@@ -12,6 +12,7 @@
 -module(knm_other).
 -behaviour(knm_gen_carrier).
 
+-export([info/0]).
 -export([is_local/0]).
 -export([find_numbers/3]).
 -export([is_number_billable/1]).
@@ -24,21 +25,52 @@
 
 -define(KNM_OTHER_CONFIG_CAT, <<?KNM_CONFIG_CAT/binary, ".other">>).
 
+-define(COUNTRY, kapps_config:get_ne_binary(?KNM_OTHER_CONFIG_CAT, <<"default_country">>, ?KNM_DEFAULT_COUNTRY)).
+
+-define(PHONEBOOK_URL, kapps_config:get_ne_binary(?KNM_OTHER_CONFIG_CAT, <<"phonebook_url">>)).
+
 -ifdef(TEST).
--define(COUNTRY, ?KNM_DEFAULT_COUNTRY).
+-define(PHONEBOOK_URL(Options), props:get_value('phonebook_url', Options)).
 -else.
--define(COUNTRY
-       ,kapps_config:get(?KNM_OTHER_CONFIG_CAT, <<"default_country">>, ?KNM_DEFAULT_COUNTRY)).
+-define(PHONEBOOK_URL(_Options), ?PHONEBOOK_URL).
 -endif.
 
 -ifdef(TEST).
--define(PHONEBOOK_URL(Options)
-       ,props:get_value('phonebook_url', Options)).
--else.
--define(PHONEBOOK_URL(_Options)
-       ,kapps_config:get(?KNM_OTHER_CONFIG_CAT, <<"phonebook_url">>)).
+-define(BLOCKS_RESP, kz_json:from_list(
+                       [{<<"status">>, <<"success">>}
+                       ,{<<"data">>
+                        ,[kz_json:from_list(
+                            [{<<"start_number">>, ?START_BLOCK}
+                            ,{<<"end_number">>, ?END_BLOCK}
+                            ])
+                         ]
+                        }
+                       ])
+       ).
+
+-define(NUMBERS_DATA, kz_json:from_list(
+                        [{<<"+1415886790", (D + $0)>>, Ext}
+                         || D <- lists:seq(0, 9),
+                            Ext <- [kz_json:from_list([{<<"extension">>, D}])]
+                        ])
+       ).
+
+-define(NUMBERS_RESPONSE
+       ,kz_json:from_list([{<<"status">>, <<"success">>}
+                          ,{<<"data">>, ?NUMBERS_DATA}
+                          ])
+       ).
 -endif.
 
+%%--------------------------------------------------------------------
+%% @public
+%% @doc
+%% @end
+%%--------------------------------------------------------------------
+-spec info() -> map().
+info() ->
+    #{?CARRIER_INFO_MAX_PREFIX => 10
+     }.
 
 %%--------------------------------------------------------------------
 %% @public
@@ -81,12 +113,11 @@ find_numbers(Prefix, Quantity, Options) ->
                                       {'error', any()}.
 check_numbers(Numbers) ->
     FormatedNumbers = [knm_converters:to_npan(Number) || Number <- Numbers],
-    case kapps_config:get(?KNM_OTHER_CONFIG_CAT, <<"phonebook_url">>) of
+    case ?PHONEBOOK_URL of
         'undefined' -> {'error', 'not_available'};
         Url ->
-            DefaultCountry = kapps_config:get(?KNM_OTHER_CONFIG_CAT, <<"default_country">>, ?KNM_DEFAULT_COUNTRY),
             ReqBody = kz_json:set_value(<<"data">>, FormatedNumbers, kz_json:new()),
-            Uri = <<Url/binary,  "/numbers/", DefaultCountry/binary, "/status">>,
+            Uri = <<Url/binary,  "/numbers/", (?COUNTRY)/binary, "/status">>,
             lager:debug("making request to ~s with body ~p", [Uri, ReqBody]),
             case kz_http:post(binary:bin_to_list(Uri), [], kz_json:encode(ReqBody)) of
                 {'ok', 200, _Headers, Body} ->
@@ -119,8 +150,7 @@ is_number_billable(_Number) -> 'true'.
 -spec acquire_number(knm_number:knm_number()) -> knm_number:knm_number().
 acquire_number(Number) ->
     Num = knm_phone_number:number(knm_number:phone_number(Number)),
-    DefaultCountry = kapps_config:get(?KNM_OTHER_CONFIG_CAT, <<"default_country">>, ?KNM_DEFAULT_COUNTRY),
-    case kapps_config:get(?KNM_OTHER_CONFIG_CAT, <<"phonebook_url">>) of
+    case ?PHONEBOOK_URL of
         'undefined' ->
             knm_errors:unspecified('missing_provider_url', Num);
         Url ->
@@ -131,13 +161,15 @@ acquire_number(Number) ->
                         Endpoints -> Endpoints
                     end,
 
-            ReqBody = kz_json:set_values([{[<<"data">>, <<"numbers">>], [Num]}
-                                         ,{[<<"data">>, <<"gateways">>], Hosts}
-                                         ]
-                                        ,kz_json:new()
-                                        ),
+            ReqBody = kz_json:from_list_recursive(
+                        [{<<"data">>
+                         ,[{<<"numbers">>, [Num]}
+                          ,{<<"gateways">>, Hosts}
+                          ]
+                         }
+                        ]),
 
-            Uri = <<Url/binary,  "/numbers/", DefaultCountry/binary, "/order">>,
+            Uri = <<Url/binary,  "/numbers/", (?COUNTRY)/binary, "/order">>,
             case kz_http:put(binary:bin_to_list(Uri), [], kz_json:encode(ReqBody)) of
                 {'ok', 200, _Headers, Body} ->
                     format_acquire_resp(Number, kz_json:decode(Body));
@@ -212,14 +244,15 @@ format_check_numbers_success(Body) ->
                          {'error', 'not_available'}.
 get_numbers(Url, Prefix, Quantity, Options) ->
     Offset = props:get_binary_value('offset', Options, <<"0">>),
-    ReqBody = <<"?prefix=", Prefix/binary, "&limit=", (kz_util:to_binary(Quantity))/binary, "&offset=", Offset/binary>>,
+    ReqBody = <<"?prefix=", Prefix/binary, "&limit=", (kz_term:to_binary(Quantity))/binary, "&offset=", Offset/binary>>,
     Uri = <<Url/binary, "/numbers/", (?COUNTRY)/binary, "/search", ReqBody/binary>>,
     Results = query_for_numbers(Uri),
     handle_number_query_results(Results, Options).
 
 -spec query_for_numbers(ne_binary()) -> kz_http:http_ret().
 -ifdef(TEST).
-query_for_numbers(<<?NUMBER_PHONEBOOK_URL_L, _/binary>>) ->
+query_for_numbers(<<?NUMBER_PHONEBOOK_URL_L, _/binary>>=URI) ->
+    ?LOG_DEBUG("number pb url ~s resp: ~s", [URI, kz_json:encode(?NUMBERS_RESPONSE)]),
     {'ok', 200, [], kz_json:encode(?NUMBERS_RESPONSE)}.
 -else.
 query_for_numbers(Uri) ->
@@ -274,14 +307,13 @@ get_blocks(?BLOCK_PHONEBOOK_URL, _Prefix, _Quantity, Options) ->
 get_blocks(Url, Prefix, Quantity, Options) ->
     Offset = props:get_binary_value('offset', Options, <<"0">>),
     Limit = props:get_binary_value('blocks', Options, <<"0">>),
-    Country = kapps_config:get(?KNM_OTHER_CONFIG_CAT, <<"default_country">>, ?KNM_DEFAULT_COUNTRY),
     ReqBody = <<"?prefix=", (kz_util:uri_encode(Prefix))/binary
-                ,"&size=", (kz_util:to_binary(Quantity))/binary
+                ,"&size=", (kz_term:to_binary(Quantity))/binary
                 ,"&offset=", Offset/binary
                 ,"&limit=", Limit/binary
               >>,
     Uri = <<Url/binary
-            ,"/blocks/", Country/binary
+            ,"/blocks/", (?COUNTRY)/binary
             ,"/search", ReqBody/binary
           >>,
     lager:debug("making request to ~s", [Uri]),

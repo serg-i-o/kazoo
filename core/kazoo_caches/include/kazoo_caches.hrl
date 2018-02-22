@@ -4,7 +4,7 @@
 -define(KAPPS_CALL_CACHE, 'kapps_call_cache').
 -define(KAPPS_GETBY_CACHE, 'kapps_getby_cache').
 
--include_lib("kazoo/include/kz_types.hrl").
+-include_lib("kazoo_stdlib/include/kz_types.hrl").
 
 -type callback_fun() :: fun((any(), any(), 'flush' | 'erase' | 'expire') -> any()).
 -type callback_funs() :: [callback_fun()].
@@ -19,9 +19,9 @@
 -record(cache_obj, {key :: any()| '_' | '$1'
                    ,value :: any() | '_' | '$1' | '$2'
                    ,expires :: kz_timeout() | '_' | '$3'
-                   ,timestamp = kz_util:current_tstamp() :: gregorian_seconds() | '_' | '$4'
-                   ,callback :: callback_fun() | '_' | '$2' | '$3' | '$5'
-                   ,origin :: origin_tuple() | origin_tuples() | '$1' | '_'
+                   ,timestamp = kz_time:current_tstamp() :: gregorian_seconds() | '_' | '$4'
+                   ,callback :: callback_fun() | '_' | '$2' | '$3' | '$5' | 'undefined'
+                   ,origin :: origin_tuple() | origin_tuples() | '$1' | '_' | 'undefined'
                    }).
 
 -type cache_obj() :: #cache_obj{}.

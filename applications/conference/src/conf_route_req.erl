@@ -31,7 +31,7 @@ handle_req(JObj, _Props) ->
 maybe_send_route_response(JObj, Call) ->
     case find_conference(Call) of
         {'ok', Conference} ->
-            send_route_response(JObj, Call, bridged_conference(Conference));
+            send_route_response(JObj, Call, Conference);
         {'error', _} -> 'ok'
     end.
 
@@ -70,15 +70,28 @@ start_participant(Call, Conference) ->
 
 -spec join_local(kapps_call:call(), kapps_conference:conference(), server_ref()) -> 'ok'.
 join_local(Call, Conference, Participant) ->
-    IsModerator = kz_util:is_true(kapps_call:custom_sip_header(<<"X-Conf-Flags-Moderator">>, Call)),
+    IsModerator = kz_term:is_true(kapps_call:custom_sip_header(<<"X-Conf-Flags-Moderator">>, Call)),
     Routines = [{fun kapps_conference:set_moderator/2, IsModerator}
                ,{fun kapps_conference:set_application_version/2, ?APP_VERSION}
                ,{fun kapps_conference:set_application_name/2, ?APP_NAME}
                ],
     C = kapps_conference:update(Routines, Conference),
     conf_participant:set_conference(C, Participant),
+    maybe_set_name_pronounced(Call, Participant),
     kapps_call_command:answer(Call),
     conf_participant:join_local(Participant).
+
+-spec maybe_set_name_pronounced(kapps_call:call(), server_ref()) -> 'ok'.
+-spec maybe_set_name_pronounced(kz_json:api_json_term(), kz_json:api_json_term(), server_ref()) -> 'ok'.
+maybe_set_name_pronounced(Call, Participant) ->
+    AccountId = kapps_call:custom_sip_header(<<"X-Conf-Values-Pronounced-Name-Account-ID">>, Call),
+    MediaId = kapps_call:custom_sip_header(<<"X-Conf-Values-Pronounced-Name-Media-ID">>, Call),
+    maybe_set_name_pronounced(AccountId, MediaId, Participant).
+
+maybe_set_name_pronounced('undefined', _, _) -> 'ok';
+maybe_set_name_pronounced(_, 'undefined', _) -> 'ok';
+maybe_set_name_pronounced(AccountId, MediaId, Participant) ->
+    conf_participant:set_name_pronounced({'undefined', AccountId, MediaId}, Participant).
 
 -spec find_conference(kapps_call:call()) -> {'error', any()} |
                                             {'ok', kapps_conference:conference()}.
@@ -110,17 +123,4 @@ find_account_db(Call) ->
                        ,[Realm, _R]
                        ),
             'undefined'
-    end.
-
--spec bridged_conference(kapps_conference:conference()) -> kapps_conference:conference().
-bridged_conference(Conference) ->
-    %% We are relying on the original channel to play media
-    %% so that name announcements always work
-    case ?SUPPORT_NAME_ANNOUNCEMENT(kapps_conference:account_id(Conference)) of
-        'true' ->
-            Updaters = [fun(Conf) -> kapps_conference:set_play_entry_tone('false', Conf) end
-                       ,fun(Conf) -> kapps_conference:set_play_exit_tone('false', Conf) end
-                       ],
-            kapps_conference:update(Updaters, Conference);
-        'false' -> Conference
     end.

@@ -71,18 +71,18 @@
 -define(SERVER, ?MODULE).
 
 -record(state, {call :: kapps_call:call()
-               ,acdc_queue_id :: ne_binary() % the ACDc Queue ID
-               ,msg_queue_id :: ne_binary() % the AMQP Queue ID of the ACDc Queue process
-               ,agent_id :: ne_binary()
-               ,acct_db :: ne_binary()
-               ,acct_id :: ne_binary()
-               ,fsm_pid :: pid()
+               ,acdc_queue_id :: api_ne_binary() % the ACDc Queue ID
+               ,msg_queue_id :: api_ne_binary() % the AMQP Queue ID of the ACDc Queue process
+               ,agent_id :: api_ne_binary()
+               ,acct_db :: api_ne_binary()
+               ,acct_id :: api_ne_binary()
+               ,fsm_pid :: api_pid()
                ,agent_queues = [] :: ne_binaries()
-               ,last_connect :: kz_now() % last connection
-               ,last_attempt :: kz_now() % last attempt to connect
+               ,last_connect :: kz_now() | undefined % last connection
+               ,last_attempt :: kz_now() | undefined % last attempt to connect
                ,my_id :: ne_binary()
                ,my_q :: api_binary() % AMQP queue name
-               ,timer_ref :: reference()
+               ,timer_ref :: api_reference()
                ,sync_resp :: kz_json:object() % furthest along resp
                ,supervisor :: pid()
                ,record_calls = 'false' :: boolean()
@@ -875,17 +875,13 @@ handle_cast({'presence_update', PresenceState}, #state{acct_id=AcctId
                                                       ,agent_id=AgentId
                                                       }=State) ->
     lager:debug("no custom presence id, using ~s for ~s", [AgentId, PresenceState]),
-    acdc_util:presence_update(AcctId, AgentId, PresenceState
-                             ,kz_util:to_hex_binary(crypto:hash(md5, AgentId))
-                             ),
+    acdc_util:presence_update(AcctId, AgentId, PresenceState),
     {'noreply', State};
 handle_cast({'presence_update', PresenceState}, #state{acct_id=AcctId
                                                       ,agent_presence_id=PresenceId
                                                       }=State) ->
     lager:debug("custom presence id, using ~s for ~s", [PresenceId, PresenceState]),
-    acdc_util:presence_update(AcctId, PresenceId, PresenceState
-                             ,kz_util:to_hex_binary(crypto:hash(md5, PresenceId))
-                             ),
+    acdc_util:presence_update(AcctId, PresenceId, PresenceState),
     {'noreply', State};
 
 handle_cast({'update_status', Status}, #state{agent_id=AgentId
@@ -1046,7 +1042,7 @@ send_sync_response(ReqJObj, AcctId, AgentId, MyId, MyQ, Status, Options) ->
     Prop = [{<<"Account-ID">>, AcctId}
            ,{<<"Agent-ID">>, AgentId}
            ,{<<"Process-ID">>, MyId}
-           ,{<<"Status">>, kz_util:to_binary(Status)}
+           ,{<<"Status">>, kz_term:to_binary(Status)}
            ,{<<"Msg-ID">>, kz_json:get_value(<<"Msg-ID">>, ReqJObj)}
             | Options ++ kz_api:default_headers(MyQ, ?APP_NAME, ?APP_VERSION)
            ],
@@ -1065,7 +1061,7 @@ send_status_update(AcctId, AgentId, 'resume') ->
 
 -spec idle_time('undefined' | kz_now()) -> api_integer().
 idle_time('undefined') -> 'undefined';
-idle_time(T) -> kz_util:elapsed_s(T).
+idle_time(T) -> kz_time:elapsed_s(T).
 
 -spec call_id(kapps_call:call() | api_object()) ->
                      api_binary().
@@ -1089,7 +1085,7 @@ maybe_connect_to_agent(MyQ, EPs, Call, Timeout, AgentId, _CdrUrl) ->
     MCallId = kapps_call:call_id(Call),
     kz_util:put_callid(MCallId),
 
-    ReqId = kz_util:rand_hex_binary(6),
+    ReqId = kz_binary:rand_hex(6),
     AcctId = kapps_call:account_id(Call),
 
     CCVs = props:filter_undefined([{<<"Account-ID">>, AcctId}
@@ -1114,7 +1110,7 @@ maybe_connect_to_agent(MyQ, EPs, Call, Timeout, AgentId, _CdrUrl) ->
                                         end, {[], []}, EPs),
 
     Prop = props:filter_undefined(
-             [{<<"Msg-ID">>, kz_util:rand_hex_binary(6)}
+             [{<<"Msg-ID">>, kz_binary:rand_hex(6)}
              ,{<<"Custom-Channel-Vars">>, kz_json:from_list(CCVs)}
              ,{<<"Timeout">>, Timeout}
              ,{<<"Endpoints">>, Endpoints}
@@ -1142,8 +1138,8 @@ maybe_connect_to_agent(MyQ, EPs, Call, Timeout, AgentId, _CdrUrl) ->
 
 -spec outbound_call_id(kapps_call:call() | ne_binary(), ne_binary()) -> ne_binary().
 outbound_call_id(CallId, AgentId) when is_binary(CallId) ->
-    Hash = kz_util:to_hex_binary(erlang:md5(CallId)),
-    Rnd = kz_util:rand_hex_binary(4),
+    Hash = kz_term:to_hex_binary(erlang:md5(CallId)),
+    Rnd = kz_binary:rand_hex(4),
     <<Hash/binary, "-", AgentId/binary, "-", Rnd/binary>>;
 outbound_call_id(Call, AgentId) ->
     outbound_call_id(kapps_call:call_id(Call), AgentId).
@@ -1244,7 +1240,7 @@ maybe_start_recording(Call, 'true', Url) ->
     end.
 
 recording_format() ->
-    kapps_config:get(<<"callflow">>, [<<"call_recording">>, <<"extension">>], <<"mp3">>).
+    kapps_config:get_ne_binary(<<"callflow">>, [<<"call_recording">>, <<"extension">>], <<"mp3">>).
 
 -spec agent_id(agent()) -> api_binary().
 agent_id(Agent) ->

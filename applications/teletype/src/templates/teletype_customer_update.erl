@@ -10,7 +10,7 @@
 -module(teletype_customer_update).
 
 -export([init/0
-        ,handle_req/2
+        ,handle_req/1
         ]).
 
 -include("teletype.hrl").
@@ -26,12 +26,15 @@
           [?MACRO_VALUE(<<"user.first_name">>, <<"first_name">>, <<"First Name">>, <<"First Name">>)
           ,?MACRO_VALUE(<<"user.last_name">>, <<"last_name">>, <<"Last Name">>, <<"Last Name">>)
            | ?USER_MACROS
-          ])
+           ++ ?COMMON_TEMPLATE_MACROS
+          ]
+         )
        ).
 
 -define(TEMPLATE_SUBJECT, <<"Customer update">>).
 -define(TEMPLATE_CATEGORY, <<"user">>).
 -define(TEMPLATE_NAME, <<"Customer update">>).
+-define(THIRD_PARTY_DATA, <<"databag">>).
 
 -define(TEMPLATE_TO, ?CONFIGURED_EMAILS(?EMAIL_ORIGINAL)).
 -define(TEMPLATE_FROM, teletype_util:default_from_address(?MOD_CONFIG_CAT)).
@@ -51,28 +54,48 @@ init() ->
                                           ,{'cc', ?TEMPLATE_CC}
                                           ,{'bcc', ?TEMPLATE_BCC}
                                           ,{'reply_to', ?TEMPLATE_REPLY_TO}
-                                          ]).
+                                          ]),
+    teletype_bindings:bind(<<"customer_update">>, ?MODULE, 'handle_req').
 
--spec handle_req(kz_json:object(), kz_proplist()) -> kz_proplist()|'ok'.
-handle_req(JObj, _Props) ->
-    'true' = kapi_notifications:customer_update_v(JObj),
+-spec handle_req(kz_json:object()) -> 'ok'.
+handle_req(JObj) ->
+    handle_req(JObj, kapi_notifications:customer_update_v(JObj)).
+
+-spec handle_req(kz_json:object(), boolean()) -> 'ok'.
+handle_req(JObj, 'false') ->
+    lager:debug("invalid data for ~s", [?TEMPLATE_ID]),
+    teletype_util:send_update(JObj, <<"failed">>, <<"validation_failed">>);
+handle_req(JObj, 'true') ->
+    lager:debug("valid data for ~s, processing...", [?TEMPLATE_ID]),
+
+    %% Gather data for template
     DataJObj = kz_json:normalize(JObj),
     AccountId = kz_json:get_value(<<"account_id">>, DataJObj),
-    case teletype_util:is_notice_enabled(AccountId, JObj, ?TEMPLATE_ID) of
-        'false' -> lager:debug("notification handling not configured for this account");
-        'true' -> process_req(DataJObj, teletype_util:is_preview(DataJObj))
+    case teletype_util:is_notice_enabled(AccountId, JObj, maybe_expand_template_id(DataJObj)) of
+        'false' -> teletype_util:notification_disabled(DataJObj, maybe_expand_template_id(DataJObj));
+        'true' ->
+            Result = process_req(DataJObj, teletype_util:is_preview(DataJObj)),
+            case lists:partition(fun('ok') -> 'true'; (_) -> 'false' end, lists:flatten(Result)) of
+                {[], []} ->
+                    lager:debug("no success no failure, I'm done"),
+                    teletype_util:send_update(DataJObj, <<"completed">>);
+                {[], [{'error', Reason}|_]} ->
+                    teletype_util:send_update(DataJObj, <<"failed">>, Reason);
+                _ ->
+                    teletype_util:send_update(DataJObj, <<"completed">>)
+            end
     end.
 
--spec process_req(kz_json:object(), boolean()) -> kz_proplist()|'ok'.
+-spec process_req(kz_json:object(), boolean()) -> kz_proplist().
 process_req(DataJObj, 'true') ->
-    send_update_to_user(kz_json:new(), DataJObj);
+    [send_update_to_user(kz_json:new(), DataJObj)];
 process_req(DataJObj, 'false') ->
     case kz_json:get_value(<<"recipient_id">>, DataJObj) of
-        <<RecipientId:32/binary>> -> process_account(RecipientId, DataJObj);
+        ?MATCH_ACCOUNT_RAW(RecipientId) -> process_account(RecipientId, DataJObj);
         'undefined' -> process_accounts(DataJObj)
     end.
 
--spec process_accounts(kz_json:object()) -> kz_proplist()|'ok'.
+-spec process_accounts(kz_json:object()) -> kz_proplist().
 process_accounts(DataJObj) ->
     SenderId = kz_json:get_value(<<"account_id">>, DataJObj),
     ViewOpts = [{'startkey', [SenderId]}
@@ -81,16 +104,18 @@ process_accounts(DataJObj) ->
     case kz_datamgr:get_results(?KZ_ACCOUNTS_DB, ?ACC_CHILDREN_LIST, ViewOpts) of
         {'ok', Accounts} ->
             [process_account(kz_doc:id(Account), DataJObj) || Account <- Accounts];
-        {'error', _Reason} = E ->
-            lager:info("failed to load children. error: ~p", [E])
+        {'error', Reason} ->
+            Msg = io_lib:format("failed to load children. error: ~p", [Reason]),
+            lager:info(Msg),
+            [{'error', kz_term:to_binary(Msg)}]
     end.
 
--spec process_account(ne_binary(), kz_json:object()) -> kz_proplist()|'ok'.
+-spec process_account(ne_binary(), kz_json:object()) -> kz_proplist().
 process_account(AccountId, DataJObj) ->
     case kz_json:get_value(<<"user_type">>, DataJObj) of
-        <<UserId:32/binary>> ->
+        ?MATCH_ACCOUNT_RAW(UserId) ->
             {'ok', UserJObj} = kzd_user:fetch(AccountId, UserId),
-            send_update_to_user(UserJObj, DataJObj);
+            [send_update_to_user(UserJObj, DataJObj)];
         _ ->
             AccountDb = kz_util:format_account_id(AccountId, 'encoded'),
             {'ok', Users} = kz_datamgr:get_results(AccountDb, ?ACC_USERS_LIST, []),
@@ -103,30 +128,33 @@ select_users_to_update(Users, DataJObj) ->
         <<"all_users">> ->
             [send_update_to_user(User, DataJObj) || User <- Users];
         _ ->
-            [send_update_to_user(User, DataJObj) || User <- Users, kz_json:get_value(<<"priv_level">>, User) == <<"admin">>]
+            [send_update_to_user(User, DataJObj) || User <- Users, kzd_user:is_account_admin(User)]
     end.
 
--spec send_update_to_user(kz_json:object(), kz_json:object()) -> 'ok'.
+-spec send_update_to_user(kz_json:object(), kz_json:object()) -> 'ok' | {'error', ne_binary()}.
 send_update_to_user(UserJObj, DataJObj) ->
     Macros = [{<<"system">>, teletype_util:system_params()}
              ,{<<"account">>, teletype_util:account_params(DataJObj)}
-              | build_macro_data(UserJObj, DataJObj)
-             ],
+             ]
+        ++ build_macro_data(UserJObj, DataJObj)
+        ++ [{?THIRD_PARTY_DATA, kz_json:get_value(?THIRD_PARTY_DATA, DataJObj, kz_json:new())}],
 
-    RenderedTemplates = teletype_templates:render(?TEMPLATE_ID, Macros, DataJObj, 'true'),
-    {'ok', TemplateMetaJObj} = teletype_templates:fetch_notification(?TEMPLATE_ID, teletype_util:find_account_id(DataJObj)),
+    RenderedTemplates =
+        teletype_templates:render(maybe_expand_template_id(DataJObj), Macros, DataJObj, maybe_tpls_provided(DataJObj)),
+    {'ok', TemplateMetaJObj} =
+        teletype_templates:fetch_notification(maybe_expand_template_id(DataJObj), kapi_notifications:account_id(DataJObj)),
 
     Subject = teletype_util:render_subject(
                 kz_json:find(<<"subject">>, [DataJObj, TemplateMetaJObj])
                                           ,Macros
                ),
     Emails = maybe_replace_to_field(
-               teletype_util:find_addresses(DataJObj, TemplateMetaJObj, ?MOD_CONFIG_CAT)
+               teletype_util:find_addresses(DataJObj, TemplateMetaJObj, maybe_expand_mod_config_cat(DataJObj))
                                    ,kz_json:get_value(<<"email">>, UserJObj)
               ),
     case teletype_util:send_email(Emails, Subject, RenderedTemplates) of
-        'ok' -> teletype_util:send_update(DataJObj, <<"completed">>);
-        {'error', Reason} -> teletype_util:send_update(DataJObj, <<"failed">>, Reason)
+        'ok' -> 'ok';
+        {'error', Reason} -> {error, kz_term:to_binary(Reason)}
     end.
 
 -spec maybe_replace_to_field(email_map(), api_binary()) -> email_map().
@@ -161,4 +189,29 @@ maybe_add_user_data(Key, Acc, UserJObj) ->
             lager:debug("unprocessed user macro key ~s: ~p", [Key, UserJObj]),
             Acc;
         V -> props:set_value(<<"user">>, [{Key, V} | UserMacros], Acc)
+    end.
+
+-spec maybe_expand_template_id(kz_json:object()) -> ne_binary().
+maybe_expand_template_id(DataJObj) ->
+    case kz_json:get_value(<<"template_id">>, DataJObj) of
+        <<"customer_update_", _/binary>> = TemplateId ->
+            TemplateId;
+        _ ->
+            ?TEMPLATE_ID
+    end.
+
+-spec maybe_expand_mod_config_cat(kz_json:object()) -> ne_binary().
+maybe_expand_mod_config_cat(DataJObj) ->
+    case kz_json:get_value(<<"template_id">>, DataJObj) of
+        <<"customer_update_", _/binary>> = TemplateId ->
+            <<(?NOTIFY_CONFIG_CAT)/binary, ".", TemplateId/binary>>;
+        _ ->
+            ?MOD_CONFIG_CAT
+    end.
+
+-spec maybe_tpls_provided(kz_json:object()) -> boolean().
+maybe_tpls_provided(DataJObj) ->
+    case kz_json:get_first_defined([<<"html">>, <<"text">>], DataJObj) of
+        'undefined' -> false;
+        _ -> 'true'
     end.

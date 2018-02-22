@@ -1,10 +1,9 @@
 {
-    "$schema": "http://json-schema.org/draft-03/schema#",
+    "$schema": "http://json-schema.org/draft-04/schema#",
     "_id": "callflows.ring_group",
     "description": "Validator for the Ring Group callflow element",
     "properties": {
         "endpoints": {
-            "default": [],
             "description": "Endpoint IDs (devices, users, etc) included in the ring group",
             "items": {
                 "description": "ID of the endpoint (device, user, etc)",
@@ -12,7 +11,6 @@
                     "delay": {
                         "default": 0,
                         "description": "How long to delay ringing the endpoint, in seconds",
-                        "required": false,
                         "type": "integer"
                     },
                     "endpoint_type": {
@@ -22,56 +20,66 @@
                             "user",
                             "group"
                         ],
-                        "required": true,
                         "type": "string"
                     },
                     "id": {
                         "description": "The ID of the endpoint",
                         "maxLength": 128,
                         "minLength": 1,
-                        "required": true,
                         "type": "string"
                     },
                     "timeout": {
                         "default": 20,
                         "description": "How long to ring the endpoint, in seconds",
-                        "required": false,
                         "type": "integer"
                     },
                     "weight": {
                         "description": "Weight of endpoint, different usage in various strategies",
                         "maximum": 100,
                         "minimum": 1,
-                        "required": false,
                         "type": "integer"
                     }
                 },
+                "required": [
+                    "endpoint_type",
+                    "id"
+                ],
                 "type": "object"
             },
             "minItems": 1,
-            "required": true,
             "type": "array"
         },
         "fail_on_single_reject": {
-            "description": ""
+            "description": "If any leg rejects the call, cancel all other legs",
+            "type": "boolean"
         },
         "ignore_forward": {
             "default": true,
-            "description": "Whether to ring forwarded endpoints",
-            "required": false,
+            "description": "If true, will ignore SIP redirect requests for call-forwarded devices",
             "type": "boolean"
         },
         "repeats": {
             "default": 1,
             "description": "How many times to retry the ring group",
             "minimum": 1,
-            "required": false,
             "type": "integer"
         },
         "ringback": {
             "description": "Ringback to use",
-            "required": false,
             "type": "string"
+        },
+        "ringtones": {
+            "properties": {
+                "external": {
+                    "description": "Ring tone for calls from external sources",
+                    "type": "string"
+                },
+                "internal": {
+                    "description": "Ring tone for calls from external sources",
+                    "type": "string"
+                }
+            },
+            "type": "object"
         },
         "strategy": {
             "default": "simultaneous",
@@ -81,16 +89,16 @@
                 "single",
                 "weighted_random"
             ],
-            "required": false,
             "type": "string"
         },
         "timeout": {
             "default": 20,
             "description": "How long to ring the ring group before continuing, in seconds",
-            "required": false,
             "type": "integer"
         }
     },
-    "required": true,
+    "required": [
+        "endpoints"
+    ],
     "type": "object"
 }

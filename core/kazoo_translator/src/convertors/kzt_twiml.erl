@@ -19,7 +19,7 @@
                         {'ok', xml_els()} |
                         {'error', 'not_parsed'}.
 parse_cmds(XMLBin) ->
-    try xmerl_scan:string(kz_util:to_list(XMLBin)) of
+    try xmerl_scan:string(kz_term:to_list(XMLBin)) of
         {#xmlElement{name='Response'}=XML, _} -> {'ok', XML};
         _E ->
             {'error', 'not_parsed'}
@@ -35,7 +35,7 @@ parse_cmds(XMLBin) ->
 exec(Call, #xmlElement{name='Response', content=Els}) ->
     exec_elements(Call, kz_xml:filter_empty_text(Els));
 exec(Call, Resp) ->
-    try xmerl_scan:string(kz_util:to_list(Resp), [{'space', 'normalize'}]) of
+    try xmerl_scan:string(kz_term:to_list(Resp), [{'space', 'normalize'}]) of
         {#xmlElement{name='Response', content=Els}, _} ->
             exec_elements(Call, kz_xml:filter_empty_text(Els));
         _Other ->
@@ -385,7 +385,7 @@ finish_record_call(Call, Props, MediaName) ->
     RecordingUrl = props:get_value('recordingUrl', Props, NewUri),
     AccountId = kapps_call:account_id(Call),
     Setters1 =
-        case kz_media_recording:should_store_recording(AccountId, RecordingUrl) of
+        case kzc_recording:should_store_recording(AccountId, RecordingUrl) of
             'false' ->
                 lager:info("not storing the recording"),
                 Setters;
@@ -418,7 +418,7 @@ play_beep(Call) ->
     kapps_call_command:tones([Tone], Call).
 
 media_name(Call) ->
-    Format = kapps_config:get(<<"callflow">>, [<<"call_recording">>, <<"extension">>], <<"mp3">>),
+    Format = kapps_config:get_ne_binary(<<"callflow">>, [<<"call_recording">>, <<"extension">>], <<"mp3">>),
     <<"call_recording_", (kapps_call:call_id(Call))/binary, ".", Format/binary>>.
 
 %%------------------------------------------------------------------------------

@@ -98,7 +98,7 @@ handle_call(_Request, _From, State) ->
 %%--------------------------------------------------------------------
 -spec handle_cast(any(), state()) -> handle_cast_ret_state(state()).
 handle_cast('bind_to_chatplan', #state{node=Node}=State) ->
-    Bindings = ecallmgr_config:get(?BINDINGS_CFG_KEY, ?DEFAULT_BINDINGS, Node),
+    Bindings = ecallmgr_config:get_ne_binaries(?BINDINGS_CFG_KEY, ?DEFAULT_BINDINGS, Node),
     case ecallmgr_fs_router_util:register_bindings(Node, ?FETCH_SECTION, Bindings) of
         'true' -> {'noreply', State};
         'false' ->
@@ -121,7 +121,7 @@ handle_cast(_Msg, State) ->
 %%--------------------------------------------------------------------
 -spec handle_info(any(), state()) -> handle_info_ret_state(state()).
 handle_info({'route', Section, EventName, SubClass, Context, FSId, 'undefined', FSData}, State) ->
-    MsgId = kz_util:rand_hex_binary(16),
+    MsgId = kz_binary:rand_hex(16),
     handle_info({'route', Section, EventName, SubClass, Context, FSId, MsgId, [{<<"Unique-ID">>, MsgId} | FSData]}, State);
 handle_info({'route', Section, <<"REQUEST_PARAMS">>, _SubClass, _Context, FSId, MsgId, FSData}, #state{node=Node}=State) ->
     _ = kz_util:spawn(fun process_route_req/5, [Section, Node, FSId, MsgId, FSData]),
@@ -186,7 +186,7 @@ init_message_props(Props) ->
 add_message_missing_props(Props) ->
     props:insert_values([{<<"Call-Direction">>, <<"outbound">>}
                         ,{<<"Resource-Type">>,<<"sms">>}
-                        ,{<<"Message-ID">>, kz_util:rand_hex_binary(16)}
+                        ,{<<"Message-ID">>, kz_binary:rand_hex(16)}
                         ,{<<"Caller-Caller-ID-Number">>, props:get_value(<<"from_user">>, Props)}
                         ,{<<"Caller-Destination-Number">>, props:get_value(<<"to_user">>, Props)}
                         ]

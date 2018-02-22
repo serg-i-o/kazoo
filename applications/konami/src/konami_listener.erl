@@ -70,9 +70,9 @@ handle_metaflow(JObj, Props) ->
     Call = kapps_call:from_json(kz_json:get_value(<<"Call">>, JObj)),
     kapps_call:put_callid(Call),
 
-    _ = konami_code_fsm:start_fsm(
+    _ = konami_code_statem:start(
           kapps_call:kvs_store('consumer_pid', props:get_value('server', Props), Call)
-                                 ,JObj
+                                ,JObj
          ),
     'ok'.
 
@@ -106,6 +106,9 @@ handle_channel_create(JObj, _Props) ->
 maybe_start_metaflows('undefined', _AuthorizingType, _AuthorizingId, _OwnerId, _CallId) ->
     lager:debug("no account id for ~s(~s) owned by ~s", [_AuthorizingId, _AuthorizingType, _OwnerId]);
 maybe_start_metaflows(AccountId, <<"device">>, DeviceId, OwnerId, CallId) ->
+    maybe_start_device_metaflows(AccountId, DeviceId, CallId),
+    maybe_start_user_metaflows(AccountId, OwnerId, CallId);
+maybe_start_metaflows(AccountId, <<"mobile">>, DeviceId, OwnerId, CallId) ->
     maybe_start_device_metaflows(AccountId, DeviceId, CallId),
     maybe_start_user_metaflows(AccountId, OwnerId, CallId);
 maybe_start_metaflows(AccountId, 'undefined', DeviceId, OwnerId, CallId) ->

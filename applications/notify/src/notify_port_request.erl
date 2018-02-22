@@ -48,6 +48,10 @@ handle_req(JObj, _Props) ->
 
     lager:debug("a port change has been requested, sending email notification"),
 
+    RespQ = kz_api:server_id(JObj),
+    MsgId = kz_api:msg_id(JObj),
+    notify_util:send_update(RespQ, MsgId, <<"pending">>),
+
     {'ok', AccountDoc} = notify_util:get_account_doc(JObj),
     AccountJObj = kz_doc:public_fields(AccountDoc),
 
@@ -72,13 +76,15 @@ handle_req(JObj, _Props) ->
 
     EmailAttachments = get_attachments(JObj),
 
-    case notify_util:get_rep_email(AccountDoc) of
-        'undefined' ->
-            SysAdminEmail = kapps_config:get(?MOD_CONFIG_CAT, <<"default_to">>, <<>>),
-            build_and_send_email(TxtBody, HTMLBody, Subject, SysAdminEmail, Props, EmailAttachments);
-        RepEmail ->
-            build_and_send_email(TxtBody, HTMLBody, Subject, RepEmail, Props, EmailAttachments)
-    end.
+    Result =
+        case notify_util:get_rep_email(AccountDoc) of
+            'undefined' ->
+                SysAdminEmail = kapps_config:get_ne_binary_or_ne_binaries(?MOD_CONFIG_CAT, <<"default_to">>),
+                build_and_send_email(TxtBody, HTMLBody, Subject, SysAdminEmail, Props, EmailAttachments);
+            RepEmail ->
+                build_and_send_email(TxtBody, HTMLBody, Subject, RepEmail, Props, EmailAttachments)
+        end,
+    notify_util:maybe_send_update(Result, RespQ, MsgId).
 
 %%--------------------------------------------------------------------
 %% @private
@@ -94,7 +100,7 @@ create_template_props(<<"v2">>, NotifyJObj, AccountJObj) ->
     PortData = notify_util:json_to_template_props(kz_doc:public_fields(PortDoc)),
     [Number|_]=Numbers = find_numbers(PortData, NotifyJObj),
 
-    NumberString = kz_util:join_binary(Numbers, <<" ">>),
+    NumberString = kz_binary:join(Numbers, <<" ">>),
 
     Request = [{<<"port">>
                ,[{<<"service_provider">>, kz_json:get_value(<<"carrier">>, PortDoc)}
@@ -156,7 +162,7 @@ get_admin_send_from(Admin) ->
 
 -spec get_default_from() -> ne_binary().
 get_default_from() ->
-    DefaultFrom = kz_util:to_binary(node()),
+    DefaultFrom = kz_term:to_binary(node()),
     kapps_config:get_binary(?MOD_CONFIG_CAT, <<"default_from">>, DefaultFrom).
 
 -spec find_numbers(kz_proplist(), kz_json:object()) -> ne_binaries().
@@ -197,10 +203,9 @@ normalize_find_numbers(Number) -> Number.
 %% process the AMQP requests
 %% @end
 %%--------------------------------------------------------------------
--spec build_and_send_email(iolist(), iolist(), iolist(), ne_binary() | ne_binaries(), kz_proplist(), list()) -> 'ok'.
+-spec build_and_send_email(iolist(), iolist(), iolist(), ne_binary() | ne_binaries(), kz_proplist(), list()) -> send_email_return().
 build_and_send_email(TxtBody, HTMLBody, Subject, To, Props, Attachements) when is_list(To)->
-    _ = [build_and_send_email(TxtBody, HTMLBody, Subject, T, Props, Attachements) || T <- To],
-    'ok';
+    [build_and_send_email(TxtBody, HTMLBody, Subject, T, Props, Attachements) || T <- To];
 build_and_send_email(TxtBody, HTMLBody, Subject, To, Props, Attachements) ->
     From = props:get_value(<<"send_from">>, Props),
     %% Content Type, Subtype, Headers, Parameters, Body
@@ -218,8 +223,7 @@ build_and_send_email(TxtBody, HTMLBody, Subject, To, Props, Attachements) ->
              ]
             },
     lager:debug("sending email from ~s to ~s", [From, To]),
-    notify_util:send_email(From, To, Email),
-    'ok'.
+    notify_util:send_email(From, To, Email).
 
 %%--------------------------------------------------------------------
 %% @private
@@ -294,6 +298,6 @@ create_attachment(AttachmentName, AttachmentJObj, AttachmentBin) ->
 %%--------------------------------------------------------------------
 -spec fix_attachment_name(ne_binary() | list()) -> ne_binary().
 fix_attachment_name(Name) when is_binary(Name) ->
-    fix_attachment_name(kz_util:to_list(Name));
+    fix_attachment_name(kz_term:to_list(Name));
 fix_attachment_name(Name) ->
-    kz_util:to_binary(http_uri:encode(Name)).
+    kz_term:to_binary(http_uri:encode(Name)).

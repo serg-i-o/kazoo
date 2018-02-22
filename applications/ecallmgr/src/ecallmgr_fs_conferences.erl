@@ -86,7 +86,6 @@ start_link() ->
                             ,{'consume_options', ?CONSUME_OPTIONS}
                             ], []).
 
-
 -spec summary() -> 'ok'.
 summary() ->
     MatchSpec = [{#conference{_ = '_'}, [], ['$_']}],
@@ -94,7 +93,7 @@ summary() ->
 
 -spec summary(text()) -> 'ok'.
 summary(Node) when not is_atom(Node) ->
-    summary(kz_util:to_atom(Node, 'true'));
+    summary(kz_term:to_atom(Node, 'true'));
 summary(Node) ->
     MatchSpec = [{#conference{node=Node, _ = '_'}, [], ['$_']}],
     print_summary(ets:select(?CONFERENCES_TBL, MatchSpec, 1)).
@@ -106,7 +105,7 @@ details() ->
 
 -spec details(text()) -> 'ok'.
 details(UUID) when not is_binary(UUID) ->
-    details(kz_util:to_binary(UUID));
+    details(kz_term:to_binary(UUID));
 details(UUID) ->
     MatchSpec = [{#conference{uuid=UUID, _ = '_'}, [], ['$_']}],
     print_details(ets:select(?CONFERENCES_TBL, MatchSpec, 1)).
@@ -159,7 +158,7 @@ participants(Name) ->
 participants_to_json(Participants) ->
     participants_to_json(Participants, []).
 
--spec participant_create(kz_proplist(), atom()) -> participant().
+-spec participant_create(kzd_freeswitch:data(), atom()) -> participant().
 participant_create(Props, Node) ->
     gen_server:call(?SERVER, {'participant_create', Props, Node}).
 
@@ -205,14 +204,15 @@ handle_search_conference(JObj, _Props) ->
                     ,switch_hostname=Hostname
                     ,switch_url=SwitchURL
                     ,switch_external_ip=ExternalIP
-                    } | _Conferences
+                    }
+         | _Conferences
         ] ->
             lager:debug("sending affirmative search response for conference ~s", [Name]),
             Participants = participants(Name),
             Resp = [{<<"Msg-ID">>, kz_api:msg_id(JObj)}
                    ,{<<"Conference-ID">>, Name}
                    ,{<<"UUID">>, UUID}
-                   ,{<<"Run-Time">>, kz_util:current_tstamp() - StartTime}
+                   ,{<<"Run-Time">>, kz_time:current_tstamp() - StartTime}
                    ,{<<"Start-Time">>, StartTime}
                    ,{<<"Locked">>, Locked}
                    ,{<<"Switch-Hostname">>, Hostname}
@@ -269,7 +269,7 @@ conference_resp(#conference{uuid=UUID
     Participants = participants(Name),
     {Moderators, Members} = lists:partition(fun is_moderator/1, Participants),
     Resp = [{<<"UUID">>, UUID}
-           ,{<<"Run-Time">>, kz_util:current_tstamp() - StartTime}
+           ,{<<"Run-Time">>, kz_time:current_tstamp() - StartTime}
            ,{<<"Start-Time">>, StartTime}
            ,{<<"Is-Locked">>, Locked}
            ,{<<"Switch-Hostname">>, Hostname}
@@ -281,9 +281,9 @@ conference_resp(#conference{uuid=UUID
            ],
     {Name, kz_json:from_list(Resp)}.
 
+-spec is_moderator(participant()) -> boolean().
 is_moderator(#participant{conference_channel_vars=Vars}) ->
     props:is_true(<<"Is-Moderator">>, Vars, 'false').
-
 
 %%%===================================================================
 %%% gen_server callbacks
@@ -336,7 +336,7 @@ handle_call({'conference_destroy', UUID}, _, State) ->
 handle_call({'participant_create', Props, Node}, _, State) ->
     Participant = participant_from_props(Props, Node),
     _ = ets:insert_new(?PARTICIPANTS_TBL, Participant),
-    UUID = props:get_value(<<"Conference-Unique-ID">>, Props),
+    UUID = kzd_freeswitch:conference_uuid(Props),
     _ = case ets:lookup(?CONFERENCES_TBL, UUID) of
             [#conference{account_id='undefined'}] ->
                 lager:info("failed to find account_id in conference ~s, adding", [UUID]),
@@ -462,43 +462,39 @@ code_change(_OldVsn, State, _Extra) -> {'ok', State}.
 %%%===================================================================
 %%% Internal functions
 %%%===================================================================
--spec conference_from_props(kz_proplist(), atom()) -> conference().
+-spec conference_from_props(kzd_freeswitch:data(), atom()) -> conference().
 conference_from_props(Props, Node) ->
     conference_from_props(Props, Node, #conference{}).
 
 -spec conference_from_props(kz_proplist(), atom(), conference()) -> conference().
 conference_from_props(Props, Node, Conference) ->
-    CtrlNode = kz_util:to_atom(props:get_value(?GET_CCV(<<"Ecallmgr-Node">>), Props), 'true'),
-    Conference#conference{node=Node
-                         ,uuid=props:get_value(<<"Conference-Unique-ID">>, Props)
-                         ,name=props:get_value(<<"Conference-Name">>, Props)
-                         ,profile_name=props:get_value(<<"Conference-Profile-Name">>, Props)
-                         ,start_time = kz_util:current_tstamp()
-                         ,switch_hostname=props:get_value(<<"FreeSWITCH-Hostname">>, Props, kz_util:to_binary(Node))
-                         ,switch_url=ecallmgr_fs_nodes:sip_url(Node)
-                         ,switch_external_ip=ecallmgr_fs_nodes:sip_external_ip(Node)
+    CtrlNode = kz_term:to_atom(props:get_value(?GET_CCV(<<"Ecallmgr-Node">>), Props), 'true'),
+    Conference#conference{node = Node
+                         ,uuid = kzd_freeswitch:conference_uuid(Props)
+                         ,name = kzd_freeswitch:conference_name(Props)
+                         ,profile_name = kzd_freeswitch:conference_profile_name(Props)
+                         ,start_time = kz_time:current_tstamp()
+                         ,switch_hostname = kzd_freeswitch:hostname(Props, kz_term:to_binary(Node))
+                         ,switch_url = ecallmgr_fs_nodes:sip_url(Node)
+                         ,switch_external_ip = ecallmgr_fs_nodes:sip_external_ip(Node)
                          ,account_id = props:get_value(?GET_CCV(<<"Account-ID">>), Props)
-                         ,handling_locally = CtrlNode =:= node()
+                         ,handling_locally = (CtrlNode =:= node())
                          ,origin_node = CtrlNode
                          ,control_node = CtrlNode
                          }.
 
--spec participant_from_props(kz_proplist(), atom()) -> participant().
+-spec participant_from_props(kzd_freeswitch:data(), atom()) -> participant().
 participant_from_props(Props, Node) ->
-    participant_from_props(Props, Node, #participant{}).
-
--spec participant_from_props(kz_proplist(), atom(), participant()) -> participant().
-participant_from_props(Props, Node, Participant) ->
-    Participant#participant{node=Node
-                           ,uuid=kzd_freeswitch:call_id(Props)
-                           ,conference_uuid=props:get_value(<<"Conference-Unique-ID">>, Props)
-                           ,conference_name=props:get_value(<<"Conference-Name">>, Props)
-                           ,join_time=props:get_integer_value(<<"Join-Time">>, Props, kz_util:current_tstamp())
-                           ,caller_id_number=props:get_value(<<"Caller-Caller-ID-Number">>, Props)
-                           ,caller_id_name=props:get_value(<<"Caller-Caller-ID-Name">>, Props)
-                           ,custom_channel_vars=ecallmgr_util:custom_channel_vars(Props)
-                           ,conference_channel_vars=ecallmgr_util:conference_channel_vars(Props)
-                           }.
+    #participant{node = Node
+                ,uuid = kzd_freeswitch:call_id(Props)
+                ,conference_uuid = kzd_freeswitch:conference_uuid(Props)
+                ,conference_name = kzd_freeswitch:conference_name(Props)
+                ,join_time = kzd_freeswitch:join_time(Props)
+                ,caller_id_number = kzd_freeswitch:caller_id_number(Props)
+                ,caller_id_name = kzd_freeswitch:caller_id_name(Props)
+                ,custom_channel_vars = ecallmgr_util:custom_channel_vars(Props)
+                ,conference_channel_vars = ecallmgr_util:conference_channel_vars(Props)
+                }.
 
 -spec participants_to_json(participants(), kz_json:objects()) -> kz_json:objects().
 participants_to_json([], JObjs) -> JObjs;
@@ -553,7 +549,7 @@ conference_to_props(#conference{name=Name
                                ,switch_url=SwitchURL
                                ,account_id=AccountId
                                ,locked=Locked
-                               ,handling_locally = IsLocal
+                               ,handling_locally=IsLocal
                                }) ->
     props:filter_undefined(
       [{<<"Name">>, Name}
@@ -581,7 +577,7 @@ conference_to_props(#conference{name=Name
 list_conferences(Node) ->
     case freeswitch:api(Node, 'conference', "xml_list") of
         {'ok', XmlStr} ->
-            {Xml, _} = xmerl_scan:string(kz_util:to_list(XmlStr)),
+            {Xml, _} = xmerl_scan:string(kz_term:to_list(XmlStr)),
             case catch xml_list_to_records(Xml, Node) of
                 {'EXIT', _R} -> [];
                 Rs -> Rs
@@ -619,7 +615,7 @@ xml_list_to_records(_, _, Recs) -> Recs.
 xml_to_conference(#xmlElement{name='conference'
                              ,attributes=Attrs
                              }, Node) ->
-    [_, Hostname] = binary:split(kz_util:to_binary(Node), <<"@">>),
+    [_, Hostname] = binary:split(kz_term:to_binary(Node), <<"@">>),
     xml_attrs_to_conference(Attrs, #conference{node=Node
                                               ,switch_hostname=Hostname
                                               ,switch_url=ecallmgr_fs_nodes:sip_url(Node)
@@ -638,28 +634,28 @@ xml_attrs_to_conference([#xmlAttribute{name=Name, value=Value}
 -spec xml_attr_to_conference(conference(), xml_attrib_name(), xml_attrib_value()) ->
                                     conference().
 xml_attr_to_conference(Conference, 'name', Value) ->
-    Conference#conference{name=kz_util:to_binary(Value)};
+    Conference#conference{name=kz_term:to_binary(Value)};
 xml_attr_to_conference(Conference, 'member-count', Value) ->
-    Conference#conference{participants=kz_util:to_integer(Value)};
+    Conference#conference{participants=kz_term:to_integer(Value)};
 xml_attr_to_conference(Conference, 'uuid', Value) ->
-    Conference#conference{uuid=kz_util:to_binary(Value)};
+    Conference#conference{uuid=kz_term:to_binary(Value)};
 xml_attr_to_conference(Conference, 'running', Value) ->
-    Conference#conference{running=kz_util:is_true(Value)};
+    Conference#conference{running=kz_term:is_true(Value)};
 xml_attr_to_conference(Conference, 'locked', Value) ->
-    Conference#conference{locked=kz_util:is_true(Value)};
+    Conference#conference{locked=kz_term:is_true(Value)};
 xml_attr_to_conference(Conference, 'answered', Value) ->
-    Conference#conference{answered=kz_util:is_true(Value)};
+    Conference#conference{answered=kz_term:is_true(Value)};
 xml_attr_to_conference(Conference, 'enforce_min', Value) ->
-    Conference#conference{enforce_min=kz_util:is_true(Value)};
+    Conference#conference{enforce_min=kz_term:is_true(Value)};
 xml_attr_to_conference(Conference, 'dynamic', Value) ->
-    Conference#conference{dynamic=kz_util:is_true(Value)};
+    Conference#conference{dynamic=kz_term:is_true(Value)};
 xml_attr_to_conference(Conference, 'exit_sound', Value) ->
-    Conference#conference{exit_sound=kz_util:is_true(Value)};
+    Conference#conference{exit_sound=kz_term:is_true(Value)};
 xml_attr_to_conference(Conference, 'enter_sound', Value) ->
-    Conference#conference{enter_sound=kz_util:is_true(Value)};
+    Conference#conference{enter_sound=kz_term:is_true(Value)};
 xml_attr_to_conference(Conference, 'run_time', Value) ->
-    Conference#conference{start_time=kz_util:decr_timeout(kz_util:current_tstamp()
-                                                         ,kz_util:to_integer(Value)
+    Conference#conference{start_time=kz_time:decr_timeout(kz_time:current_tstamp()
+                                                         ,kz_term:to_integer(Value)
                                                          )};
 xml_attr_to_conference(Conference, _Name, _Value) ->
     lager:debug("unhandled conference k/v ~s: ~p", [_Name, _Value]),
@@ -691,7 +687,7 @@ xml_member_to_participant([#xmlElement{name='uuid'
     CallId = kz_util:uri_decode(xml_text_to_binary(UUID)),
     lager:debug("uuid ~s callid ~s", [xml_text_to_binary(UUID), CallId]),
     xml_member_to_participant(XmlElements
-                             ,Participant#participant{uuid=kz_util:to_binary(CallId)}
+                             ,Participant#participant{uuid=kz_term:to_binary(CallId)}
                              );
 
 xml_member_to_participant([_|XmlElements], Participant) ->
@@ -792,13 +788,15 @@ print_summary({[#conference{name=Name
                            ,node=Node
                            ,start_time=StartTime
                            ,account_id=AccountId
-                           ,handling_locally = IsLocal
-                           }]
-              ,Continuation}
+                           ,handling_locally=IsLocal
+                           }
+               ]
+              ,Continuation
+              }
              ,Count) ->
     Participants = participants(Name),
     io:format("| ~-32s | ~-50s | ~-12B | ~-11B | ~-32s |~-5s|~n"
-             ,[Name, Node, length(Participants), kz_util:current_tstamp() - StartTime, AccountId, IsLocal]
+             ,[Name, Node, length(Participants), kz_time:current_tstamp() - StartTime, AccountId, IsLocal]
              ),
     print_summary(ets:select(Continuation), Count + 1).
 
@@ -813,7 +811,7 @@ print_details({[#conference{name=Name}=Conference]
               ,Continuation}
              ,Count) ->
     io:format("~n"),
-    _ = [io:format("~-19s: ~s~n", [K, kz_util:to_binary(V)])
+    _ = [io:format("~-19s: ~s~n", [K, kz_term:to_binary(V)])
          || {K, V} <- conference_to_props(Conference)
         ],
     _ = case participants(Name) of
@@ -825,10 +823,11 @@ print_details({[#conference{name=Name}=Conference]
     print_details(ets:select(Continuation), Count + 1).
 
 print_participant_details([]) -> io:format("~n");
-print_participant_details([#participant{uuid=UUID}=Participant
+print_participant_details([#participant{uuid=UUID
+                                       ,conference_channel_vars=Props
+                                       }
                            | Participants
                           ]) ->
-    Props = Participant#participant.conference_channel_vars,
     io:format("~n    [~b] ~-52s:", [props:get_integer_value(<<"Member-ID">>, Props, 0), UUID]),
     print_participant_flags(Props),
     print_participant_details(Participants).

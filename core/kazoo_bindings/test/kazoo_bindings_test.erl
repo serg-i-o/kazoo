@@ -24,10 +24,10 @@
 - include_lib("proper/include/proper.hrl").
 -endif.
 -include_lib("eunit/include/eunit.hrl").
--include_lib("kazoo/include/kz_types.hrl").
+-include_lib("kazoo_stdlib/include/kz_types.hrl").
 
 %% EUNIT and PropEr TESTING %%
--spec binding_matches(ne_binary(), ne_binary()) -> boolean().
+-spec binding_matches(ne_binary(), binary()) -> boolean().
 binding_matches(B, R) ->
     BRev = lists:reverse(binary:split(B, <<".">>, ['global'])),
     RRev = lists:reverse(binary:split(R, <<".">>, ['global'])),
@@ -72,21 +72,25 @@ bindings_match_test_() ->
 %%     dbg:tpl(kazoo_bindings, [{'_', [], [$_]}]),
 %%     dbg:p(all, c),
 
-%%     Result = binding_matches(<<"#.c.#.c.#">>, <<"c.c">>),
+
+%%     Result = binding_matches(<<"W0.*.m.m.#">>, <<"W0.m.m.m.5">>),
+
 
 %%     dbg:stop_clear(),
 %%     dbg:stop(),
 %%     ?assertEqual('true', Result).
 
 weird_bindings_test_() ->
-    [?_assertEqual('true', binding_matches(<<"#.A.*">>,<<"A.a.A.a">>))
+    [?_assertEqual('true', binding_matches(<<"#.A.*">>, <<"A.a.A.a">>))
     ,?_assertEqual('true', binding_matches(<<"#.*">>, <<"foo">>))
     ,?_assertEqual('true', binding_matches(<<"#.*">>, <<"foo.bar">>))
     ,?_assertEqual('false', binding_matches(<<"foo.#.*">>, <<"foo">>))
     ,?_assertEqual('false', binding_matches(<<"#.*">>, <<>>))
-    ,?_assertEqual('true', binding_matches(<<"#.6.*.1.4.*">>,<<"6.a.a.6.a.1.4.a">>))
-    ,?_assertEqual('true', binding_matches(<<"*.u.*.7.7.#">>,<<"i.u.e.7.7.7.a">>))
+    ,?_assertEqual('true', binding_matches(<<"#.6.*.1.4.*">>, <<"6.a.a.6.a.1.4.a">>))
+    ,?_assertEqual('true', binding_matches(<<"*.u.*.7.7.#">>, <<"i.u.e.7.7.7.a">>))
     ,?_assertEqual('true', binding_matches(<<"#.c.#.c.#">>, <<"c.c">>))
+    ,?_assertEqual('true', binding_matches(<<"#.Z.*.9.0.#">>, <<"1.Z.7.9.0.9.a.0">>))
+    ,?_assertEqual('true', binding_matches(<<"W0.*.m.m.#">>, <<"W0.m.m.m.5">>))
     ].
 
 %%% PropEr tests
@@ -106,7 +110,7 @@ prop_expands() ->
     ?FORALL(Paths
            ,expanded_paths(),
             ?WHENFAIL(io:format("Failed on ~p~n", [Paths])
-                     ,lists:all(fun kz_util:identity/1,
+                     ,lists:all(fun kz_term:identity/1,
                                 [binding_matches(Pattern, Expanded) =:= Expected
                                  || {Pattern, Expanded, Expected} <- Paths
                                 ])

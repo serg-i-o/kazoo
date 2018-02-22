@@ -24,23 +24,36 @@ start_link() ->
 -spec init() -> 'ok'.
 init() ->
     kz_util:put_callid(?MODULE),
-    case kz_config:get_atom(?APP, 'cookie') of
-        [] ->
-            lager:warning("failed to set ~s cookie trying node ~s", [?APP, node()]),
-            [Name, _Host] = binary:split(kz_util:to_binary(node()), <<"@">>),
-            case kz_config:get_atom(kz_util:to_atom(Name, 'true'), 'cookie') of
-                [] ->
-                    lager:warning("failed to set ~s cookie for node ~s", [?APP, node()]);
-                [Cookie|_] ->
-                    erlang:set_cookie(node(), Cookie),
-                    lager:info("setting ~s cookie to ~p", [?APP, Cookie])
-            end;
-        [Cookie|_] ->
-            erlang:set_cookie(node(), Cookie),
-            lager:info("setting ~s cookie to ~p", [?APP, Cookie])
-    end,
+    set_cookie(),
     set_loglevel().
 
+-spec set_cookie() -> 'true'.
+set_cookie() ->
+    Cookie = maybe_cookie_from_env(),
+    lager:info("setting ~s cookie to ~p", [?APP, Cookie]),
+    erlang:set_cookie(node(), Cookie).
+
+-spec maybe_cookie_from_env() -> atom().
+maybe_cookie_from_env() ->
+    case os:getenv("KAZOO_COOKIE", "noenv") of
+        "noenv" -> cookie_from_ini();
+        Cookie -> kz_term:to_atom(Cookie, 'true')
+    end.
+
+-spec cookie_from_ini() -> atom().
+cookie_from_ini() ->
+    case kz_config:get_atom(?APP, 'cookie') of
+        [] ->
+            [Name, _Host] = binary:split(kz_term:to_binary(node()), <<"@">>),
+            case kz_config:get_atom(kz_term:to_atom(Name, 'true'), 'cookie') of
+                [] -> lager:warning("failed to get cookie for node ~s, generating one", [node()]),
+                      kz_term:to_atom(kz_binary:rand_hex(16), 'true');
+                [Cookie|_] -> Cookie
+            end;
+        [Cookie|_] -> Cookie
+    end.
+
+-spec set_loglevel() -> 'ok'.
 set_loglevel() ->
     [Console|_] = kz_config:get_atom('log', 'console', ['notice']),
     kz_util:change_console_log_level(Console),
@@ -49,7 +62,6 @@ set_loglevel() ->
     [Error|_] = kz_config:get_atom('log', 'error', ['error']),
     kz_util:change_error_log_level(Error),
     'ok'.
-
 
 -spec sanity_checks() -> boolean().
 sanity_checks() ->
@@ -61,33 +73,49 @@ sanity_checks() ->
 
 -spec does_hostname_resolve_speedily() -> boolean().
 does_hostname_resolve_speedily() ->
-    InitTime = time_hostname_resolution(),
-    Tests = 20,
-    {Min, Max, Total} =
-        lists:foldl(fun time_hostname_resolution/2
-                   ,{InitTime, InitTime, InitTime}
-                   ,lists:seq(1, Tests)
-                   ),
-    case Max < 5000 of
-        'true' -> 'true';
-        'false' ->
-            lager:warning("hostname results (in us): ~p < ~p < ~p"
-                         ,[Min, (Total div (Tests+1)), Max]
-                         ),
-            lager:critical("hostname resolution is painfully slow!!! all config lookups rely on this being fast"),
-            'false'
-    end.
+    HowManyTests = 100,
+    {Min, Max, Total, Timings} = time_hostname_resolutions(HowManyTests),
+    Mean = (Total div (HowManyTests+1)),
+    Median = lists:nth(HowManyTests div 2, lists:sort(Timings)),
 
--spec time_hostname_resolution(any(), {pos_integer(), pos_integer(), pos_integer()}) ->
-                                      {pos_integer(), pos_integer(), pos_integer()}.
-time_hostname_resolution(_, {Min, Max, Total}) ->
+    IsSlow =
+        Max > 5000
+        andalso Median > 1000
+        andalso log_slow_resolution(Min, Max, Mean, Median),
+    not IsSlow.
+
+-spec log_slow_resolution(pos_integer(), pos_integer(), pos_integer(), pos_integer()) -> 'true'.
+log_slow_resolution(Min, Max, Mean, Median) ->
+    lager:warning("hostname resolution(in us): Min/Median/Mean/Max ~p/~p/~p/~p"
+                 ,[Min, Median, Mean, Max]
+                 ),
+    lager:critical("hostname resolution is painfully slow!!! all config lookups rely on this being fast"),
+    'true'.
+
+
+-type resolutions() :: {Min :: pos_integer(), Max :: pos_integer(), Total:: pos_integer(), Timings :: [pos_integer()]}.
+
+-spec time_hostname_resolutions(pos_integer()) -> resolutions().
+-spec time_hostname_resolutions(pos_integer(), pos_integer()) -> resolutions().
+time_hostname_resolutions(HowManyTests) ->
+    time_hostname_resolutions(HowManyTests, time_hostname_resolution()).
+
+time_hostname_resolutions(HowManyTests, InitTime) ->
+    lists:foldl(fun time_hostname_resolution/2
+               ,{InitTime, InitTime, InitTime, []}
+               ,lists:seq(1, HowManyTests)
+               ).
+
+-spec time_hostname_resolution(any(), resolutions()) ->
+                                      resolutions().
+time_hostname_resolution(_TestNo, {Min, Max, Total, Timings}) ->
     case time_hostname_resolution() of
         Time when Time < Min ->
-            {Time, Max, Total+Time};
+            {Time, Max, Total+Time, [Time | Timings]};
         Time when Time > Max ->
-            {Min, Time, Total+Time};
+            {Min, Time, Total+Time, [Time | Timings]};
         Time ->
-            {Min, Max, Total+Time}
+            {Min, Max, Total+Time, [Time | Timings]}
     end.
 
 -spec time_hostname_resolution() -> pos_integer().

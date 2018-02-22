@@ -32,13 +32,16 @@
 %%  ,binary() | 'PBES2-params'
 %% }.
 
+-type keycert() :: {'undefined' |
+                    {'PrivateKeyInfo' | 'RSAPrivateKey', binary()}
+                   ,api_binary()
+                   }.
+-export_type([keycert/0]).
+
 %% ====================================================================
 %% Internal functions
 %% ====================================================================
 
--type keycert() :: {'undefined' | {'PrivateKeyInfo', binary()}
-                   ,api_binary()
-                   }.
 -spec binary_to_keycert(binary()) -> keycert().
 binary_to_keycert(Binary) ->
     RSAEntries = public_key:pem_decode(Binary),
@@ -53,13 +56,15 @@ keycert_fold({'Certificate', Bin, 'not_encrypted'}, {Key, 'undefined'}) ->
     {Key, Bin};
 keycert_fold({'PrivateKeyInfo', Bin, 'not_encrypted'}, {'undefined', Cert}) ->
     {{'PrivateKeyInfo', Bin}, Cert};
+keycert_fold({'RSAPrivateKey', Bin, 'not_encrypted'}, {'undefined', Cert}) ->
+    {{'RSAPrivateKey', Bin}, Cert};
 keycert_fold(_Entry, KeyCert) ->
     KeyCert.
 
 -spec user_agent_push_properties(ne_binary()) -> api_object().
 -spec user_agent_push_properties(ne_binary(), kz_json:objects()) -> api_object().
 user_agent_push_properties(UserAgent) ->
-    UAs = kapps_config:get(?CONFIG_CAT, <<"User-Agents">>, kz_json:new()),
+    UAs = kapps_config:get_json(?CONFIG_CAT, <<"User-Agents">>, kz_json:new()),
     user_agent_push_properties(UserAgent, kz_json:values(UAs)).
 
 user_agent_push_properties(_UserAgent, []) -> 'undefined';

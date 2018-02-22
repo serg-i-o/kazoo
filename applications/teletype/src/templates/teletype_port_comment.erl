@@ -9,7 +9,7 @@
 -module(teletype_port_comment).
 
 -export([init/0
-        ,handle_req/2
+        ,handle_req/1
         ]).
 
 -include("teletype.hrl").
@@ -20,11 +20,12 @@
 -define(TEMPLATE_MACROS
        ,kz_json:from_list(
           ?PORT_REQUEST_MACROS
-          ++ ?ACCOUNT_MACROS
+          ++ ?USER_MACROS
+          ++ ?COMMON_TEMPLATE_MACROS
          )
        ).
 
--define(TEMPLATE_SUBJECT, <<"New comment for {{port_request.name}}">>).
+-define(TEMPLATE_SUBJECT, <<"New comment for port request'{{port_request.name}}'">>).
 -define(TEMPLATE_CATEGORY, <<"port_request">>).
 -define(TEMPLATE_NAME, <<"Port Comment">>).
 
@@ -46,19 +47,26 @@ init() ->
                                           ,{'cc', ?TEMPLATE_CC}
                                           ,{'bcc', ?TEMPLATE_BCC}
                                           ,{'reply_to', ?TEMPLATE_REPLY_TO}
-                                          ]).
+                                          ]),
+    teletype_bindings:bind(<<"port_comment">>, ?MODULE, 'handle_req').
 
--spec handle_req(kz_json:object(), kz_proplist()) -> 'ok'.
-handle_req(JObj, _Props) ->
-    'true' = kapi_notifications:port_comment_v(JObj),
-    kz_util:put_callid(JObj),
+-spec handle_req(kz_json:object()) -> 'ok'.
+handle_req(JObj) ->
+    handle_req(JObj, kapi_notifications:port_comment_v(JObj)).
+
+-spec handle_req(kz_json:object(), boolean()) -> 'ok'.
+handle_req(JObj, 'false') ->
+    lager:debug("invalid data for ~s", [?TEMPLATE_ID]),
+    teletype_util:send_update(JObj, <<"failed">>, <<"validation_failed">>);
+handle_req(JObj, 'true') ->
+    lager:debug("valid data for ~s, processing...", [?TEMPLATE_ID]),
 
     %% Gather data for template
     DataJObj = kz_json:normalize(JObj),
     AccountId = kz_json:get_value(<<"account_id">>, DataJObj),
 
     case teletype_util:is_notice_enabled(AccountId, JObj, ?TEMPLATE_ID) of
-        'false' -> lager:debug("notification handling not configured for this account");
+        'false' -> teletype_util:notification_disabled(DataJObj, ?TEMPLATE_ID);
         'true' -> process_req(DataJObj)
     end.
 
@@ -76,10 +84,9 @@ process_req(DataJObj) ->
         'false' ->
             Comments = kz_json:get_value(<<"comments">>, PortReqJObj),
             handle_port_request(
-              teletype_port_utils:fix_email(
-                ReqData
+              teletype_port_utils:fix_email(ReqData
                                            ,teletype_port_utils:is_comment_private(Comments)
-               )
+                                           )
              );
         'true' -> handle_port_request(kz_json:merge_jobjs(DataJObj, ReqData))
     end.
@@ -88,14 +95,14 @@ process_req(DataJObj) ->
 handle_port_request(DataJObj) ->
     Macros = [{<<"system">>, teletype_util:system_params()}
              ,{<<"account">>, teletype_util:account_params(DataJObj)}
+             ,{<<"user">>, user_data(DataJObj)}
              ,{<<"port_request">>, teletype_util:public_proplist(<<"port_request">>, DataJObj)}
              ],
-
     RenderedTemplates = teletype_templates:render(?TEMPLATE_ID, Macros, DataJObj),
 
     {'ok', TemplateMetaJObj} =
         teletype_templates:fetch_notification(?TEMPLATE_ID
-                                             ,teletype_util:find_account_id(DataJObj)
+                                             ,kapi_notifications:account_id(DataJObj)
                                              ),
 
     Subject =
@@ -113,3 +120,17 @@ handle_port_request(DataJObj) ->
         {'error', Reason} ->
             teletype_util:send_update(DataJObj, <<"failed">>, Reason)
     end.
+
+-spec user_data(kz_json:object()) -> kz_proplist().
+user_data(DataJObj) ->
+    user_data(DataJObj, teletype_util:is_preview(DataJObj)).
+
+-spec user_data(kz_json:object(), boolean()) -> kz_proplist().
+user_data(DataJObj, 'true') ->
+    AccountId = kz_json:get_value(<<"account_id">>, DataJObj),
+    teletype_util:user_params(teletype_util:find_account_admin(AccountId));
+user_data(DataJObj, 'false') ->
+    AccountId = kz_json:get_value(<<"account_id">>, DataJObj),
+    UserId = props:get_value(<<"user_id">>, kz_json:get_value([<<"port_request">>, <<"comment">>], DataJObj)),
+    {'ok', UserJObj} = kzd_user:fetch(AccountId, UserId),
+    teletype_util:user_params(UserJObj).

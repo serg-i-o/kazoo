@@ -22,6 +22,10 @@
 
 -include("crossbar.hrl").
 
+-ifdef(TEST).
+-include("test/cb_callflows_test.hrl").
+-endif.
+
 -define(MOD_CONFIG_CAT, <<(?CONFIG_CAT)/binary, ".callflows">>).
 
 -define(SERVER, ?MODULE).
@@ -165,7 +169,6 @@ load_callflow(CallflowId, Context) ->
         'success' ->
             Meta = get_metadata(kz_json:get_value(<<"flow">>, cb_context:doc(Context1))
                                ,cb_context:account_db(Context1)
-                               ,kz_json:new()
                                ),
             cb_context:set_resp_data(Context1
                                     ,kz_json:set_value(<<"metadata">>, Meta, cb_context:resp_data(Context1))
@@ -193,37 +196,20 @@ validate_request(CallflowId, Context) ->
         [] -> validate_patterns(CallflowId, Context);
         OriginalNumbers
           when is_list(OriginalNumbers) ->
-            validate_callflow_schema(CallflowId, normalize_numbers(OriginalNumbers, Context));
+            validate_callflow_schema(CallflowId, normalize_numbers(Context, OriginalNumbers));
         OriginalNumbers ->
-            error_numbers_not_array(Context, OriginalNumbers)
+            Msg = kz_json:from_list(
+                    [{<<"message">>, <<"Value is not of type array">>}
+                    ,{<<"cause">>, OriginalNumbers}
+                    ]),
+            cb_context:add_validation_error(<<"numbers">>, <<"type">>, Msg, Context)
     end.
 
--spec error_numbers_not_array(cb_context:context(), kz_json:json_term()) ->
-                                     cb_context:context().
-error_numbers_not_array(Context, OriginalNumbers) ->
-    cb_context:add_validation_error(<<"numbers">>
-                                   ,<<"type">>
-                                   ,kz_json:from_list(
-                                      [{<<"message">>, <<"Value is not of type array">>}
-                                      ,{<<"cause">>, OriginalNumbers}
-                                      ])
-                                   ,Context
-                                   ).
-
--spec normalize_numbers(ne_binaries(), cb_context:context()) -> cb_context:context().
-normalize_numbers(Ns, Context) ->
-    normalize_numbers(Ns, cb_context:account_id(Context), Context).
-
--spec normalize_numbers(ne_binaries(), api_binary(), cb_context:context()) -> cb_context:context().
-normalize_numbers(Ns, 'undefined', Context) ->
-    set_request_numbers(Context, [knm_converters:normalize(N) || N <- Ns]);
-normalize_numbers(Ns, AccountId, Context) ->
-    set_request_numbers(Context, [knm_converters:normalize(N, AccountId) || N <- Ns]).
-
--spec set_request_numbers(cb_context:context(), binaries()) -> cb_context:context().
-set_request_numbers(Context, Numbers) ->
-    JObj = kz_json:set_value(<<"numbers">>, Numbers, cb_context:req_data(Context)),
-    cb_context:set_req_data(Context, JObj).
+-spec normalize_numbers(cb_context:context(), ne_binaries()) -> cb_context:context().
+normalize_numbers(Context, Nums) ->
+    Normalized = knm_converters:normalize(Nums, cb_context:account_id(Context)),
+    NewReqData = kz_json:set_value(<<"numbers">>, Normalized, cb_context:req_data(Context)),
+    cb_context:set_req_data(Context, NewReqData).
 
 %%--------------------------------------------------------------------
 %% @private
@@ -239,35 +225,20 @@ validate_patch(CallflowId, Context) ->
 validate_patterns(CallflowId, Context) ->
     case request_patterns(Context) of
         [] ->
-            error_numbers_required(Context);
+            Msg = kz_json:from_list(
+                    [{<<"message">>, <<"Callflows must be assigned at least one number or pattern">>}
+                    ]),
+            cb_context:add_validation_error(<<"numbers">>, <<"required">>, Msg, Context);
         Patterns
           when is_list(Patterns) ->
             validate_callflow_schema(CallflowId, Context);
         Patterns ->
-            error_patterns_not_array(Context, Patterns)
+            Msg = kz_json:from_list(
+                    [{<<"message">>, <<"Value is not of type array">>}
+                    ,{<<"cause">>, Patterns}
+                    ]),
+            cb_context:add_validation_error(<<"patterns">>, <<"type">>, Msg, Context)
     end.
-
--spec error_numbers_required(cb_context:context()) -> cb_context:context().
-error_numbers_required(Context) ->
-    cb_context:add_validation_error(<<"numbers">>
-                                   ,<<"required">>
-                                   ,kz_json:from_list(
-                                      [{<<"message">>, <<"Callflows must be assigned at least one number or pattern">>}]
-                                     )
-                                   ,Context
-                                   ).
-
--spec error_patterns_not_array(cb_context:context(), kz_json:json_term()) ->
-                                      cb_context:context().
-error_patterns_not_array(Context, Patterns) ->
-    cb_context:add_validation_error(<<"patterns">>
-                                   ,<<"type">>
-                                   ,kz_json:from_list(
-                                      [{<<"message">>, <<"Value is not of type array">>}
-                                      ,{<<"cause">>, Patterns}
-                                      ])
-                                   ,Context
-                                   ).
 
 -spec validate_uniqueness(api_binary(), cb_context:context()) -> cb_context:context().
 validate_uniqueness(CallflowId, Context) ->
@@ -308,14 +279,11 @@ add_number_conflict(Context, JObj) ->
     Id = kz_doc:id(JObj),
     Name = kz_json:get_ne_binary_value([<<"value">>, <<"name">>], JObj, <<>>),
     Number = kz_json:get_value(<<"key">>, JObj),
-    cb_context:add_validation_error(<<"numbers">>
-                                   ,<<"unique">>
-                                   ,kz_json:from_list(
-                                      [{<<"message">>, <<"Number ", Number/binary, " exists in callflow ", Id/binary, " ", Name/binary>>}
-                                      ,{<<"cause">>, Number}
-                                      ])
-                                   ,Context
-                                   ).
+    Msg = kz_json:from_list(
+            [{<<"message">>, <<"Number ", Number/binary, " exists in callflow ", Id/binary, " ", Name/binary>>}
+            ,{<<"cause">>, Number}
+            ]),
+    cb_context:add_validation_error(<<"numbers">>, <<"unique">>, Msg, Context).
 
 -spec validate_unique_patterns(cb_context:context(), api_binary()) -> cb_context:context().
 validate_unique_patterns(Context, CallflowId) ->
@@ -349,23 +317,20 @@ add_pattern_conflict(Context, JObj) ->
     Id = kz_doc:id(JObj),
     Name = kz_json:get_ne_binary_value([<<"value">>, <<"name">>], JObj, <<>>),
     Pattern = kz_json:get_value(<<"key">>, JObj),
-    cb_context:add_validation_error(<<"patterns">>
-                                   ,<<"unique">>
-                                   ,kz_json:from_list(
-                                      [{<<"message">>, <<"Pattern ", Pattern/binary, " exists in callflow ", Id/binary, " ", Name/binary>>}
-                                      ,{<<"cause">>, Pattern}
-                                      ])
-                                   ,Context
-                                   ).
+    Msg = kz_json:from_list(
+            [{<<"message">>, <<"Pattern ", Pattern/binary, " exists in callflow ", Id/binary, " ", Name/binary>>}
+            ,{<<"cause">>, Pattern}
+            ]),
+    cb_context:add_validation_error(<<"patterns">>, <<"unique">>, Msg, Context).
 
 -spec validate_callflow_schema(api_binary(), cb_context:context()) -> cb_context:context().
 validate_callflow_schema(CallflowId, Context) ->
     OnSuccess = fun(C) ->
-                        validate_uniqueness(CallflowId
-                                           ,validate_callflow_elements(
-                                              on_successful_validation(CallflowId, C)
-                                             )
-                                           )
+                        C1 = validate_uniqueness(CallflowId, on_successful_validation(CallflowId, C)),
+
+                        Doc = cb_context:doc(C1),
+                        Nums = kz_json:get_list_value(<<"numbers">>, Doc, []),
+                        cb_modules_util:validate_number_ownership(Nums, C1)
                 end,
     cb_context:validate_request_data(<<"callflows">>, Context, OnSuccess).
 
@@ -377,17 +342,10 @@ on_successful_validation('undefined', Context) ->
 on_successful_validation(CallflowId, Context) ->
     crossbar_doc:load_merge(CallflowId, Context, ?TYPE_CHECK_OPTION(kzd_callflow:type())).
 
--spec validate_callflow_elements(cb_context:context()) -> cb_context:context().
-validate_callflow_elements(Context) ->
-    case kzd_callflow:validate_flow(cb_context:doc(Context)) of
-        {'ok', CallflowJObj} -> cb_context:set_doc(Context, CallflowJObj);
-        {'error', Errors} -> cb_context:failed(Context, Errors)
-    end.
-
 %%--------------------------------------------------------------------
 %% @private
 %% @doc
-%% Normalizes the resuts of a view
+%% Normalizes the results of a view
 %% @end
 %%--------------------------------------------------------------------
 -spec normalize_view_results(kz_json:object(), kz_json:objects()) ->
@@ -427,35 +385,38 @@ maybe_reconcile_numbers(Context) ->
 track_assignment('post', Context) ->
     NewNums = kz_json:get_value(<<"numbers">>, cb_context:doc(Context), []),
     OldNums = kz_json:get_value(<<"numbers">>, cb_context:fetch(Context, 'db_doc'), []),
+    AccountId = cb_context:account_id(Context),
 
     Unassigned = [{Num, 'undefined'}
                   || Num <- OldNums,
                      not lists:member(Num, NewNums),
-                     Num =/= <<"undefined">>
+                     knm_converters:is_reconcilable(Num, AccountId)
                  ],
     Assigned =  [{Num, kzd_callflow:type()}
                  || Num <- NewNums,
-                    Num =/= <<"undefined">>
+                    knm_converters:is_reconcilable(Num, AccountId)
                 ],
 
-    Updates = cb_modules_util:apply_assignment_updates(Unassigned ++ Assigned),
+    Updates = cb_modules_util:apply_assignment_updates(Unassigned ++ Assigned, Context),
     cb_modules_util:log_assignment_updates(Updates);
 track_assignment('put', Context) ->
     NewNums = kz_json:get_value(<<"numbers">>, cb_context:doc(Context), []),
+    AccountId = cb_context:account_id(Context),
     Assigned =  [{Num, kzd_callflow:type()}
                  || Num <- NewNums,
-                    Num =/= <<"undefined">>
+                    knm_converters:is_reconcilable(Num, AccountId)
                 ],
 
-    Updates = cb_modules_util:apply_assignment_updates(Assigned),
+    Updates = cb_modules_util:apply_assignment_updates(Assigned, Context),
     cb_modules_util:log_assignment_updates(Updates);
 track_assignment('delete', Context) ->
     Nums = kz_json:get_value(<<"numbers">>, cb_context:doc(Context), []),
+    AccountId = cb_context:account_id(Context),
     Unassigned =  [{Num, 'undefined'}
                    || Num <- Nums,
-                      Num =/= <<"undefined">>
+                      knm_converters:is_reconcilable(Num, AccountId)
                   ],
-    Updates = cb_modules_util:apply_assignment_updates(Unassigned),
+    Updates = cb_modules_util:apply_assignment_updates(Unassigned, Context),
     cb_modules_util:log_assignment_updates(Updates).
 
 -spec filter_callflow_list(api_binary(), kz_json:objects()) -> kz_json:objects().
@@ -472,30 +433,49 @@ filter_callflow_list(CallflowId, JObjs) ->
 %% collect addional informat about the objects referenced in the flow
 %% @end
 %%--------------------------------------------------------------------
--spec get_metadata(api_object(), ne_binary(), kz_json:object()) ->
+
+-spec ids_in_flow(kz_json:object()) -> ne_binaries().
+ids_in_flow(FlowJObj) ->
+    ids_in_data(kz_json:get_values(<<"data">>, FlowJObj)).
+
+-spec ids_in_data({kz_json:json_terms(), kz_json:keys()}) -> ne_binaries().
+-spec ids_in_data({kz_json:json_terms(), kz_json:keys()}, ne_binaries()) -> ne_binaries().
+ids_in_data(Values) ->
+    ids_in_data(Values, []).
+
+ids_in_data({[], []}, IDs) -> IDs;
+ids_in_data({[V|Vs], [<<"id">>|Ks]}, IDs) ->
+    ids_in_data({Vs, Ks}, [V | IDs]);
+ids_in_data({[V|Vs], [K|Ks]}, IDs) ->
+    case binary:matches(K, <<"_id">>) =/= []
+        andalso kz_term:is_ne_binary(V)
+    of
+        'false' -> ids_in_data({Vs, Ks}, IDs);
+        'true' -> ids_in_data({Vs, Ks}, [V | IDs])
+    end.
+
+-spec get_metadata(api_object(), ne_binary()) -> kz_json:object().
+-spec get_metadata(kz_json:object(), ne_binary(), kz_json:object()) ->
                           kz_json:object().
-get_metadata('undefined', _, JObj) -> JObj;
-get_metadata(Flow, Db, JObj) ->
-    JObj1 = case kz_json:get_first_defined([[<<"data">>, <<"id">>]
-                                           ,[<<"data">>, <<"faxbox_id">>]
-                                           ]
-                                          ,Flow
-                                          )
-            of
-                %% this node has no id, dont change the metadata
-                'undefined' -> JObj;
-                %% node has an id, try to update the metadata
-                Id -> create_metadata(Db, Id, JObj)
-            end,
-    case kz_json:get_value(<<"children">>, Flow) of
-        'undefined' -> JObj1;
+get_metadata('undefined', _Db) -> kz_json:new();
+get_metadata(Flow, Db) -> get_metadata(Flow, Db, kz_json:new()).
+
+get_metadata(Flow, Db, Metadata) ->
+    UpdatedMetadata
+        = lists:foldl(fun(ID, MetaAcc) -> create_metadata(Db, ID, MetaAcc) end
+                     ,Metadata
+                     ,ids_in_flow(Flow)
+                     ),
+
+    case kz_json:get_json_value(<<"children">>, Flow) of
+        'undefined' -> UpdatedMetadata;
         Children ->
             %% iterate through each child, collecting metadata on the
             %% branch name (things like temporal routes)
-            kz_json:foldl(fun(K, Child, J) ->
-                                  get_metadata(Child, Db, create_metadata(Db, K, J))
+            kz_json:foldl(fun(Branch, ChildFlow, MetaAcc) ->
+                                  get_metadata(ChildFlow, Db, create_metadata(Db, Branch, MetaAcc))
                           end
-                         ,JObj1
+                         ,UpdatedMetadata
                          ,Children
                          )
     end.
@@ -510,56 +490,66 @@ get_metadata(Flow, Db, JObj) ->
 %%--------------------------------------------------------------------
 -spec create_metadata(ne_binary(), ne_binary(), kz_json:object()) ->
                              kz_json:object().
-create_metadata(_, <<"_">>, JObj) -> JObj;
-create_metadata(_, Id, JObj) when byte_size(Id) < 2 -> JObj;
-create_metadata(Db, Id, JObj) ->
-    case kz_json:get_value(Id, JObj) =:= 'undefined'
-        andalso kz_datamgr:open_cache_doc(Db, Id)
+create_metadata(_, <<"_">>, Metadata) -> Metadata;
+create_metadata(_, Id, Metadata) when byte_size(Id) < 2 -> Metadata;
+create_metadata(Db, Id, Metadata) ->
+    case 'undefined' =:= kz_json:get_ne_binary_value(Id, Metadata)
+        andalso fetch_id_from_db(Db, Id)
     of
-        'false'  -> JObj;
-        {'ok', Doc} ->  kz_json:set_value(Id, create_metadata(Doc), JObj);
-        {'error', _E} -> JObj
+        'false' -> Metadata;
+        {'ok', Doc} ->  kz_json:set_value(Id, create_metadata(Doc), Metadata);
+        {'error', _E} -> Metadata
     end.
+
+-spec fetch_id_from_db(ne_binary(), ne_binary()) ->
+                              {'ok', kz_json:object()} |
+                              kz_datamgr:data_error().
+-ifdef(TEST).
+fetch_id_from_db(_Db, <<"{USER_ID}">>) ->
+    {'ok', ?TEST_USER};
+fetch_id_from_db(_Db, <<"{VM_ID}">>) ->
+    {'ok', ?TEST_VM};
+fetch_id_from_db(_Db, <<"{RING_GROUP_ID}">>) ->
+    {'ok', ?TEST_RING_GROUP}.
+-else.
+fetch_id_from_db(Db, Id) ->
+    kz_datamgr:open_cache_doc(Db, Id).
+-endif.
 
 -spec create_metadata(kz_json:object()) -> kz_json:object().
 create_metadata(Doc) ->
-    %% list of keys to extract from documents and set on the metadata
-    Funs = [fun(J) -> metadata_builder(<<"name">>, Doc, J) end
-           ,fun(J) -> metadata_builder(<<"numbers">>, Doc, J) end
-           ,fun(J) -> metadata_builder(<<"pvt_type">>, Doc, J) end
-           ],
-    %% do it
-    lists:foldl(fun(Fun, JObj) ->
-                        Fun(JObj)
-                end
+    lists:foldl(fun(Key, Meta) -> metadata_builder(Key, Doc, Meta) end
                ,kz_json:new()
-               ,Funs
+               ,[<<"name">>
+                ,<<"numbers">>
+                ,<<"pvt_type">>
+                ]
                ).
 
 -spec metadata_builder(kz_json:path(), kz_json:object(), kz_json:object()) ->
                               kz_json:object().
-metadata_builder(<<"name">> = K, D, J) ->
-    case kz_doc:type(D) of
+metadata_builder(<<"name">> = Key, Doc, Metadata) ->
+    case kz_doc:type(Doc) of
         <<"user">> ->
-            metadata_user_name(D, J);
+            metadata_user_name(Doc, Metadata);
         _Type ->
-            maybe_copy_value(K, D, J)
+            maybe_copy_value(Key, Doc, Metadata)
     end;
-metadata_builder(K, D, J) ->
-    maybe_copy_value(K, D, J).
+metadata_builder(Key, Doc, Metadata) ->
+    maybe_copy_value(Key, Doc, Metadata).
 
 -spec maybe_copy_value(kz_json:path(), kz_json:object(), kz_json:object()) ->
                               kz_json:object().
-maybe_copy_value(K, D, J) ->
-    case kz_json:get_value(K, D) of
-        'undefined' -> J;
-        V -> kz_json:set_value(K, V, J)
+maybe_copy_value(Key, Doc, Metadata) ->
+    case kz_json:get_value(Key, Doc) of
+        'undefined' -> Metadata;
+        Value -> kz_json:set_value(Key, Value, Metadata)
     end.
 
 -spec metadata_user_name(kz_json:object(), kz_json:object()) -> kz_json:object().
-metadata_user_name(Doc, JObj) ->
+metadata_user_name(Doc, Metadata) ->
     case kzd_user:name(Doc) of
-        <<>> -> JObj;
-        <<" ">> -> JObj;
-        Name -> kz_json:set_value(<<"name">>, Name, JObj)
+        <<>> -> Metadata;
+        <<" ">> -> Metadata;
+        Name -> kz_json:set_value(<<"name">>, Name, Metadata)
     end.

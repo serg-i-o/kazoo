@@ -34,8 +34,9 @@ get(Account, Name) ->
     case kazoo_modb:get_results(Account, ?LIST_BY_SERVICE_LEGACY, Options) of
         {'ok', []} -> {'ok', 0};
         {'error', _R}=Error -> Error;
-        {'ok', [JObj|_]} ->
-            {'ok', kz_json:get_integer_value(<<"value">>, JObj, 0)}
+        {'ok', [JObj0|_]} ->
+            [JObj] = kz_json:values(kz_json:get_value(<<"value">>, JObj0)),
+            {'ok', kz_json:get_integer_value(<<"amount">>, JObj, 0)}
     end.
 
 %%--------------------------------------------------------------------
@@ -133,9 +134,8 @@ create(LedgerId, Type, Ledger) ->
 -spec set_account(ledger(), ne_binary()) -> ledger().
 set_account(Ledger, Account) ->
     AccountId = kz_util:format_account_id(Account, 'raw'),
-    Routines = [
-                {fun kazoo_ledger:set_account_id/2, AccountId}
-               ,{fun kazoo_ledger:set_account_name/2, kapps_util:get_account_name(AccountId)}
+    Routines = [{fun kazoo_ledger:set_account_id/2, AccountId}
+               ,{fun kazoo_ledger:set_account_name/2, kz_account:fetch_name(AccountId)}
                ],
     lists:foldl(fun apply_routine/2, Ledger, Routines).
 

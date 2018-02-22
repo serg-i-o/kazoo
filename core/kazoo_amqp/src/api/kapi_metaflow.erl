@@ -23,7 +23,7 @@
 -export([publish_binding/1, publish_binding/2]).
 
 -include_lib("amqp_util.hrl").
--include_lib("kazoo/include/kz_log.hrl").
+-include_lib("kazoo_stdlib/include/kz_log.hrl").
 
 -define(METAFLOW_EXCHANGE, <<"metaflow">>).
 -define(METAFLOW_EXCHANGE_TYPE, <<"topic">>).
@@ -337,4 +337,4 @@ binding_v(JObj) -> binding_v(kz_json:to_proplist(JObj)).
 
 -spec binding_digit_timeout_v(any()) -> boolean().
 binding_digit_timeout_v(X) ->
-    is_integer(kz_util:to_integer(X)).
+    is_integer(kz_term:to_integer(X)).

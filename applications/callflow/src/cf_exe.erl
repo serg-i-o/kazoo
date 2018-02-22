@@ -23,6 +23,7 @@
 -export([transfer/1]).
 -export([control_usurped/1]).
 -export([channel_destroyed/1]).
+-export([is_channel_destroyed/1]).
 -export([stop_on_destroy/1
         ,continue_on_destroy/1
         ]).
@@ -33,6 +34,9 @@
 -export([add_event_listener/2]).
 -export([next/1, next/2]).
 -export([update_call/1, update_call/2]).
+-export([add_termination_handler/2
+        ,remove_termination_handler/2
+        ]).
 
 %% gen_listener callbacks
 -export([init/1
@@ -45,7 +49,7 @@
         ]).
 
 -include("callflow.hrl").
--include_lib("kazoo_json/include/kazoo_json.hrl").
+-include_lib("kazoo_stdlib/include/kazoo_json.hrl").
 
 -define(SERVER, ?MODULE).
 
@@ -56,21 +60,22 @@
 -define(QUEUE_OPTIONS, []).
 -define(CONSUME_OPTIONS, []).
 
+-define(MAX_BRANCH_COUNT, kapps_config:get_integer(?CF_CONFIG_CAT, <<"max_branch_count">>, 50)).
+
 -record(state, {call = kapps_call:new() :: kapps_call:call()
                ,flow = kz_json:new() :: kz_json:object()
                ,flows = [] :: kz_json:objects()
-               ,cf_module_pid :: {pid(), reference()} | 'undefined'
-               ,cf_module_old_pid :: {pid(), reference()} | 'undefined'
+               ,cf_module_pid :: api_pid_ref()
+               ,cf_module_old_pid :: api_pid_ref()
                ,status = <<"sane">> :: ne_binary()
-               ,queue :: ne_binary()
-               ,self = self()
+               ,queue :: api_ne_binary()
+               ,self = self() :: pid()
                ,stop_on_destroy = 'true' :: boolean()
                ,destroyed = 'false' :: boolean()
-               ,branch_count :: non_neg_integer()
+               ,branch_count = ?MAX_BRANCH_COUNT :: non_neg_integer()
+               ,termination_handlers = [] :: list()
                }).
 -type state() :: #state{}.
-
--define(MAX_BRANCH_COUNT, kapps_config:get_integer(?CF_CONFIG_CAT, <<"max_branch_count">>, 50)).
 
 %%%===================================================================
 %%% API
@@ -154,6 +159,18 @@ add_event_listener(Srv, {_,_}=SpawnInfo) when is_pid(Srv) ->
 add_event_listener(Call, {_,_}=SpawnInfo) ->
     add_event_listener(kapps_call:kvs_fetch('consumer_pid', Call), SpawnInfo).
 
+-spec add_termination_handler(kapps_call:call() | pid(), {atom(), atom(), list()}) -> 'ok'.
+add_termination_handler(Srv, {_,_,_}=Handler) when is_pid(Srv) ->
+    gen_listener:call(Srv, {'add_termination_handler', Handler});
+add_termination_handler(Call, {_,_,_}=Handler) ->
+    add_termination_handler(kapps_call:kvs_fetch('consumer_pid', Call), Handler).
+
+-spec remove_termination_handler(kapps_call:call() | pid(), {atom(), atom(), list()}) -> 'ok'.
+remove_termination_handler(Srv, {_,_,_}=Handler) when is_pid(Srv) ->
+    gen_listener:call(Srv, {'remove_termination_handler', Handler});
+remove_termination_handler(Call, {_,_,_}=Handler) ->
+    remove_termination_handler(kapps_call:kvs_fetch('consumer_pid', Call), Handler).
+
 -spec stop(kapps_call:call() | pid()) -> 'ok'.
 stop(Srv) when is_pid(Srv) ->
     gen_listener:cast(Srv, 'stop');
@@ -209,6 +226,13 @@ callid_update(CallId, Srv) when is_pid(Srv) ->
 callid_update(CallId, Call) ->
     Srv = kapps_call:kvs_fetch('consumer_pid', Call),
     callid_update(CallId, Srv).
+
+-spec is_channel_destroyed(kapps_call:call()) -> boolean().
+is_channel_destroyed(Srv) when is_pid(Srv) ->
+    gen_listener:call(Srv, 'is_channel_destroyed');
+is_channel_destroyed(Call) ->
+    Srv = kapps_call:kvs_fetch('consumer_pid', Call),
+    is_channel_destroyed(Srv).
 
 -spec callid(kapps_call:call() | pid()) -> ne_binary().
 -spec callid(api_binary(), kapps_call:call() | pid()) -> ne_binary().
@@ -326,6 +350,8 @@ init([Call]) ->
 %% @end
 %%--------------------------------------------------------------------
 -spec handle_call(any(), pid_ref(), state()) -> handle_call_ret_state(state()).
+handle_call('is_channel_destroyed', _From, State) ->
+    {'reply', State#state.destroyed, State};
 handle_call({'update_call', Routines}, _From, #state{call=Call}=State) ->
     NewCall = kapps_call:exec(Routines, Call),
     {'reply', NewCall, State#state{call=NewCall}};
@@ -373,6 +399,10 @@ handle_call({'next', Key}, _From, #state{flow=Flow}=State) ->
 handle_call({'amqp_call', API, PubFun, VerifyFun}, _From, #state{queue=Q}=State) ->
     Reply = amqp_call_message(API, PubFun, VerifyFun, Q),
     {'reply', Reply, State};
+handle_call({'add_termination_handler', {_M, _F, _Args}=H},  _From, #state{termination_handlers=Handlers}=State) ->
+    {'reply', 'ok', State#state{termination_handlers=lists:usort([H | Handlers])}};
+handle_call({'remove_termination_handler', {_M, _F, _Args}=H},  _From, #state{termination_handlers=Handlers}=State) ->
+    {'reply', 'ok', State#state{termination_handlers=lists:delete(H, Handlers)}};
 handle_call(_Request, _From, State) ->
     Reply = {'error', 'unimplemented'},
     {'reply', Reply, State}.
@@ -397,12 +427,15 @@ handle_cast({'continue', _}, #state{stop_on_destroy='true'
     hard_stop(self()),
     {'noreply', State};
 handle_cast({'continue', Key}, #state{flow=Flow
+                                     ,call=Call
+                                     ,termination_handlers=Handlers
                                      }=State) ->
     lager:info("continuing to child '~s'", [Key]),
 
     case kz_json:get_value([<<"children">>, Key], Flow) of
         'undefined' when Key =:= <<"_">> ->
             lager:info("wildcard child does not exist, we are lost...hanging up"),
+            maybe_run_destory_handlers(Call, kz_json:new(), Handlers),
             stop(self()),
             {'noreply', State};
         'undefined' ->
@@ -558,6 +591,7 @@ handle_info(_Msg, State) ->
 handle_event(JObj, #state{cf_module_pid=PidRef
                          ,call=Call
                          ,self=Self
+                         ,termination_handlers=DestoryHandlers
                          }) ->
     CallId = kapps_call:call_id_direct(Call),
     Others = kapps_call:kvs_fetch('cf_event_pids', [], Call),
@@ -566,15 +600,17 @@ handle_event(JObj, #state{cf_module_pid=PidRef
                  ModPid -> [ModPid | Others]
              end,
 
-    case {kapps_util:get_event_type(JObj), kz_json:get_value(<<"Call-ID">>, JObj)} of
+    case {kz_util:get_event_type(JObj), kz_json:get_value(<<"Call-ID">>, JObj)} of
         {{<<"call_event">>, <<"CHANNEL_DESTROY">>}, CallId} ->
-            handle_channel_destroyed(Self, Notify, JObj);
+            handle_channel_destroyed(Self, Notify, JObj, Call, DestoryHandlers);
         {{<<"call_event">>, <<"CHANNEL_DISCONNECTED">>}, CallId} ->
-            handle_channel_destroyed(Self, Notify, JObj);
+            handle_channel_destroyed(Self, Notify, JObj, Call, DestoryHandlers);
         {{<<"call_event">>, <<"CHANNEL_TRANSFEREE">>}, _} ->
             handle_channel_transfer(Call, JObj);
         {{<<"call_event">>, <<"CHANNEL_REPLACED">>}, _} ->
             handle_channel_replaced(Call, JObj, Notify);
+        {{<<"call_event">>, <<"CHANNEL_BRIDGE">>}, _} ->
+            handle_channel_bridged(Self, Notify, JObj, Call);
         {{<<"call_event">>, <<"usurp_control">>}, CallId} ->
             handle_usurp(Self, Call, JObj);
         {{<<"error">>, _}, _} ->
@@ -673,7 +709,7 @@ launch_cf_module(#state{call=Call
 -spec maybe_start_cf_module(ne_binary(), kz_proplist(), kapps_call:call()) ->
                                    {{pid() | 'undefined', reference() | atom()} | 'undefined', atom()}.
 maybe_start_cf_module(ModuleBin, Data, Call) ->
-    CFModule = kz_util:to_atom(ModuleBin, 'true'),
+    CFModule = kz_term:to_atom(ModuleBin, 'true'),
     try CFModule:module_info('exports') of
         _ ->
             lager:info("moving to action '~s'", [CFModule]),
@@ -759,9 +795,9 @@ add_server_id(Q, API) ->
 
 -spec add_message_id(api_terms()) -> api_terms().
 add_message_id(API) when is_list(API) ->
-    [{<<"Msg-ID">>, kz_util:rand_hex_binary(16)} | props:delete(<<"Msg-ID">>, API)];
+    [{<<"Msg-ID">>, kz_binary:rand_hex(16)} | props:delete(<<"Msg-ID">>, API)];
 add_message_id(API) ->
-    kz_json:set_value(<<"Msg-ID">>, kz_util:rand_hex_binary(16), API).
+    kz_json:set_value(<<"Msg-ID">>, kz_binary:rand_hex(16), API).
 
 -spec log_call_information(kapps_call:call()) -> 'ok'.
 log_call_information(Call) ->
@@ -777,10 +813,11 @@ log_call_information(Call) ->
     end,
     lager:info("authorizing id ~s", [kapps_call:authorizing_id(Call)]).
 
--spec handle_channel_destroyed(pid(), pids(), kz_json:object()) -> 'ok'.
-handle_channel_destroyed(Self, Notify, JObj) ->
+-spec handle_channel_destroyed(pid(), pids(), kz_json:object(), kapps_call:call(), list()) -> 'ok'.
+handle_channel_destroyed(Self, Notify, JObj, Call, DestoryHandlers) ->
     channel_destroyed(Self),
-    relay_message(Notify, JObj).
+    relay_message(Notify, JObj),
+    maybe_run_destory_handlers(Call, JObj, DestoryHandlers).
 
 -spec handle_channel_transfer(kapps_call:call(), kz_json:object()) -> 'ok'.
 handle_channel_transfer(Call, JObj) ->
@@ -802,6 +839,11 @@ handle_channel_replaced(Call, JObj, Notify) ->
             relay_message(Notify, JObj);
         'false' -> 'ok'
     end.
+
+-spec handle_channel_bridged(pid(), pids(), kz_json:object(), kapps_call:call()) -> 'ok'.
+handle_channel_bridged(Self, Notify, JObj, Call) ->
+    gen_listener:cast(Self, {set_call, kapps_call:set_call_bridged('true', Call)}),
+    relay_message(Notify, JObj).
 
 -spec handle_usurp(pid(), kapps_call:call(), kz_json:object()) -> 'ok'.
 handle_usurp(Self, Call, JObj) ->
@@ -828,6 +870,11 @@ relay_message(Notify, Message) ->
         ],
     'ok'.
 
+-spec maybe_run_destory_handlers(kapps_call:call(), kz_json:object(), list()) -> 'ok'.
+maybe_run_destory_handlers(Call, JObj, Handlers) ->
+    _ = [erlang:apply(M, F, [Call, JObj | Args]) || {M, F, Args} <- Handlers],
+    'ok'.
+
 -spec get_pid({pid(), reference()} | 'undefined') -> api_pid().
 get_pid({Pid, _}) when is_pid(Pid) -> Pid;
 get_pid(_) -> 'undefined'.
@@ -837,5 +884,6 @@ hangup_call(Call) ->
     Cmd = [{<<"Event-Name">>, <<"command">>}
           ,{<<"Event-Category">>, <<"call">>}
           ,{<<"Application-Name">>, <<"hangup">>}
+          ,{<<"Insert-At">>, <<"tail">>}
           ],
     send_command(Cmd, kapps_call:control_queue_direct(Call), kapps_call:call_id_direct(Call)).
