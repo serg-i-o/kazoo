@@ -4,6 +4,7 @@
 -export([bridge_password/1, bridge_password/2, set_bridge_password/2]).
 -export([bridge_username/1, bridge_username/2, set_bridge_username/2]).
 -export([caller_controls/1, caller_controls/2, set_caller_controls/2]).
+-export([conference_id/1, conference_id/2]).
 -export([conference_numbers/1, conference_numbers/2, set_conference_numbers/2]).
 -export([focus/1, focus/2, set_focus/2]).
 -export([max_members_media/1, max_members_media/2, set_max_members_media/2]).
@@ -264,6 +265,14 @@ name(Doc) ->
 -spec name(doc(), Default) -> kz_term:ne_binary() | Default.
 name(Doc, Default) ->
     kz_json:get_ne_binary_value([<<"name">>], Doc, Default).
+
+-spec conference_id(doc()) -> kz_term:api_binary().
+conference_id(Doc) ->
+    conference_id(Doc, 'undefined').
+
+-spec conference_id(doc(), Default) -> kz_term:ne_binary() | Default.
+conference_id(Doc, Default) ->
+    kz_json:get_ne_binary_value([<<"Conference-ID">>], Doc, Default).
 
 -spec set_name(doc(), kz_term:ne_binary()) -> doc().
 set_name(Doc, Name) ->
