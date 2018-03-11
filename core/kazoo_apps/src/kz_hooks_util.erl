@@ -286,11 +286,10 @@ get_inbound_destination(JObj) ->
 lookup_conference_id(JObj) ->
     case kzd_conferences:conference_id(JObj) of
         'undefined' ->
-%%            Number = get_inbound_destination(JObj),
-            case kz_cache:peek_local(?HOOKS_CACHE_NAME, cache_key_number(Number)) of
-                {'ok', _AccountId}=Ok -> Ok;
-                {'error', 'not_found'} -> fetch_account_id(Number)
-            end;
+            Reason = "failed to determine conference id for 'conference_command'",
+            io:format("~p\n",[Reason]),
+            lager:debug("~p\n",[Reason]),
+            {'error', Reason};
         Id -> {'ok', Id}
     end.
 

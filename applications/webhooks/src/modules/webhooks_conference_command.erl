@@ -32,6 +32,15 @@
 %%        )
 %%    ).
 
+-define(CONF_ID_MODIFIER
+    ,kz_json:from_list(
+            [
+                 {<<"type">>, <<"string">>}
+                ,{<<"description">>, <<"Conferences id to handle">>}
+            ]
+        )
+    ).
+
 -define(ACTIONS_MODIFIER
     ,kz_json:from_list(
             [{<<"type">>, <<"array">>}
@@ -45,7 +54,8 @@
     ,kz_json:from_list(
             [
 %%                {<<"type">>, ?TYPE_MODIFIER},
-                {<<"action">>, ?ACTIONS_MODIFIER}
+                {<<"action">>, ?ACTIONS_MODIFIER},
+                {<<"conference_id">>, ?CONF_ID_MODIFIER}
             ]
         )
     ).

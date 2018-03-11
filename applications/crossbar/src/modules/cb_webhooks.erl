@@ -40,6 +40,9 @@
                                  ,<<"webhook_disabled">>
                                  ]).
 
+-define(CHECK_CONFERENCE_HOOK, <<"conference_command">>).
+-define(CONFERENCE_ID_MODIFIER, <<"conference_id">>).
+
 %%%===================================================================
 %%% API
 %%%===================================================================
@@ -497,6 +500,16 @@ check_modifier_values(CustomValue, ModifierKey, ModifierValue, <<"object">>, Con
             cb_context:add_validation_error(ModifierKey, <<"enum">>, Msg, Context);
         _ ->
             Context
+    end;
+check_modifier_values(CustomValue, ?CONFERENCE_ID_MODIFIER, _ModifierValue, <<"string">>, Context) ->
+    case check_conference_id(CustomValue, Context) of
+        'false' ->
+            Msg = kz_json:from_list([{<<"message">>, <<"specified conference id is not valid">>}
+                ,{<<"conference_id">>, CustomValue}
+            ]),
+            cb_context:add_validation_error(?CONFERENCE_ID_MODIFIER, <<"invalid">>, Msg, Context);
+        'true' ->
+            Context
     end.
 
 -spec get_hook_definition(kz_term:ne_binary()) -> kz_term:api_object().
@@ -514,6 +527,24 @@ get_hook_definition(HookEvent, MasterDb) ->
             lager:debug("failed to open webhook ~s definition: ~p", [HookEvent, _Reason]),
             'undefined'
     end.
+
+-spec check_conference_id(kz_term:ne_binary(), cb_context:context())-> kz_term:ne_binary().
+check_conference_id(ConferenceId, Context) ->
+    AccountId = cb_context:account_id(Context),
+    case AccountId of
+        'undefined' ->
+            lager:debug("failed to get account id from context"),
+            'false';
+        _ -> check_conference_id(ConferenceId, Context, AccountId)
+    end.
+check_conference_id(ConferenceId, _Context, AccountId) ->
+    AccountDb = kz_util:format_account_db(AccountId),
+    Options = [{?OPTION_EXPECTED_TYPE, <<"conference">>}],
+    case kz_datamgr:open_cache_doc(AccountDb, ConferenceId, Options) of
+        {'ok', _ConfJObj} -> 'true';
+        _ -> 'false'
+    end.
+
 
 %%--------------------------------------------------------------------
 %% @private

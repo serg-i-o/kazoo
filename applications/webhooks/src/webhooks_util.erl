@@ -11,7 +11,9 @@
 -export([from_json/1
         ,to_json/1
         ]).
--export([find_webhooks/2]).
+-export([find_webhooks/2
+        , find_conference_webhooks/3
+        ]).
 -export([fire_hooks/2]).
 -export([init_webhooks/0
         ,init_webhook_db/0
@@ -140,6 +142,50 @@ match_subaccount_webhooks(HookEvent, AccountId) ->
                  ,['$_']
                  }],
     ets:select(table_id(), MatchSpec).
+
+-spec find_conference_webhooks(kz_term:ne_binary(), kz_term:ne_binary(), kz_term:api_binary()) -> webhooks().
+find_conference_webhooks(_HookEvent, 'undefined',   'undefined') -> [];
+find_conference_webhooks(_HookEvent, 'undefined',  _CommandName) -> [];
+find_conference_webhooks(_HookEvent, _ConferenceId, 'undefined') -> [];
+find_conference_webhooks( HookEvent, ConferenceId, CommandName) ->
+    match_conference_webhooks(HookEvent, ConferenceId, CommandName).
+
+-spec match_conference_webhooks(kz_term:ne_binary(), kz_term:ne_binary(), kz_term:api_binary()) -> webhooks().
+match_conference_webhooks(HookEvent, ConferenceId, CommandName) ->
+    MatchSpec = [{
+        #webhook{hook_event='$1',_='_'}
+        ,[{'==','$1', {'const', HookEvent}}]
+        ,['$_']
+    }],
+    Hooks = ets:select(table_id(), MatchSpec),
+    match_conference_webhooks_by_name(Hooks, ConferenceId, CommandName).
+match_conference_webhooks_by_name(Hooks, ConferenceId, CommandName) ->
+    FilteredHooks = lists:foldl(
+        fun(#webhook{custom_data=Data}=Webhook, Acc) ->
+            case Data of
+                undefined-> Acc;
+                {DataList}->
+                    case lists:keyfind(?ACTION_MODIFIER, 1, DataList) == {?ACTION_MODIFIER, CommandName} of
+                        'true' -> [Webhook | Acc];
+                        'false' -> Acc
+                    end
+            end
+        end
+        , []
+        , Hooks),
+    match_conference_webhooks_by_id(FilteredHooks, ConferenceId).
+match_conference_webhooks_by_id(Hooks, ConferenceId) ->
+    lists:foldl(
+        fun(#webhook{custom_data=Data}=Webhook, Acc) ->
+            {DataList} = Data,
+            case lists:keyfind(?CONFERENCE_ID_MODIFIER, 1, DataList) == {?CONFERENCE_ID_MODIFIER, ConferenceId} of
+                'true' -> [Webhook | Acc];
+                'false' -> Acc
+            end
+        end
+        , []
+        , Hooks).
+
 
 -spec fire_hooks(kz_json:object(), webhooks()) -> 'ok'.
 fire_hooks(_, []) -> 'ok';
