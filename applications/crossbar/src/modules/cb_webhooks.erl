@@ -539,9 +539,9 @@ check_conference_id(ConferenceId, Context) ->
     end.
 check_conference_id(ConferenceId, _Context, AccountId) ->
     AccountDb = kz_util:format_account_db(AccountId),
-    Options = [{?OPTION_EXPECTED_TYPE, <<"conference">>}],
-    case kz_datamgr:open_cache_doc(AccountDb, ConferenceId, Options) of
-        {'ok', _ConfJObj} -> 'true';
+    case kz_datamgr:open_cache_doc(AccountDb, ConferenceId) of
+        {'ok', ConfJObj} ->
+            <<"conference">> == kz_doc:type(ConfJObj);
         _ -> 'false'
     end.
 

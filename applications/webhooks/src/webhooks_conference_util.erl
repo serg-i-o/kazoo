@@ -3,12 +3,12 @@
 -export([handle_event/2]).
 
 -define(CONFERENCE_COMMAND_HOOK_EVENT, <<"conference_command">>).
+-define(CONFERENCE_DESTROY_EVENT, <<"conference_destroy">>).
 
 -include("webhooks.hrl").
 
 -spec handle_event(kz_json:object(), kz_term:proplist()) -> 'ok'.
-handle_event(JObj, Props) ->
-    io:format("~p handle_event(JObj,Props):\nJObj=~p\nProps=~p\n",[?MODULE, JObj, Props]),
+handle_event(JObj, _Props) ->
     BaseEventName = erlang:binary_to_atom(kz_json:get_value(<<"Event-Name">>, JObj), 'utf8'),
     case BaseEventName of
         'event'   ->
@@ -19,6 +19,13 @@ handle_event(JObj, Props) ->
     end.
 
 -spec handle_conf_event(kz_json:object(), kz_term:ne_binary()) -> any().
+handle_conf_event(JObj, ?CONFERENCE_DESTROY_EVENT) ->
+    case kz_json:get_value(<<"Account-ID">>, JObj) of
+        'undefined' ->
+            lager:debug("failed to determine account id for conference_destroy event");
+        AccountId ->
+            maybe_handle_conf_event(AccountId, ?CONFERENCE_DESTROY_EVENT, JObj)
+    end;
 handle_conf_event(JObj, HookEvent) ->
     case kz_hooks_util:lookup_account_id(JObj) of
         {'error', _R} ->
@@ -61,8 +68,13 @@ maybe_handle_conf_event(AccountId, HookEvent, JObj) ->
 -spec hook_event_name(kz_term:ne_binary()) -> kz_term:ne_binary().
 hook_event_name(<<"conference-create">>) -> <<"conference_create">>;
 hook_event_name(<<"conference-destroy">>) -> <<"conference_destroy">>;
+hook_event_name(<<"add-member">>) -> <<"conference_add_member">>;
+hook_event_name(<<"del-member">>) -> <<"conference_del_member">>;
 hook_event_name(Event) -> Event.
 
 -spec conf_command_name(kz_term:ne_binary()) -> kz_term:ne_binary().
 conf_command_name(<<"mute_participant">>) -> <<"mute">>;
+conf_command_name(<<"unmute_participant">>) -> <<"mute">>;
+conf_command_name(<<"deaf_participant">>) -> <<"deaf">>;
+conf_command_name(<<"undeaf_participant">>) -> <<"deaf">>;
 conf_command_name(Command) -> Command.
