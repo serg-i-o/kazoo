@@ -136,7 +136,7 @@ handle_call('single', _From, #state{meta=Meta
                                    ,timer_ref=TRef
                                    }=State) ->
     %% doesn't currently check whether we're still streaming in from the DB
-    lager:debug("returning media contents"),
+    lager:debug("returning media contents ~p", [kz_util:pretty_print_bytes(byte_size(Contents))]),
     _ = stop_timer(TRef),
     {'reply', {Meta, Contents}, State#state{timer_ref=start_timer()}};
 handle_call('single', From, #state{reqs=Reqs
@@ -182,7 +182,7 @@ handle_info({'timeout', TRef, ?TIMEOUT_MESSAGE}, #state{timer_ref=TRef}=State) -
 handle_info({'http', {ReqID, 'stream_start', Hdrs}}, #state{kz_http_req_id=ReqID
                                                            ,timer_ref=TRef
                                                            }=State) ->
-    lager:debug("start retrieving audio file for tts"),
+    lager:debug("start retrieving audio file for tts: ~p", [Hdrs]),
     _ = stop_timer(TRef),
     {'noreply', State#state{meta=kz_json:normalize(kz_json:from_list(kv_to_bin(Hdrs)))
                            ,timer_ref=start_timer()
@@ -195,7 +195,8 @@ handle_info({'http', {ReqID, 'stream', Bin}}, #state{kz_http_req_id=ReqID
                                                     }=State) ->
     _ = stop_timer(TRef),
     case kz_json:get_value(<<"content_type">>, Meta) of
-        <<"audio/", _/binary>> ->
+        <<"audio/", _/binary>>=_CT ->
+            lager:debug("adding ~p bytes of ~s", [byte_size(Bin), _CT]),
             {'noreply', State#state{contents = <<Contents/binary, Bin/binary>>
                                    ,timer_ref=start_timer()
                                    }};
@@ -221,7 +222,7 @@ handle_info({'http', {ReqID, 'stream_end', _FinalHeaders}}, #state{kz_http_req_i
     Res = {Meta, Contents},
     _ = [gen_server:reply(From, Res) || From <- Reqs],
 
-    lager:debug("finished receiving file contents"),
+    lager:debug("finished receiving file contents: ~p", [kz_util:pretty_print_bytes(byte_size(Contents))]),
     {'noreply', State#state{status=ready
                            ,timer_ref=start_timer()
                            }
@@ -250,12 +251,18 @@ handle_info({'http', {ReqID, {'error', Error}}}, #state{kz_http_req_id=ReqID
                                                        ,timer_ref=TRef
                                                        }=State) ->
     _ = stop_timer(TRef),
-    lager:info("recv error ~p : collected: ~p", [Error, Contents]),
+    log_error(Error, Contents),
     {'stop', 'normal', State};
 
 handle_info(_Info, State) ->
     lager:debug("unhandled message: ~p", [_Info]),
     {'noreply', State, 'hibernate'}.
+
+-spec log_error(any(), binary()) -> 'ok'.
+log_error({'failed_connect',[{'to_address',{_Server, _Port}},{'inet',['inet'],'econnrefused'}]}, _) ->
+    lager:error("server ~s:~p refusing connections", [_Server, _Port]);
+log_error(_Error, _Contents) ->
+    lager:info("recv error ~p : collected: ~p", [_Error, _Contents]).
 
 %%--------------------------------------------------------------------
 %% @private
@@ -269,8 +276,9 @@ handle_info(_Info, State) ->
 %% @end
 %%--------------------------------------------------------------------
 -spec terminate(any(), state()) -> 'ok'.
-terminate(_Reason, #state{id=Id}) ->
+terminate(_Reason, #state{id=Id, reqs=Reqs}) ->
     publish_doc_update(Id),
+    _ = [gen_server:reply(From, {'error', 'shutdown'}) || From <- Reqs],
     lager:debug("media tts ~s going down: ~p", [Id, _Reason]).
 
 %%--------------------------------------------------------------------

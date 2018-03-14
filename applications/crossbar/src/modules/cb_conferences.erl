@@ -34,6 +34,7 @@
 -endif.
 
 -include("crossbar.hrl").
+-include_lib("nklib/include/nklib.hrl").
 
 -define(CB_LIST, <<"conferences/crossbar_listing">>).
 -define(CB_LIST_BY_NUMBER, <<"conference/listing_by_number">>).
@@ -445,6 +446,7 @@ exec_dial_endpoints(Context, ConferenceId, Data, ToDial) ->
               ,{<<"Conference-ID">>, ConferenceId}
               ,{<<"Custom-Application-Vars">>, CAVs}
               ,{<<"Endpoints">>, ToDial}
+              ,{<<"Participant-Flags">>, kz_json:get_list_value(<<"participant_flags">>, Data)}
               ,{<<"Msg-ID">>, cb_context:req_id(Context)}
               ,{<<"Outbound-Call-ID">>, kz_json:get_ne_binary_value(<<"outbound_call_id">>, Data)}
               ,{<<"Target-Call-ID">>, TargetCallId}
@@ -535,12 +537,9 @@ create_call(Context, ConferenceId) ->
 
 -type build_acc() :: {kz_json:objects(), kapps_call:call(), cb_context:context(), pos_integer()}.
 -spec build_endpoint(kz_term:ne_binary(), build_acc()) -> build_acc().
-build_endpoint(<<"sip:", _/binary>>=URI, {Endpoints, Call, Context, Element}) ->
+build_endpoint(<<"sip:", _/binary>>=URI, Acc) ->
     lager:info("building SIP endpoint ~s", [URI]),
-    Endpoint = kz_json:from_list([{<<"Invite-Format">>, <<"route">>}
-                                 ,{<<"Route">>, URI}
-                                 ]),
-    {[Endpoint | Endpoints], Call, Context, Element+1};
+    build_sip_endpoint(URI, Acc);
 build_endpoint(<<_:32/binary>>=EndpointId, {Endpoints, Call, Context, Element}) ->
     case kz_datamgr:open_cache_doc(kapps_call:account_db(Call), EndpointId) of
         {'ok', Endpoint} -> build_endpoint_from_doc(Endpoint, {Endpoints, Call, Context, Element});
@@ -592,6 +591,30 @@ build_number_endpoint(Number, {Endpoints, Call, Context, Element}) ->
 
     lager:info("adding number ~s endpoint", [Number]),
     {[kz_json:from_list(Endpoint) | Endpoints], Call, Context, Element+1}.
+
+-spec build_sip_endpoint(kz_term:ne_binary(), build_acc()) ->
+                                build_acc().
+build_sip_endpoint(URI, {Endpoints, Call, Context, Element}) ->
+    [#uri{user=SipUsername
+         ,domain=SipRealm
+         }
+    ] = nklib_parse_uri:uris(URI),
+
+
+    SIPSettings = kz_json:from_list([{<<"invite_format">>, <<"route">>}
+                                    ,{<<"route">>, URI}
+                                    ,{<<"realm">>, SipRealm}
+                                    ,{<<"username">>, SipUsername}
+                                    ]),
+    Device = kz_json:from_list([{<<"sip">>, SIPSettings}]),
+    Properties = kz_json:from_list([{<<"source">>, kz_term:to_binary(?MODULE)}]),
+    case kz_endpoint:build(Device, Properties, Call) of
+        {'ok', SIPEndpoints} ->
+            {SIPEndpoints ++ Endpoints, Call, Context, Element+1};
+        {'error', _E} ->
+            lager:info("failed to build SIP URI: ~p", [_E]),
+            {Endpoints, Call, add_not_found_error(Context, URI, Element), Element+1}
+    end.
 
 -spec build_endpoint_from_doc(kz_json:object(), build_acc()) -> build_acc().
 build_endpoint_from_doc(Endpoint, Acc) ->
