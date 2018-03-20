@@ -1,8 +1,8 @@
 -module(webhooks_conference_create).
 
 -export([init/0
-    , bindings_and_responders/0
-]).
+        , bindings_and_responders/0
+        ]).
 
 -include("webhooks.hrl").
 
@@ -23,19 +23,19 @@ init() ->
 -spec bindings_and_responders() -> {gen_listener:bindings(), gen_listener:responders()}.
 bindings_and_responders() ->
     {
-        [{'conference',
-            [{'restrict_to',
-                [{'event',
-                        [
-                            {'event', <<"conference-create">>},
-                            {'account_id', <<"*">>},
-                            {'conference_id', <<"*">>},
-                            {'call_id', <<"*">>}
-                        ]
-                 }]
-            }]
-        }],
-        [{{'webhooks_conference_util', 'handle_event'},[{<<"conference">>, <<"event">>}]}]
+     [{'conference',
+       [{'restrict_to',
+         [{'event',
+           [
+            {'event', <<"conference-create">>},
+            {'account_id', <<"*">>},
+            {'conference_id', <<"*">>},
+            {'call_id', <<"*">>}
+           ]
+          }]
+        }]
+      }],
+     [{{'webhooks_conference_util', 'handle_event'},[{<<"conference">>, <<"event">>}]}]
     }.
 
 

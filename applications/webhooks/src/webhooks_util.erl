@@ -153,39 +153,28 @@ find_conference_webhooks( HookEvent, ConferenceId, CommandName) ->
 -spec match_conference_webhooks(kz_term:ne_binary(), kz_term:ne_binary(), kz_term:api_binary()) -> webhooks().
 match_conference_webhooks(HookEvent, ConferenceId, CommandName) ->
     MatchSpec = [{
-        #webhook{hook_event='$1',_='_'}
-        ,[{'==','$1', {'const', HookEvent}}]
-        ,['$_']
-    }],
+                  #webhook{hook_event='$1',_='_'}
+                 ,[{'==','$1', {'const', HookEvent}}]
+                 ,['$_']
+                 }],
     Hooks = ets:select(table_id(), MatchSpec),
-    match_conference_webhooks_by_name(Hooks, ConferenceId, CommandName).
-match_conference_webhooks_by_name(Hooks, ConferenceId, CommandName) ->
-    FilteredHooks = lists:foldl(
-        fun(#webhook{custom_data=Data}=Webhook, Acc) ->
-            case Data of
-                undefined-> Acc;
-                {DataList}->
-                    case lists:keyfind(?ACTION_MODIFIER, 1, DataList) == {?ACTION_MODIFIER, CommandName} of
-                        'true' -> [Webhook | Acc];
-                        'false' -> Acc
-                    end
-            end
-        end
-        , []
-        , Hooks),
-    match_conference_webhooks_by_id(FilteredHooks, ConferenceId).
-match_conference_webhooks_by_id(Hooks, ConferenceId) ->
-    lists:foldl(
-        fun(#webhook{custom_data=Data}=Webhook, Acc) ->
-            {DataList} = Data,
-            case lists:keyfind(?CONFERENCE_ID_MODIFIER, 1, DataList) == {?CONFERENCE_ID_MODIFIER, ConferenceId} of
-                'true' -> [Webhook | Acc];
-                'false' -> Acc
-            end
-        end
-        , []
-        , Hooks).
-
+    match_conf_by_action(Hooks, ConferenceId, CommandName).
+match_conf_by_action(Hooks, ConferenceId, CommandName) ->
+    FilteredHooks = match_conf_foldl(Hooks, ?ACTION_MODIFIER, CommandName),
+    match_conf_by_id(FilteredHooks, ConferenceId).
+match_conf_by_id(Hooks, ConferenceId) ->
+    match_conf_foldl(Hooks, ?CONFERENCE_ID_MODIFIER, ConferenceId).
+match_conf_foldl(Hooks, Modifier, Key) ->
+    FilterFun = fun (Hook, Acc) ->
+                        match_conf_by_key(Hook, Acc, Modifier, Key)
+                end,
+    lists:foldl(FilterFun, [], Hooks).
+match_conf_by_key(#webhook{custom_data=Data}=Webhook, Acc, Modifier, Key) ->
+    {DataList} = Data,
+    case lists:keyfind(Modifier, 1, DataList) == {Modifier, Key} of
+        'true' -> [Webhook | Acc];
+        'false' -> Acc
+    end.
 
 -spec fire_hooks(kz_json:object(), webhooks()) -> 'ok'.
 fire_hooks(_, []) -> 'ok';
@@ -241,7 +230,7 @@ do_fire(#webhook{uri = ?NE_BINARY = URI
     lager:debug("sending hook ~s(~s) with interaction id ~s via 'get' (retries ~b): ~s", [_HookEvent, _HookId, EventId, Retries, URI]),
 
     Url = kz_term:to_list(<<(kz_term:to_binary(URI))/binary
-                            ,(kz_term:to_binary([$? | kz_http_util:json_to_querystring(JObj)]))/binary
+                           ,(kz_term:to_binary([$? | kz_http_util:json_to_querystring(JObj)]))/binary
                           >>),
     Headers = ?HTTP_REQ_HEADERS(Hook),
     Debug = debug_req(Hook, EventId, URI, Headers, <<>>),
@@ -411,8 +400,8 @@ fix_value(O) -> kz_term:to_lower_binary(O).
 -spec fix_error_value(atom() | {atom(), atom()}) -> kz_term:ne_binary().
 fix_error_value({E, R}) ->
     <<(kz_term:to_binary(E))/binary
-      ,": "
-      ,(kz_term:to_binary(R))/binary
+     ,": "
+     ,(kz_term:to_binary(R))/binary
     >>;
 fix_error_value(E) ->
     kz_term:to_binary(E).

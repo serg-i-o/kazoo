@@ -505,8 +505,8 @@ check_modifier_values(CustomValue, ?CONFERENCE_ID_MODIFIER, _ModifierValue, <<"s
     case check_conference_id(CustomValue, Context) of
         'false' ->
             Msg = kz_json:from_list([{<<"message">>, <<"specified conference id is not valid">>}
-                ,{<<"conference_id">>, CustomValue}
-            ]),
+                                    ,{<<"conference_id">>, CustomValue}
+                                    ]),
             cb_context:add_validation_error(?CONFERENCE_ID_MODIFIER, <<"invalid">>, Msg, Context);
         'true' ->
             Context
