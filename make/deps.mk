@@ -67,7 +67,7 @@ dep_erlcloud = git https://github.com/lazedo/erlcloud 54fe6b96eb0bc591b80161fc55
 
 dep_erlazure = git https://github.com/lazedo/erlazure.git add-start-link
 
-dep_couchbeam = git https://github.com/2600hz/couchbeam 1.4.1b
+dep_couchbeam = git https://github.com/2600hz/couchbeam 1.4.1c
 ###dep_couchbeam = git https://github.com/benoitc/couchbeam 1.4.1
 ### waiting for pull requests
 ### https://github.com/benoitc/couchbeam/pull/158
@@ -75,6 +75,7 @@ dep_couchbeam = git https://github.com/2600hz/couchbeam 1.4.1b
 ### https://github.com/benoitc/couchbeam/pull/165
 ### https://github.com/benoitc/couchbeam/pull/166
 ### https://github.com/benoitc/couchbeam/pull/174
+### https://github.com/benoitc/couchbeam/pull/178
 
 dep_jesse = git https://github.com/2600hz/jesse 1.5-rc7
 ##dep_jesse = git https://github.com/for-GET/jesse 1.5.0-rc2

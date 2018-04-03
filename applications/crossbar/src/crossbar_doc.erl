@@ -400,12 +400,7 @@ load_view(#load_view_params{view = View
     Limit = limit_by_page_size(Context, PageSize),
     lager:debug("limit: ~p page_size: ~p dir: ~p", [Limit, PageSize, _Direction]),
 
-    DefaultOptions =
-        props:filter_undefined(
-          [{'startkey', StartKey}
-          ,{'limit', Limit}
-           | props:delete_keys(['startkey', 'startkey_fun', 'limit', 'databases'], Options)
-          ]),
+    DefaultOptions = set_default_options(Options, StartKey, Limit),
 
     IncludeOptions =
         case crossbar_filter:is_defined(Context) of
@@ -442,8 +437,28 @@ load_view(#load_view_params{view = View
                                              ,cb_context:api_version(Context)
                                              ,LVPs#load_view_params{dbs = Dbs
                                                                    ,context = cb_context:set_resp_status(Context, 'success')
+                                                                   ,view_options = ViewOptions
                                                                    }
                                              )
+    end.
+
+-spec set_default_options(view_options(), startkey(), kz_term:api_pos_integer()) -> kz_term:proplist().
+set_default_options(Options, StartKey, Limit) ->
+    DefaultOptions =
+        props:filter_undefined(
+            [{'startkey', StartKey}
+                ,{'limit', Limit}
+                | props:delete_keys(['startkey', 'startkey_fun', 'limit', 'databases'], Options)
+            ]),
+
+    %% if 'key' and 'startkey' options is defined , then search in the couchbeam will be made only by 'key' value and 'startkey' will be unused.
+    %% We should define options to allow pagination for duplicate start keys in the couchebeam.
+    %% In this case, the 'start_key' will contain the document id and we should shift 'startkey' value to the 'startkey_docid'.
+    case props:is_defined('key', DefaultOptions) and props:is_defined('startkey', DefaultOptions) of
+        'true' ->
+            Key = props:get_value('key', DefaultOptions),
+            props:set_values([{'startkey', Key}, {'startkey_docid', StartKey}], DefaultOptions);
+        'false' -> DefaultOptions
     end.
 
 -spec limit_by_page_size(kz_term:api_binary() | pos_integer()) -> kz_term:api_pos_integer().
@@ -899,6 +914,7 @@ handle_datamgr_pagination_success([_|_]=JObjs
                                  ,PageSize
                                  ,_Version
                                  ,#load_view_params{context = Context
+                                                   ,view_options = ViewOptions
                                                    ,page_size = CurrentPageSize
                                                    ,start_key = StartKey
                                                    ,filter_fun = FilterFun
@@ -917,8 +933,13 @@ handle_datamgr_pagination_success([_|_]=JObjs
                                            ,dbs = Dbs
                                            });
         {Results, [NextJObj]} ->
+            %% If we get results from db for the 'key', then we should set the document id as next start key
+            %% (all received results will containt same 'key' and pagination in coachdb will not work for duplicated keys)
+            case props:is_defined('key', ViewOptions) of
+                'true'  -> NextStartKey = kz_json:get_value(<<"id">>, NextJObj);
+                'false' -> NextStartKey = kz_json:get_value(<<"key">>, NextJObj)
+            end,
             %% Current db may have more results to give
-            NextStartKey = kz_json:get_value(<<"key">>, NextJObj),
             Filtered = apply_filter(FilterFun, Results, Context, Direction),
             lager:debug("next start key: ~p", [NextStartKey]),
             lager:debug("page size: ~p filtered: ~p", [PageSize, length(Filtered)]),
