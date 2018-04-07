@@ -139,6 +139,7 @@ get(Num, Options) ->
 %%------------------------------------------------------------------------------
 -spec create(kz_term:ne_binary(), knm_number_options:options()) -> knm_number_return().
 create(Num, Options) ->
+    io:format("~p.create/2:\nNumber=~p\nOptions=~p\n", [?MODULE,Num,Options]),
     ?TRY2(create, Num, Options).
 
 -spec state_for_create(knm_number_options:options()) -> kz_term:ne_binary().
