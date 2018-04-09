@@ -375,7 +375,7 @@ path_token(Token) ->
 
 -spec path_tokens(context()) -> kz_term:ne_binaries().
 path_tokens(#cb_context{raw_path=Path}) ->
-    [path_token(kz_util:uri_decode(Token))
+    [path_token(Token)
      || Token <- binary:split(Path, <<"/">>, ['global', 'trim'])
     ].
 
