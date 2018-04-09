@@ -242,8 +242,7 @@ validate(Context) ->
                                     cb_context:context().
 validate_phone_numbers(Context, ?HTTP_GET, 'undefined') ->
     maybe_find_numbers(Context);
-validate_phone_numbers(Context, ?HTTP_GET, AccountId) ->
-    io:format("\n~p.validate_phone_numbers(Context, HttpVerb, AccountId):\nContext=...\n,Verb=Get\nAccount=~p\n",[?MODULE,AccountId]),
+validate_phone_numbers(Context, ?HTTP_GET, _AccountId) ->
     case kz_json:get_ne_value(?PREFIX, cb_context:query_string(Context)) of
         'undefined' -> summary(Context);
         _Prefix -> maybe_find_numbers(Context)
@@ -471,7 +470,6 @@ delete(Context, Number) ->
 %%------------------------------------------------------------------------------
 -spec summary(cb_context:context(), kz_term:ne_binary()) -> cb_context:context().
 summary(Context, Number) ->
-    io:format("\n~p.summary(Context, Number):\nContext=~p\nNumbre=~p\n",[?MODULE,Context,Number]),
     case knm_number:get(Number, [{auth_by, cb_context:auth_account_id(Context)}]) of
         {'ok', KNMNumber} ->
             crossbar_util:response(knm_number:to_public_json(KNMNumber), Context);
