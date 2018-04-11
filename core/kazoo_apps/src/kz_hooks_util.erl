@@ -18,6 +18,7 @@
         ,all_registered_rr/0
         ]).
 -export([lookup_account_id/1]).
+-export([lookup_conference_id/1]).
 -export([handle_call_event/2]).
 
 -include_lib("kazoo_stdlib/include/kz_types.hrl").
@@ -280,6 +281,18 @@ get_inbound_destination(JObj) ->
         'true' -> assume_e164(Number);
         'false' -> knm_converters:normalize(Number)
     end.
+
+-spec lookup_conference_id(kz_json:object()) -> {'ok', kz_term:ne_binary()} | {'error', any()}.
+lookup_conference_id(JObj) ->
+    case kzd_conferences:conference_id(JObj) of
+        'undefined' ->
+            Reason = "failed to determine conference id for 'conference_command'",
+            io:format("~p\n",[Reason]),
+            lager:debug("~p\n",[Reason]),
+            {'error', Reason};
+        Id -> {'ok', Id}
+    end.
+
 
 -spec assume_e164(kz_term:ne_binary()) -> kz_term:ne_binary().
 assume_e164(<<$+, _/binary>> = Number) -> Number;

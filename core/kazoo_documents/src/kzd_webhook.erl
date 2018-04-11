@@ -11,21 +11,21 @@
 -module(kzd_webhook).
 
 -export([is_enabled/1, is_enabled/2
-        ,is_auto_disabled/1
-        ,enable/1
-        ,disable/1, disable/2
-        ,disabled_message/1, disabled_message/2
-        ,type/0, type/1
-        ,name/1, name/2, set_name/2
-        ,uri/1, uri/2, set_uri/2
-        ,event/1, event/2, set_event/2
-        ,verb/1, verb/2, set_verb/2
-        ,retries/1, retries/2, set_retries/2
-        ,custom_data/1, custom_data/2, set_custom_data/2
-        ,modifiers/1, modifiers/2, set_modifiers/2
-        ,include_subaccounts/1, enable_subaccounts/1, disable_subaccounts/1
-        ,include_internal_legs/1
-        ]).
+    , is_auto_disabled/1
+    , enable/1
+    , disable/1, disable/2
+    , disabled_message/1, disabled_message/2
+    , type/0, type/1
+    , name/1, name/2, set_name/2
+    , uri/1, uri/2, set_uri/2
+    , event/1, event/2, set_event/2
+    , verb/1, verb/2, set_verb/2
+    , retries/1, retries/2, set_retries/2
+    , custom_data/1, custom_data/2, set_custom_data/2
+    , modifiers/1, modifiers/2, set_modifiers/2
+    , include_subaccounts/1, enable_subaccounts/1, disable_subaccounts/1
+    , include_internal_legs/1
+    , fetch_conference/1]).
 
 -include("kz_documents.hrl").
 
@@ -224,3 +224,16 @@ disable_subaccounts(Hook) ->
 -spec include_internal_legs(doc()) -> boolean().
 include_internal_legs(Hook) ->
     kz_json:is_true(?INCLUDE_INTERNAL, Hook, 'true').
+
+
+-spec fetch_conference(kz_term:api_ne_binary()) ->
+    {'ok', doc()} | kz_datamgr:data_error().
+fetch_conference(ConferenceId) ->
+    open_cache_doc_conf(?KZ_WEBHOOKS_DB, ConferenceId).
+
+-spec open_cache_doc_conf(kz_term:ne_binary(), kz_term:ne_binary()) ->
+    {'ok', doc()} | kz_datamgr:data_error().
+open_cache_doc_conf(Db, AccountId) ->
+    kz_datamgr:open_cache_doc(Db, AccountId, [{'cache_failures','false'}]).
+
+

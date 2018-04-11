@@ -36,5 +36,8 @@
 
 -define(WEBHOOK_META_LIST, <<"webhooks/webhook_meta_listing">>).
 
+-define(ACTION_MODIFIER, <<"action">>).
+-define(CONFERENCE_ID_MODIFIER, <<"conference_id">>).
+
 -define(WEBHOOKS_HRL, 'true').
 -endif.
