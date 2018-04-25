@@ -1,8 +1,8 @@
-%%%-------------------------------------------------------------------
-%%% @copyright (C) 2018, 2600Hz INC
+%%%-----------------------------------------------------------------------------
+%%% @copyright (C) 2010-2018, 2600Hz
 %%%
-%%% @contributors
-%%%-------------------------------------------------------------------
+%%% @end
+%%%-----------------------------------------------------------------------------
 -module(webhooks_notifications).
 
 -export([init/0
@@ -42,11 +42,10 @@
                           ])
        ).
 
-%%--------------------------------------------------------------------
-%% @public
+%%------------------------------------------------------------------------------
 %% @doc
 %% @end
-%%--------------------------------------------------------------------
+%%------------------------------------------------------------------------------
 -spec init() -> 'ok'.
 init() ->
     init(get_notifications_definition(), []).
@@ -62,11 +61,10 @@ init([EventDefinition|Rest], Acc) ->
                                    ),
     init(Rest, [{kapi_definition:name(EventDefinition), Description} | Acc]).
 
-%%--------------------------------------------------------------------
-%% @public
+%%------------------------------------------------------------------------------
 %% @doc
 %% @end
-%%--------------------------------------------------------------------
+%%------------------------------------------------------------------------------
 -spec bindings_and_responders() -> {gen_listener:bindings(), gen_listener:responders()}.
 bindings_and_responders() ->
     Bindings = bindings(),
@@ -87,19 +85,17 @@ bindings() ->
      }
     ].
 
-%%--------------------------------------------------------------------
-%% @public
+%%------------------------------------------------------------------------------
 %% @doc
 %% @end
-%%--------------------------------------------------------------------
+%%------------------------------------------------------------------------------
 -spec account_bindings(kz_term:ne_binary()) -> gen_listener:bindings().
 account_bindings(_AccountId) -> [].
 
-%%--------------------------------------------------------------------
-%% @private
+%%------------------------------------------------------------------------------
 %% @doc
 %% @end
-%%--------------------------------------------------------------------
+%%------------------------------------------------------------------------------
 -spec handle_event(kz_json:object(), kz_term:proplist()) -> 'ok'.
 handle_event(JObj, _Props) ->
     kz_util:put_callid(JObj),
@@ -111,7 +107,13 @@ handle_event(JObj, _Props) ->
     'true' = Validate(JObj),
 
     AccountId = kapi_notifications:account_id(JObj),
-    case webhooks_util:find_webhooks(?HOOK_NAME, AccountId) of
+    case EventName =:= <<"webhook">>
+        orelse webhooks_util:find_webhooks(?HOOK_NAME, AccountId)
+    of
+        'true' ->
+            Hook = webhooks_util:from_json(kz_json:get_ne_json_value(<<"Hook">>, JObj, kz_json:new())),
+            Data = kz_json:normalize(kz_json:get_ne_json_value(<<"Data">>, JObj, kz_json:new())),
+            webhooks_util:fire_hooks(Data, [Hook]);
         [] ->
             lager:debug("no hooks to handle ~s for ~s", [EventName, AccountId]);
         Hooks ->
@@ -135,11 +137,10 @@ match_action_type(#webhook{hook_event = ?HOOK_NAME
 match_action_type(#webhook{}=_W, _Type) ->
     'true'.
 
-%%--------------------------------------------------------------------
-%% @private
+%%------------------------------------------------------------------------------
 %% @doc
 %% @end
-%%--------------------------------------------------------------------
+%%------------------------------------------------------------------------------
 -spec get_notifications_definition() -> kapi_definition:apis().
 get_notifications_definition() ->
     [Definition

@@ -34,6 +34,15 @@
             ],
             "type": "object"
         },
+        "account_config.callflow": {
+            "description": "Schema for callflow account_config",
+            "properties": {
+                "dialog_subscribed_mwi_prefix": {
+                    "description": "callflow dialog_subscribed_mwi_prefix"
+                }
+            },
+            "type": "object"
+        },
         "account_config.cdr": {
             "description": "Schema for cdr account_config",
             "properties": {
@@ -48,6 +57,16 @@
         "account_config.conferences": {
             "description": "Schema for conferences account_config",
             "properties": {
+                "controls": {
+                    "properties": {
+                        "default": {
+                            "description": "conferences controls default"
+                        },
+                        "page": {
+                            "description": "conferences controls page"
+                        }
+                    }
+                },
                 "entry_tone": {
                     "default": "tone_stream://v=-7;>=2;+=.1;%(300,0,523,659);v=-7;>=3;+=.1;%(800,0,659,783)",
                     "description": "conferences entry tone",
@@ -487,7 +506,6 @@
                             "description": "Low balance settings",
                             "properties": {
                                 "enabled": {
-                                    "default": true,
                                     "description": "should the account be checked for this alert",
                                     "type": "boolean"
                                 },
@@ -3304,6 +3322,7 @@
                     "type": "string"
                 },
                 "duration_ms": {
+                    "default": "2000",
                     "description": "How long, in milliseconds, to send each DTMF",
                     "type": [
                         "string",
@@ -3448,7 +3467,7 @@
             "description": "Validator for the TTS (Text-to-speech) callflow action",
             "properties": {
                 "endless_playback": {
-                    "description": "Loop the media until cancelled",
+                    "description": "Loop the media until canceled",
                     "type": "boolean"
                 },
                 "engine": {
@@ -3929,8 +3948,20 @@
                     "type": "array",
                     "uniqueItems": true
                 },
+                "controls": {
+                    "description": "controls",
+                    "type": "object"
+                },
+                "domain": {
+                    "description": "domain",
+                    "type": "string"
+                },
                 "focus": {
                     "description": "This is a read-only property indicating the media server hosting the conference",
+                    "type": "string"
+                },
+                "language": {
+                    "description": "Prompt language to play in the conference",
                     "type": "string"
                 },
                 "max_members_media": {
@@ -3974,6 +4005,10 @@
                                 "type": "string"
                             },
                             "type": "array"
+                        },
+                        "play_entry_prompt": {
+                            "description": "Whether to play the entry prompt on member join",
+                            "type": "boolean"
                         }
                     },
                     "type": "object"
@@ -4054,7 +4089,11 @@
                     "type": "boolean"
                 },
                 "profile": {
-                    "description": "The XML profile name used to configure the conference",
+                    "description": "Profile configuration",
+                    "type": "object"
+                },
+                "profile_name": {
+                    "description": "conference profile name",
                     "type": "string"
                 },
                 "require_moderator": {
@@ -4113,6 +4152,10 @@
                         "type": "string"
                     },
                     "type": "array"
+                },
+                "profile_name": {
+                    "description": "The profile name to use for configuration",
+                    "type": "string"
                 },
                 "target_call_id": {
                     "description": "Existing UUID to use as a hint for where to start the conference",
@@ -6582,6 +6625,84 @@
             ],
             "type": "object"
         },
+        "kapi.acdc_stats.average_wait_time_err": {
+            "description": "AMQP API for acdc_stats.average_wait_time_err",
+            "properties": {
+                "Error-Reason": {
+                    "type": "string"
+                },
+                "Event-Category": {
+                    "enum": [
+                        "acdc_stat"
+                    ],
+                    "type": "string"
+                },
+                "Event-Name": {
+                    "enum": [
+                        "average_wait_time_err"
+                    ],
+                    "type": "string"
+                }
+            },
+            "required": [
+                "Error-Reason"
+            ],
+            "type": "object"
+        },
+        "kapi.acdc_stats.average_wait_time_req": {
+            "description": "AMQP API for acdc_stats.average_wait_time_req",
+            "properties": {
+                "Account-ID": {
+                    "minLength": 1,
+                    "type": "string"
+                },
+                "Event-Category": {
+                    "enum": [
+                        "acdc_stat"
+                    ],
+                    "type": "string"
+                },
+                "Event-Name": {
+                    "enum": [
+                        "average_wait_time_req"
+                    ],
+                    "type": "string"
+                },
+                "Queue-ID": {
+                    "minLength": 1,
+                    "type": "string"
+                }
+            },
+            "required": [
+                "Account-ID",
+                "Queue-ID"
+            ],
+            "type": "object"
+        },
+        "kapi.acdc_stats.average_wait_time_resp": {
+            "description": "AMQP API for acdc_stats.average_wait_time_resp",
+            "properties": {
+                "Average-Wait-Time": {
+                    "type": "integer"
+                },
+                "Event-Category": {
+                    "enum": [
+                        "acdc_stat"
+                    ],
+                    "type": "string"
+                },
+                "Event-Name": {
+                    "enum": [
+                        "average_wait_time_resp"
+                    ],
+                    "type": "string"
+                }
+            },
+            "required": [
+                "Average-Wait-Time"
+            ],
+            "type": "object"
+        },
         "kapi.acdc_stats.call_abandoned": {
             "description": "AMQP API for acdc_stats.call_abandoned",
             "properties": {
@@ -8989,6 +9110,9 @@
                 "Presence-ID": {
                     "type": "string"
                 },
+                "Profile-Name": {
+                    "type": "string"
+                },
                 "Raw-Application-Data": {
                     "type": "string"
                 },
@@ -9074,6 +9198,9 @@
         "kapi.conference.config_req": {
             "description": "AMQP API for conference.config_req",
             "properties": {
+                "Call-ID": {
+                    "type": "string"
+                },
                 "Conference-ID": {
                     "type": "string"
                 },
@@ -9224,6 +9351,9 @@
                     "type": "string"
                 },
                 "Participant-Flags": {
+                    "type": "string"
+                },
+                "Profile-Name": {
                     "type": "string"
                 },
                 "Target-Call-ID": {
@@ -18817,6 +18947,9 @@
                 "Expires": {
                     "type": "string"
                 },
+                "Extended-Presence-ID": {
+                    "type": "string"
+                },
                 "From": {
                     "type": "string"
                 },
@@ -18877,6 +19010,9 @@
                     "type": "string"
                 },
                 "Expires": {
+                    "type": "string"
+                },
+                "Extended-Presence-ID": {
                     "type": "string"
                 },
                 "From": {
@@ -19958,6 +20094,9 @@
                 "Originate-Immediate": {
                     "type": "string"
                 },
+                "Origination-Call-ID": {
+                    "type": "string"
+                },
                 "Outbound-Call-ID": {
                     "type": "string"
                 },
@@ -20190,6 +20329,9 @@
                     "type": "string"
                 },
                 "Originate-Immediate": {
+                    "type": "string"
+                },
+                "Origination-Call-ID": {
                     "type": "string"
                 },
                 "Outbound-Call-ID": {
@@ -25211,6 +25353,10 @@
                     "description": "Reseller's account ID",
                     "type": "string"
                 },
+                "caller_id_numbers": {
+                    "description": "String of caller id prefixes separated by ':'",
+                    "type": "string"
+                },
                 "carrier": {
                     "description": "Friendly name for the carrier providing this rate",
                     "type": "string"
@@ -25273,6 +25419,10 @@
                     "description": "If the call duration is shorter than this threshold (seconds), the call is not billed",
                     "minimum": 0,
                     "type": "integer"
+                },
+                "rate_suffix": {
+                    "description": "Suffix applied to rate name",
+                    "type": "string"
                 },
                 "rate_surcharge": {
                     "description": "The upfront cost of connecting the call",
@@ -25688,6 +25838,10 @@
                     "maximum": 20,
                     "minimum": 1,
                     "type": "integer"
+                },
+                "ignore_flags": {
+                    "description": "When set to true this resource is used if the rules/classifiers match regardless of flags",
+                    "type": "boolean"
                 },
                 "media": {
                     "$ref": "#/definitions/endpoint.media",
@@ -26591,6 +26745,10 @@
                     },
                     "type": "array"
                 },
+                "bindings": {
+                    "description": "blackhole bindings",
+                    "type": "object"
+                },
                 "compress_response_body": {
                     "default": true,
                     "description": "blackhole compress_response_body",
@@ -26808,6 +26966,9 @@
                     "default": true,
                     "description": "callflow default use account caller id",
                     "type": "boolean"
+                },
+                "dialog_subscribed_mwi_prefix": {
+                    "description": "callflow dialog_subscribed_mwi_prefix"
                 },
                 "ensure_valid_caller_id": {
                     "default": false,
@@ -27208,6 +27369,16 @@
                     "description": "conferences bridge username",
                     "type": "string"
                 },
+                "controls": {
+                    "properties": {
+                        "default": {
+                            "description": "conferences controls default"
+                        },
+                        "page": {
+                            "description": "conferences controls page"
+                        }
+                    }
+                },
                 "entry_tone": {
                     "default": "tone_stream://v=-7;>=2;+=.1;%(300,0,523,659);v=-7;>=3;+=.1;%(800,0,659,783)",
                     "description": "conferences entry tone",
@@ -27440,6 +27611,15 @@
                     "default": 100,
                     "description": "crossbar ssl workers",
                     "type": "integer"
+                },
+                "stability_level": {
+                    "description": "crossbar stability_level",
+                    "enum": [
+                        "alpha",
+                        "beta",
+                        "stable"
+                    ],
+                    "type": "string"
                 },
                 "token_costs": {
                     "default": 1,
@@ -30531,6 +30711,11 @@
         "system_config.number_manager.other": {
             "description": "Schema for number_manager.other system_config",
             "properties": {
+                "default_country": {
+                    "default": "US",
+                    "description": "Country to search and acquire blocks of numbers from",
+                    "type": "string"
+                },
                 "endpoints": {
                     "description": "number_manager.other endpoints"
                 },
@@ -30763,6 +30948,15 @@
                                 "personal_parking": "Busy Lamp Field",
                                 "presence": "Busy Lamp Field",
                                 "speed_dial": "Speed Dial"
+                            }
+                        },
+                        "vtech": {
+                            "_": {
+                                "line": "line",
+                                "parking": "blf",
+                                "personal_parking": "blf",
+                                "presence": "presense",
+                                "speed_dial": "speed"
                             }
                         },
                         "yealink": {
@@ -31214,6 +31408,15 @@
                     "description": "speech asr api key",
                     "type": "string"
                 },
+                "asr_api_key_google": {
+                    "default": "",
+                    "description": "API key for Google Cloud Speech",
+                    "type": "string"
+                },
+                "asr_enable_word_time_offsets_google": {
+                    "description": "top result includes a list of words and the start and end time offsets",
+                    "type": "boolean"
+                },
                 "asr_locale": {
                     "default": "en-us",
                     "description": "speech asr default locale",
@@ -31229,6 +31432,10 @@
                     "description": "speech asr preferred content type",
                     "type": "string"
                 },
+                "asr_profanity_filter_google": {
+                    "description": "server will attempt to filter out profanities, replacing all but the initial character in each filtered word with asterisks",
+                    "type": "boolean"
+                },
                 "asr_provider": {
                     "default": "ispeech",
                     "description": "speech asr provider",
@@ -31237,6 +31444,11 @@
                 "asr_url": {
                     "default": "http://api.ispeech.org/api/json",
                     "description": "speech asr url",
+                    "type": "string"
+                },
+                "asr_url_google": {
+                    "default": "https://speech.googleapis.com/v1/speech:recognize",
+                    "description": "Google Cloud Speech API url",
                     "type": "string"
                 },
                 "temporary_storage_path": {
@@ -33360,6 +33572,12 @@
             "required": true,
             "type": "string"
         },
+        "ERROR_ID": {
+            "in": "path",
+            "name": "ERROR_ID",
+            "required": true,
+            "type": "string"
+        },
         "EXTENSION": {
             "in": "path",
             "name": "EXTENSION",
@@ -33403,6 +33621,12 @@
             "minLength": 32,
             "name": "GROUP_ID",
             "pattern": "^[0-9a-f]+$",
+            "required": true,
+            "type": "string"
+        },
+        "HANDLER_ID": {
+            "in": "path",
+            "name": "HANDLER_ID",
             "required": true,
             "type": "string"
         },
@@ -34528,6 +34752,63 @@
                     },
                     {
                         "$ref": "#/parameters/APP_ID"
+                    },
+                    {
+                        "$ref": "#/parameters/ACCOUNT_ID"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "request succeeded"
+                    }
+                }
+            }
+        },
+        "/accounts/{ACCOUNT_ID}/att_handlers_errors": {
+            "get": {
+                "parameters": [
+                    {
+                        "$ref": "#/parameters/auth_token_header"
+                    },
+                    {
+                        "$ref": "#/parameters/ACCOUNT_ID"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "request succeeded"
+                    }
+                }
+            }
+        },
+        "/accounts/{ACCOUNT_ID}/att_handlers_errors/handler/{HANDLER_ID}": {
+            "get": {
+                "parameters": [
+                    {
+                        "$ref": "#/parameters/auth_token_header"
+                    },
+                    {
+                        "$ref": "#/parameters/HANDLER_ID"
+                    },
+                    {
+                        "$ref": "#/parameters/ACCOUNT_ID"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "request succeeded"
+                    }
+                }
+            }
+        },
+        "/accounts/{ACCOUNT_ID}/att_handlers_errors/{ERROR_ID}": {
+            "get": {
+                "parameters": [
+                    {
+                        "$ref": "#/parameters/auth_token_header"
+                    },
+                    {
+                        "$ref": "#/parameters/ERROR_ID"
                     },
                     {
                         "$ref": "#/parameters/ACCOUNT_ID"
@@ -41522,6 +41803,23 @@
             }
         },
         "/accounts/{ACCOUNT_ID}/service_plans/current": {
+            "get": {
+                "parameters": [
+                    {
+                        "$ref": "#/parameters/auth_token_header"
+                    },
+                    {
+                        "$ref": "#/parameters/ACCOUNT_ID"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "request succeeded"
+                    }
+                }
+            }
+        },
+        "/accounts/{ACCOUNT_ID}/service_plans/editable": {
             "get": {
                 "parameters": [
                     {

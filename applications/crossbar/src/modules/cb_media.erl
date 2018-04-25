@@ -1,14 +1,12 @@
-%%%-------------------------------------------------------------------
+%%%-----------------------------------------------------------------------------
 %%% @copyright (C) 2011-2018, 2600Hz
-%%% @doc
-%%% Account module
-%%%
+%%% @doc Account module
 %%% Store/retrieve media files
 %%%
+%%%
+%%% @author James Aimonetti
 %%% @end
-%%% @contributors
-%%%   James Aimonetti
-%%%-------------------------------------------------------------------
+%%%-----------------------------------------------------------------------------
 -module(cb_media).
 
 -export([init/0
@@ -54,10 +52,14 @@
        ,kapps_config:get_ne_binary(?MOD_CONFIG_CAT, <<"normalization_format">>, <<"mp3">>)
        ).
 
-%%%===================================================================
+%%%=============================================================================
 %%% API
-%%%===================================================================
+%%%=============================================================================
 
+%%------------------------------------------------------------------------------
+%% @doc
+%% @end
+%%------------------------------------------------------------------------------
 -spec init() -> 'ok'.
 init() ->
     {'ok', _} = application:ensure_all_started('kazoo_media'),
@@ -75,15 +77,13 @@ init() ->
     _ = crossbar_bindings:bind(<<"*.execute.delete.media">>, ?MODULE, 'delete'),
     'ok'.
 
-%%--------------------------------------------------------------------
-%% @public
-%% @doc
-%% This function determines the verbs that are appropriate for the
-%% given Nouns.  IE: '/accounts/' can only accept GET and PUT
+%%------------------------------------------------------------------------------
+%% @doc This function determines the verbs that are appropriate for the
+%% given Nouns. For example `/accounts/' can only accept `GET' and `PUT'.
 %%
-%% Failure here returns 405
+%% Failure here returns `405 Method Not Allowed'.
 %% @end
-%%--------------------------------------------------------------------
+%%------------------------------------------------------------------------------
 
 -spec allowed_methods() -> http_methods().
 allowed_methods() ->
@@ -105,14 +105,11 @@ allowed_methods(?PROMPTS, _PromptId) ->
 allowed_methods(_MediaId, ?BIN_DATA) ->
     [?HTTP_GET, ?HTTP_POST].
 
-%%--------------------------------------------------------------------
-%% @public
-%% @doc
-%% This function determines if the provided list of Nouns are valid.
-%%
-%% Failure here returns 404
+%%------------------------------------------------------------------------------
+%% @doc This function determines if the provided list of Nouns are valid.
+%% Failure here returns `404 Not Found'.
 %% @end
-%%--------------------------------------------------------------------
+%%------------------------------------------------------------------------------
 
 -spec resource_exists() -> 'true'.
 resource_exists() -> 'true'.
@@ -162,13 +159,10 @@ authorize_media(Context, [{<<"media">>, _}, {<<"accounts">>, [AccountId]}], Acco
 authorize_media(_Context, _Nouns, _AccountId) ->
     'false'.
 
-%%--------------------------------------------------------------------
-%% @private
-%% @doc
-%% Add content types accepted and provided by this module
-%%
+%%------------------------------------------------------------------------------
+%% @doc Add content types accepted and provided by this module
 %% @end
-%%--------------------------------------------------------------------
+%%------------------------------------------------------------------------------
 -spec acceptable_content_types() -> kz_term:proplist().
 acceptable_content_types() ->
     ?MEDIA_MIME_TYPES.
@@ -210,14 +204,12 @@ content_types_accepted_for_upload(Context, ?HTTP_POST) ->
 content_types_accepted_for_upload(Context, _Verb) ->
     Context.
 
-%%--------------------------------------------------------------------
-%% @public
-%% @doc
-%% If you provide alternative languages, return a list of languages and optional
+%%------------------------------------------------------------------------------
+%% @doc If you provide alternative languages, return a list of languages and optional
 %% quality value:
-%% [<<"en">>, <<"en-gb;q=0.7">>, <<"da;q=0.5">>]
+%% `[<<"en">>, <<"en-gb;q=0.7">>, <<"da;q=0.5">>]'
 %% @end
-%%--------------------------------------------------------------------
+%%------------------------------------------------------------------------------
 
 -spec languages_provided(cb_context:context()) -> cb_context:context().
 languages_provided(Context) ->
@@ -231,15 +223,13 @@ languages_provided(Context, _Id) ->
 languages_provided(Context, _Id, _Path) ->
     Context.
 
-%%--------------------------------------------------------------------
-%% @private
-%% @doc
-%% This function determines if the parameters and content are correct
-%% for this request
+%%------------------------------------------------------------------------------
+%% @doc This function determines if the parameters and content are correct
+%% for this request.
 %%
-%% Failure here returns 400
+%% Failure here returns 400.
 %% @end
-%%--------------------------------------------------------------------
+%%------------------------------------------------------------------------------
 
 -spec validate(cb_context:context()) -> cb_context:context().
 validate(Context) ->
@@ -406,14 +396,11 @@ post_media_binary(Context, MediaId, 'undefined') ->
 post_media_binary(Context, MediaId, _AccountId) ->
     update_media_binary(Context, MediaId).
 
-create_update_tts(Context, CreateOrUpdate) ->
-    C1 = maybe_create_tts_media_doc(Context, CreateOrUpdate),
-    maybe_update_media_file(C1, CreateOrUpdate, is_tts_changed(cb_context:doc(C1)), cb_context:resp_status(C1)).
-
-maybe_create_tts_media_doc(Context, <<"create">>) ->
-    update_and_save_tts_doc(Context);
-maybe_create_tts_media_doc(Context, _) ->
-    Context.
+create_update_tts(Context, <<"create">>) ->
+    C1 = update_and_save_tts_doc(Context),
+    maybe_update_media_file(C1, <<"create">>, 'true', cb_context:resp_status(C1));
+create_update_tts(Context, <<"update">>) ->
+    maybe_update_media_file(Context, <<"update">>, is_tts_changed(cb_context:doc(Context)), cb_context:resp_status(Context)).
 
 -spec maybe_update_media_file(cb_context:context(), kz_term:ne_binary(), boolean(), crossbar_status()) ->
                                      cb_context:context().
@@ -424,10 +411,10 @@ maybe_update_media_file(Context, CreateOrUpdate, 'true', 'success') ->
 
     try kazoo_tts:create(Text, Voice) of
         {'error', Reason} ->
-            maybe_delete_tts(Context, kz_term:to_binary(Reason), CreateOrUpdate),
+            _ = maybe_delete_tts(Context, kz_term:to_binary(Reason), CreateOrUpdate),
             crossbar_util:response('error', kz_term:to_binary(Reason), Context);
         {'error', 'tts_provider_failure', Reason} ->
-            maybe_delete_tts(Context, kz_term:to_binary(Reason), CreateOrUpdate);
+            _ = maybe_delete_tts(Context, kz_term:to_binary(Reason), CreateOrUpdate);
         {'ok', ContentType, Content} ->
             MediaId = kz_doc:id(JObj),
             Headers = kz_json:from_list([{<<"content_type">>, ContentType}
@@ -436,10 +423,10 @@ maybe_update_media_file(Context, CreateOrUpdate, 'true', 'success') ->
             FileJObj = kz_json:from_list([{<<"headers">>, Headers}
                                          ,{<<"contents">>, Content}
                                          ]),
-            FileName = <<"text_to_speech_"
-                         ,(kz_term:to_binary(kz_time:now_s()))/binary
-                         ,".wav"
-                       >>,
+            FileName = list_to_binary(["text_to_speech_"
+                                      ,kz_term:to_binary(kz_time:now_s())
+                                      ,".wav"
+                                      ]),
             C1 = update_media_binary(cb_context:set_req_files(Context, [{FileName, FileJObj}]), MediaId),
             case cb_context:resp_status(C1) =:= 'success'
                 andalso CreateOrUpdate
@@ -503,12 +490,10 @@ delete(Context, _MediaId) ->
 delete(Context, MediaId, ?BIN_DATA) ->
     delete_media_binary(MediaId, Context, cb_context:account_id(Context)).
 
-%%--------------------------------------------------------------------
-%% @private
-%% @doc
-%% Attempt to load a summarized list of media
+%%------------------------------------------------------------------------------
+%% @doc Attempt to load a summarized list of media
 %% @end
-%%--------------------------------------------------------------------
+%%------------------------------------------------------------------------------
 
 -spec load_media_summary(cb_context:context()) -> cb_context:context().
 load_media_summary(Context) ->
@@ -646,13 +631,10 @@ language_start_key(_Context, Language, _Key) ->
 normalize_language_results(JObj, Acc) ->
     [kz_doc:id(JObj) | Acc].
 
-%%--------------------------------------------------------------------
-%% @private
-%% @doc
-%% Load prompt listing
+%%------------------------------------------------------------------------------
+%% @doc Load prompt listing
 %% @end
-%%--------------------------------------------------------------------
-
+%%------------------------------------------------------------------------------
 -spec load_available_prompts(cb_context:context()) ->
                                     cb_context:context().
 load_available_prompts(Context) ->
@@ -763,13 +745,10 @@ fix_prompt_start_keys_fold(Key, JObj) ->
     end.
 
 
-%%--------------------------------------------------------------------
-%% @private
-%% @doc
-%% Load a media document from the database
+%%------------------------------------------------------------------------------
+%% @doc Load a media document from the database
 %% @end
-%%--------------------------------------------------------------------
-
+%%------------------------------------------------------------------------------
 -spec load_media_meta(cb_context:context(), kz_term:ne_binary()) ->
                              cb_context:context().
 load_media_meta(Context, MediaId) ->
@@ -782,12 +761,10 @@ load_media_meta(Context, MediaId, 'undefined') ->
 load_media_meta(Context, MediaId, _AccountId) ->
     crossbar_doc:load(MediaId, Context, ?TYPE_CHECK_OPTION(kzd_media:type())).
 
-%%--------------------------------------------------------------------
-%% @private
+%%------------------------------------------------------------------------------
 %% @doc
-%%
 %% @end
-%%--------------------------------------------------------------------
+%%------------------------------------------------------------------------------
 -spec validate_request(kz_term:api_binary(), cb_context:context()) -> cb_context:context().
 validate_request(MediaId, Context) ->
     OnSuccess = fun(C) -> on_successful_validation(MediaId, C) end,
@@ -852,23 +829,19 @@ maybe_add_prompt_fields(Context) ->
             ]
     end.
 
-%%--------------------------------------------------------------------
-%% @private
-%% @doc
-%% Normalizes the results of a view
+%%------------------------------------------------------------------------------
+%% @doc Normalizes the results of a view.
 %% @end
-%%--------------------------------------------------------------------
+%%------------------------------------------------------------------------------
 -spec normalize_view_results(kz_json:object(), kz_json:objects()) ->
                                     kz_json:objects().
 normalize_view_results(JObj, Acc) ->
     [kz_json:get_value(<<"value">>, JObj)|Acc].
 
-%%--------------------------------------------------------------------
-%% @private
-%% @doc
-%% Load the binary attachment of a media doc
+%%------------------------------------------------------------------------------
+%% @doc Load the binary attachment of a media doc
 %% @end
-%%--------------------------------------------------------------------
+%%------------------------------------------------------------------------------
 -spec load_media_binary(cb_context:context(), path_token()) -> cb_context:context().
 load_media_binary(Context, MediaId) ->
     Context1 = load_media_meta(Context, MediaId),
@@ -891,13 +864,10 @@ load_media_binary(Context, MediaId) ->
         _Status -> Context1
     end.
 
-%%--------------------------------------------------------------------
-%% @private
-%% @doc
-%% Update the binary attachment of a media doc
+%%------------------------------------------------------------------------------
+%% @doc Update the binary attachment of a media doc
 %% @end
-%%--------------------------------------------------------------------
-
+%%------------------------------------------------------------------------------
 -spec update_media_binary(cb_context:context(), path_token()) ->
                                  cb_context:context().
 update_media_binary(Context, MediaId) ->
@@ -929,12 +899,10 @@ update_media_binary(Context, MediaId, [{Filename, FileObj}|Files]) ->
             Context1
     end.
 
-%%--------------------------------------------------------------------
-%% @private
-%% @doc
-%% Delete the binary attachment of a media doc
+%%------------------------------------------------------------------------------
+%% @doc Delete the binary attachment of a media doc
 %% @end
-%%--------------------------------------------------------------------
+%%------------------------------------------------------------------------------
 -spec delete_media_binary(path_token(), cb_context:context(), kz_term:api_binary()) -> cb_context:context().
 delete_media_binary(MediaId, Context, 'undefined') ->
     delete_media_binary(MediaId, cb_context:set_account_db(Context, ?KZ_MEDIA_DB), <<"ignore">>);

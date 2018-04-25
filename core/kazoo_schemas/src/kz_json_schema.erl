@@ -1,11 +1,9 @@
-%%%-------------------------------------------------------------------
-%%% @copyright (C) 2014-2018, 2600Hz INC
-%%% @doc
-%%% Module for interacting with JSON schema docs
+%%%-----------------------------------------------------------------------------
+%%% @copyright (C) 2014-2018, 2600Hz
+%%% @doc Module for interacting with JSON schema docs
+%%% @author James Aimonetti
 %%% @end
-%%% @contributors
-%%%   James Aimonetti
-%%%-------------------------------------------------------------------
+%%%-----------------------------------------------------------------------------
 -module(kz_json_schema).
 
 -export([add_defaults/2
@@ -23,7 +21,10 @@
 -export([flatten/1]).
 -endif.
 
--export_type([validation_error/0, validation_errors/0]).
+-export_type([validation_error/0
+             ,validation_errors/0
+             ,extra_validator_options/0
+             ]).
 
 -include_lib("kazoo_stdlib/include/kz_types.hrl").
 -include_lib("kazoo_stdlib/include/kz_databases.hrl").
@@ -34,6 +35,8 @@
 -type extra_validator() :: fun((jesse:json_term(), jesse_state:state()) -> jesse_state:state()).
 -type validator_option() :: 'use_defaults' | 'apply_defaults_to_empty_objects'.
 -type validator_options() :: [validator_option()].
+-type extra_validator_option() :: {'stability_level', kz_term:ne_binary()}.
+-type extra_validator_options() :: [extra_validator_option()].
 
 -type jesse_option() :: {'parser_fun', fun((_) -> _)} |
 {'error_handler', fun((jesse_error:error_reason(), [jesse_error:error_reason()], non_neg_integer()) ->
@@ -43,18 +46,25 @@
 {'schema_loader_fun', fun((kz_term:ne_binary()) -> {'ok', kz_json:object()} | kz_json:object() | 'not_found')} |
 {'extra_validator', extra_validator()} |
 {'setter_fun', fun((kz_json:path(), kz_json:json_term(), kz_json:object()) -> kz_json:object())} |
-{'validator_options', validator_options()}.
+{'validator_options', validator_options()} |
+{'extra_validator_options', extra_validator_options()}.
 
 -type jesse_options() :: [jesse_option()].
 
 -define(DEFAULT_OPTIONS, [{'schema_loader_fun', fun load/1}
                          ,{'allowed_errors', 'infinity'}
-                         ,{'extra_validator', fun kz_json_schema_extensions:extra_validator/2}
                          ,{'setter_fun', fun set_value/3}
                          ,{'validator_options', ['use_defaults'
                                                 ,'apply_defaults_to_empty_objects'
                                                 ]}
                          ]).
+
+setup_extra_validator(Options) ->
+    ExtraOptions = props:get_value('extra_validator_options', Options, []),
+    Fun = fun(Value, State) ->
+                  kz_json_schema_extensions:extra_validator(Value, State, ExtraOptions)
+          end,
+    props:set_value({'extra_validator', Fun}, Options).
 
 -ifdef(TEST).
 load(Schema) -> fload(Schema).
@@ -152,7 +162,8 @@ validate(<<_/binary>> = Schema, DataJObj, Options) ->
     {'ok', SchemaJObj} = Fun(Schema),
     validate(SchemaJObj, DataJObj, props:insert_values([{'schema_loader_fun', ?DEFAULT_LOADER}], Options));
 validate(SchemaJObj, DataJObj, Options0) when is_list(Options0) ->
-    Options = props:insert_values(?DEFAULT_OPTIONS, Options0),
+    Options1 = props:insert_values(?DEFAULT_OPTIONS, Options0),
+    Options = setup_extra_validator(Options1),
     jesse:validate_with_schema(SchemaJObj, DataJObj, Options).
 
 -type option() :: {'version', kz_term:ne_binary()} |
@@ -650,12 +661,10 @@ error_to_jobj({'schema_invalid'
 error_to_jobj(Other, _Options) ->
     throw({'schema_error', Other}).
 
-%%--------------------------------------------------------------------
-%% @public
-%% @doc
-%% Add a validation error to the list of request errors
+%%------------------------------------------------------------------------------
+%% @doc Add a validation error to the list of request errors
 %% @end
-%%--------------------------------------------------------------------
+%%------------------------------------------------------------------------------
 -spec validation_error(kz_json:path(), kz_term:ne_binary(), kz_json:object(), options()) ->
                                   validation_error().
 validation_error(Property, <<"type">>=C, Message, Options) ->
@@ -838,6 +847,7 @@ default_object(Schema) ->
     catch
         _Ex:_Err ->
             lager:debug("exception getting schema default ~p : ~p", [_Ex, _Err]),
+            kz_util:log_stacktrace(erlang:get_stacktrace()),
             kz_json:new()
     end.
 
@@ -871,4 +881,3 @@ fix_path(Path) ->
 -spec fix_el(kz_json:key() | non_neg_integer()) -> kz_json:key() | non_neg_integer().
 fix_el(I) when is_integer(I) -> I+1;
 fix_el(El) -> El.
-

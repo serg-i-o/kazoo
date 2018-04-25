@@ -42,7 +42,7 @@ ERLC_OPTS += -Iinclude -Isrc -I../ +'{parse_transform, lager_transform}'
 ERLC_OPTS += -Werror +warn_export_all +warn_unused_import +warn_unused_vars +warn_missing_spec +deterministic
 #ERLC_OPTS += +warn_untyped_record
 
-ELIBS ?= $(if $(ERL_LIBS), $(ERL_LIBS):)$(ROOT)/deps:$(ROOT)/core:$(ROOT)/applications
+ELIBS ?= $(if $(ERL_LIBS),$(ERL_LIBS):)$(ROOT)/deps:$(ROOT)/core:$(ROOT)/applications
 
 EBINS += $(ROOT)/deps/lager/ebin
 
@@ -55,6 +55,8 @@ DEPS_RULES = .deps.mk
 comma := ,
 empty :=
 space := $(empty) $(empty)
+
+KZ_VERSION ?= $(shell $(ROOT)/scripts/next_version)
 
 ## SOURCES provides a way to specify compilation order (left to right)
 SOURCES     ?= $(wildcard src/*.erl) $(wildcard src/*/*.erl)
@@ -76,7 +78,8 @@ compile: $(COMPILE_MOAR) ebin/$(PROJECT).app json depend $(BEAMS)
 ebin/$(PROJECT).app:
 	@mkdir -p ebin/
 	ERL_LIBS=$(ELIBS) erlc -v $(ERLC_OPTS) $(PA) -o ebin/ $(SOURCES)
-	@sed "s/{modules,\s*\[\]}/{modules, \[$(MODULES)\]}/" src/$(PROJECT).app.src > $@
+	@sed "s/{modules,\s*\[\]}/{modules, \[$(MODULES)\]}/" src/$(PROJECT).app.src \
+	| sed -e "s/{vsn,\([^}]*\)}/\{vsn,\"$(KZ_VERSION)\"}/g" > $@
 
 ebin/%.beam: src/%.erl
 	ERL_LIBS=$(ELIBS) erlc -v $(ERLC_OPTS) $(PA) -o ebin/ $<
@@ -174,7 +177,7 @@ FMT = $(ROOT)/make/erlang-formatter-master/fmt.sh
 $(FMT):
 	wget 'https://codeload.github.com/fenollp/erlang-formatter/tar.gz/master' -O - | tar xvz -C $(ROOT)/make/
 
-fmt: TO_FMT ?= $(shell find src include -iname '*.erl' -or -iname '*.hrl' -or -iname '*.escript")
+fmt: TO_FMT ?= $(shell find src include -iname '*.erl' -or -iname '*.hrl' -or -iname '*.escript')
 fmt: $(FMT)
 	@$(FMT) $(TO_FMT)
 

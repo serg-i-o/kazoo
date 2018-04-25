@@ -201,6 +201,7 @@ pages:
     - 'Conference': 'applications/callflow/doc/conference.md'
     - 'Temporal Routes (Time of Day)': 'applications/callflow/doc/temporal_route.md'
     - 'Webhooks': 'applications/callflow/doc/webhooks.md'
+    - 'EDR Event': 'applications/callflow/doc/edr.md'
     - 'Branch on object setting': 'applications/callflow/doc/cf_branch_variable.md'
     - 'Preflows': 'applications/callflow/doc/preflow.md'
     - 'Resources': 'applications/callflow/doc/resources.md'
@@ -397,6 +398,7 @@ pages:
   - 'Kazoo Speech':
       - 'core/kazoo_speech/doc/README.md'
       - 'core/kazoo_speech/doc/ispeech.md'
+      - 'core/kazoo_speech/doc/google.md'
   - 'Kazoo MODB':
     - 'core/kazoo_modb/doc/README.md'
   - 'Kazoo CouchDB':
@@ -453,3 +455,4 @@ pages:
   - 'Using Dialyzer': 'doc/engineering/dialyzer.md'
   - 'Webhooks': 'doc/engineering/webhooks.md'
   - 'Attachments': 'core/kazoo_attachments/README.md'
+  - 'Attachment Handlers Errors': 'applications/crossbar/doc/att_handlers_errors.md'

@@ -1,11 +1,9 @@
-%%%-------------------------------------------------------------------
+%%%-----------------------------------------------------------------------------
 %%% @copyright (C) 2013-2018, 2600Hz
 %%% @doc
-%%%
+%%% @author Peter Defebvre
 %%% @end
-%%% @contributors
-%%%   Peter Defebvre
-%%%-------------------------------------------------------------------
+%%%-----------------------------------------------------------------------------
 -module(webhooks_util).
 
 -export([from_json/1
@@ -30,6 +28,7 @@
 
         ,reenable/2
         ,init_metadata/2
+        ,available_events/0
         ]).
 
 %% ETS Management
@@ -229,9 +228,11 @@ do_fire(#webhook{uri = ?NE_BINARY = URI
                 } = Hook, EventId, JObj) ->
     lager:debug("sending hook ~s(~s) with interaction id ~s via 'get' (retries ~b): ~s", [_HookEvent, _HookId, EventId, Retries, URI]),
 
-    Url = kz_term:to_list(<<(kz_term:to_binary(URI))/binary
-                           ,(kz_term:to_binary([$? | kz_http_util:json_to_querystring(JObj)]))/binary
-                          >>),
+    Url = kz_term:to_list(
+            list_to_binary([kz_term:to_binary(URI)
+                           ,kz_term:to_binary([$? | kz_http_util:json_to_querystring(JObj)])
+                           ])
+           ),
     Headers = ?HTTP_REQ_HEADERS(Hook),
     Debug = debug_req(Hook, EventId, URI, Headers, <<>>),
     Fired = kz_http:get(Url, Headers, ?HTTP_OPTS),
@@ -303,10 +304,14 @@ failed_hook(#webhook{hook_id = HookId
     DebugJObj = debug_resp(Resp, Debug, Retries),
     save_attempt(AccountId, DebugJObj).
 
-%%%===================================================================
+%%%=============================================================================
 %%% Internal functions
-%%%===================================================================
+%%%=============================================================================
 
+%%------------------------------------------------------------------------------
+%% @doc
+%% @end
+%%------------------------------------------------------------------------------
 -spec save_attempt(kz_term:api_binary(), kz_json:object()) -> 'ok'.
 save_attempt(AccountId, Attempt) ->
     Now = kz_time:now_s(),
@@ -399,10 +404,17 @@ fix_value(O) -> kz_term:to_lower_binary(O).
 
 -spec fix_error_value(atom() | {atom(), atom()}) -> kz_term:ne_binary().
 fix_error_value({E, R}) ->
+<<<<<<< HEAD
     <<(kz_term:to_binary(E))/binary
      ,": "
      ,(kz_term:to_binary(R))/binary
     >>;
+=======
+    list_to_binary([kz_term:to_binary(E)
+                   ,": "
+                   ,kz_term:to_binary(R)
+                   ]);
+>>>>>>> 2600hz/master
 fix_error_value(E) ->
     kz_term:to_binary(E).
 

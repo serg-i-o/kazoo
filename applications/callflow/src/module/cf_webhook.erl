@@ -1,11 +1,9 @@
-%%%-------------------------------------------------------------------
-%%% @copyright (C) 2011-2018, 2600Hz INC
+%%%-----------------------------------------------------------------------------
+%%% @copyright (C) 2011-2018, 2600Hz
 %%% @doc
-%%%
+%%% @author Peter Defebvre
 %%% @end
-%%% @contributors
-%%%   Peter Defebvre
-%%%-------------------------------------------------------------------
+%%%-----------------------------------------------------------------------------
 -module(cf_webhook).
 
 -behaviour(gen_cf_action).
@@ -15,12 +13,10 @@
 -export([handle/2]).
 -export([handle_webhook/2]).
 
-%%--------------------------------------------------------------------
-%% @public
-%% @doc
-%% Entry point for this module
+%%------------------------------------------------------------------------------
+%% @doc Entry point for this module
 %% @end
-%%--------------------------------------------------------------------
+%%------------------------------------------------------------------------------
 -spec handle(kz_json:object(), kapps_call:call()) -> 'ok'.
 handle(Data, Call) ->
     _ = handle_webhook(Data, Call),
@@ -53,7 +49,7 @@ set_hook(Data, CallJObj) ->
     kz_json:from_list(
       [{<<"_id">>, kz_term:to_binary(Now)}
       ,{<<"uri">>, kz_json:get_ne_binary_value(<<"uri">>, Data)}
-      ,{<<"hook">>, <<"callflow">>}
+      ,{<<"hook">>, <<"notifications">>}
       ,{<<"http_verb">>, kz_json:get_ne_binary_value(<<"http_verb">>, Data)}
       ,{<<"retries">>, kz_json:get_integer_value(<<"retries">>, Data)}
       ,{<<"pvt_account_id">>, kz_json:get_ne_binary_value(<<"account_id">>, CallJObj)}
