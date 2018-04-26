@@ -1,0 +1,41 @@
+{
+    "_id": "_design/centrix",
+    "language": "javascript",
+    "views": {
+        "crossbar_listing": {
+            "map": [
+                "function(doc) {",
+                "  if (doc.pvt_type != 'centrix' || doc.pvt_deleted)",
+                "    return;",
+                "  emit(doc._id, {",
+                "    'id': doc._id,",
+                "    'name': doc.name,",
+                "    'description': doc.description,",
+                "    'callflow_id': doc.callflow_id,",
+                "    'type': doc.type",
+                "  });",
+                "}"
+            ]
+        },
+        "user_accounts": {
+            "map": [
+                "function(doc) {",
+                "  if (doc.pvt_deleted)",
+                "    return;",
+                "  if (doc.pvt_type === 'centrix_account') {",
+                "    emit(doc.centrix_id, {",
+                "      'id': doc._id,",
+                "      'centrix_id': doc.centrix_id,",
+                "      'number': doc.number_offnet,",
+                "      'type': doc.type",
+                "    })",
+                "  } else if (doc.pvt_type === 'centrix' && doc.centrix_accounts) {",
+                "       return",
+                "  } else {",
+                "    return",
+                "  }",
+                "}"
+            ]
+        }
+    }
+}

@@ -1,0 +1,20 @@
+{
+    "$schema": "http://json-schema.org/draft-04/schema#",
+    "_id": "centrix_accounts",
+    "description": "Schema centrix user accounts",
+    "properties": {
+        "centrix_id": {
+            "description": "Centrix service id",
+            "type": "string"
+        },
+        "number_offnet": {
+            "description": "Offnet number",
+            "type": "string"
+        }
+    },
+    "required": [
+        "number_offnet",
+        "centrix_id"
+    ],
+    "type": "object"
+}

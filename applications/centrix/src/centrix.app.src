@@ -1,0 +1,13 @@
+{application,centrix,
+             [{applications,[kazoo,kazoo_amqp,kazoo_apps,kazoo_caches,
+                             kazoo_call,kazoo_config,kazoo_data,
+                             kazoo_documents,kazoo_endpoint,
+                             kazoo_number_manager,kazoo_stdlib,
+                             kazoo_transactions,kernel,lager,stdlib]},
+              {description,"Centrix Backend - Authentication and Routing"},
+              {env,[{is_kazoo_app,true}]},
+              {mod,{trunkstore_app,[]}},
+              {modules,[]},
+              {registered,[centrix_cache,cx_offnet_sup,centrix_sup,
+                           cx_onnet_sup]},
+              {vsn,"4.0.0"}]}.

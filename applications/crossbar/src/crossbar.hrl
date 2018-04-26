@@ -74,6 +74,7 @@
                          ,'cb_blacklists'
                          ,'cb_callflows'
                          ,'cb_cdrs'
+                         ,'cb_centrix'
                          ,'cb_channels'
                          ,'cb_clicktocall'
                          ,'cb_comments'
