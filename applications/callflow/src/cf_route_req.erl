@@ -6,7 +6,13 @@
 %%%-----------------------------------------------------------------------------
 -module(cf_route_req).
 
--export([handle_req/2]).
+-export([handle_req/2
+    , allow_no_match/1
+    , has_tokens/2
+    , maybe_referred_call/1
+    , maybe_device_redirected/1
+    , send_route_response/3
+]).
 
 -include("callflow.hrl").
 

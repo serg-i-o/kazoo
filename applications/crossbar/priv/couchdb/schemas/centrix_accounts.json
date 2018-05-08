@@ -10,11 +10,16 @@
         "number_offnet": {
             "description": "Offnet number",
             "type": "string"
+        },
+        "user_id": {
+            "description": "The ID of single user for the centrix account",
+            "type": "string"
         }
     },
     "required": [
         "number_offnet",
-        "centrix_id"
+        "centrix_id",
+        "user_id"
     ],
     "type": "object"
 }

@@ -21,17 +21,13 @@
 -define(ORIGIN_BINDINGS, [[{'type', <<"account">>}]
                          ,[{'type', <<"user">>}]
                          ,[{'type', <<"callflow">>}]
-                         ,[{'type', <<"device">>}]
                          ,[{'type', <<"number">>}]
                          ]).
 
--define(CACHE_PROPS, [{'origin_bindings', ?ORIGIN_BINDINGS}
-                     ,'new_node_flush'
-                     ,'channel_reconnect_flush'
-                     ]).
+-define(CACHE_PROPS, [{'origin_bindings', ?ORIGIN_BINDINGS}]).
 
 -define(CHILDREN, [?CACHE_ARGS(?CACHE_NAME, ?CACHE_PROPS)
-                  ,?WORKER('centrix_listener')
+                  ,?WORKER('cx_listener')
                   ]).
 
 %%==============================================================================

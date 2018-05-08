@@ -38,7 +38,7 @@
 -define(CENTRIX_ACCOUNT_SCHEMA_NAME, <<"centrix_accounts">>).
 
 -define(CENTRIX_VIEW, <<"centrix/crossbar_listing">>).
--define(CENTRIX_USER_ACCOUNTS_VIEW, <<"centrix/user_accounts">>).
+-define(CENTRIX_ACCOUNTS_VIEW, <<"centrix/cx_accounts_by_centrix_id">>).
 
 %%%=============================================================================
 %%% API
@@ -310,7 +310,7 @@ validate_centrix(?HTTP_GET, Context, [CentrixId]) ->
     crossbar_doc:load(CentrixId, Context, ?TYPE_CHECK_OPTION(?TYPE_CENTRIX));
 validate_centrix(?HTTP_DELETE, Context, [CentrixId]) ->
     io:format("\n~p.validate_centrix/3: [CentrixId]\nMethod=~p\nPathTokens=~p\n",[?MODULE,?HTTP_DELETE,[CentrixId]]),
-    crossbar_doc:load_view(?CENTRIX_USER_ACCOUNTS_VIEW, [{'key', CentrixId}], Context);
+    crossbar_doc:load_view(?CENTRIX_ACCOUNTS_VIEW, [{'key', CentrixId}], Context);
 validate_centrix(?HTTP_POST, Context, [CentrixId]) ->
     io:format("\n~p.validate_centrix/3: [CentrixId]\nMethod=~p\nPathTokens=~p\n",[?MODULE,?HTTP_POST,[CentrixId]]),
     validate_doc(CentrixId, ?TYPE_CENTRIX, Context);
@@ -322,7 +322,7 @@ validate_centrix(?HTTP_PATCH, Context, [CentrixId]) ->
 validate_centrix(?HTTP_GET, Context, [CentrixId, ?CENTRIX_ACCOUNT_SCHEMA_NAME]) ->
     io:format("\n~p.validate_centrix/3: [CentrixId, <<\"centrix_accounts\">>]\nMethod=~p\nPathTokens=~p\nOptions=~p\n",
         [?MODULE,?HTTP_GET,[CentrixId,?CENTRIX_ACCOUNT_SCHEMA_NAME],[{'key', CentrixId}]]),
-    crossbar_doc:load_view(?CENTRIX_USER_ACCOUNTS_VIEW, [{'key', CentrixId}], Context);
+    crossbar_doc:load_view(?CENTRIX_ACCOUNTS_VIEW, [{'key', CentrixId}], Context);
 validate_centrix(?HTTP_PUT, Context, [CentrixId, ?CENTRIX_ACCOUNT_SCHEMA_NAME]) ->
     io:format("\n~p.validate_centrix/3: [CentrixId, <<\"centrix_accounts\">>]\nMethod=~p\nPathTokens=~p\n",
         [?MODULE,?HTTP_PUT,[CentrixId,?CENTRIX_ACCOUNT_SCHEMA_NAME]]),

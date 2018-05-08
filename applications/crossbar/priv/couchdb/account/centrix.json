@@ -17,23 +17,35 @@
                 "}"
             ]
         },
-        "user_accounts": {
+        "cx_accounts_by_centrix_id": {
             "map": [
                 "function(doc) {",
-                "  if (doc.pvt_deleted)",
+                "  if (doc.pvt_type != 'centrix_account' || doc.pvt_deleted)",
                 "    return;",
-                "  if (doc.pvt_type === 'centrix_account') {",
-                "    emit(doc.centrix_id, {",
-                "      'id': doc._id,",
-                "      'centrix_id': doc.centrix_id,",
-                "      'number': doc.number_offnet,",
-                "      'type': doc.type",
-                "    })",
-                "  } else if (doc.pvt_type === 'centrix' && doc.centrix_accounts) {",
-                "       return",
-                "  } else {",
-                "    return",
-                "  }",
+                "  emit(doc.centrix_id, {",
+                "    'id': doc._id,",
+                "    'centrix_id': doc.centrix_id,",
+                "    'username': doc.username,",
+                "    'user_id': doc.user_id,",
+                "    'number': doc.number_offnet,",
+                "    'type': doc.type",
+                "  });",
+                "}"
+            ]
+        },
+        "cx_accounts_by_number_offnet": {
+            "map": [
+                "function(doc) {",
+                "  if (doc.pvt_type != 'centrix_account' || doc.pvt_deleted)",
+                "    return;",
+                "  emit(doc.number_offnet, {",
+                "    'id': doc._id,",
+                "    'centrix_id': doc.centrix_id,",
+                "    'username': doc.username,",
+                "    'user_id': doc.user_id,",
+                "    'number': doc.number_offnet,",
+                "    'type': doc.type",
+                "  });",
                 "}"
             ]
         }
