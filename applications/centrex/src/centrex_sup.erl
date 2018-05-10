@@ -4,7 +4,7 @@
 %%% @author James Aimonetti
 %%% @end
 %%%-----------------------------------------------------------------------------
--module(centrix_sup).
+-module(centrex_sup).
 
 -behaviour(supervisor).
 
@@ -14,7 +14,7 @@
 %% Supervisor callbacks
 -export([init/1]).
 
--include("centrix.hrl").
+-include("centrex.hrl").
 
 -define(SERVER, ?MODULE).
 

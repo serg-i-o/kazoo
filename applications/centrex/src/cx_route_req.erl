@@ -1,6 +1,6 @@
 %%%-----------------------------------------------------------------------------
 %%% @copyright (C) 2011-2018, 2600Hz
-%%% @doc Handler for route requests, responds if Callflows match.
+%%% @doc Handler for route requests, responds if centrex Callflows match.
 %%% @author Karl Anderson
 %%% @end
 %%%-----------------------------------------------------------------------------
@@ -8,7 +8,7 @@
 
 -export([handle_req/2]).
 
--include("centrix.hrl").
+-include("centrex.hrl").
 %%-include("callflow.hrl").
 
 -define(DEFAULT_METAFLOWS(AccountId)
@@ -17,7 +17,7 @@
 
 -define(DEFAULT_ROUTE_WIN_TIMEOUT, 3000).
 -define(ROUTE_WIN_TIMEOUT_KEY, <<"route_win_timeout">>).
-%% TODO Create centrix system_config section
+%% TODO Create centrex system_config section
 -define(ROUTE_WIN_TIMEOUT, kapps_config:get_integer(?CONFIG_CAT, ?ROUTE_WIN_TIMEOUT_KEY, ?DEFAULT_ROUTE_WIN_TIMEOUT)).
 
 -spec handle_req(kz_json:object(), kz_term:proplist()) -> 'ok'.
@@ -32,7 +32,7 @@ handle_req(JObj, Props) ->
                ],
     Call = kapps_call:exec(Routines, kapps_call:from_route_req(JObj)),
     io:format("\n~p.handle_req/2:\nCallId=~p\nProps=~p\n",[?MODULE,kz_doc:id(Call),Props]),
-    case centrix_maintenance:is_centrix_account(Call)
+    case centrex_maintenance:is_centrex_account(Call)
     of
         'true' ->
             io:format("received request ~s asking if callflows can route the call to ~s\n"
@@ -42,7 +42,7 @@ handle_req(JObj, Props) ->
                       ,[kapi_route:fetch_id(JObj), kapps_call:request_user(Call)]
                       ),
             AllowNoMatch = cf_route_req:allow_no_match(Call),
-            case cx_flow:lookup_centrix_callflow(Call) of
+            case cx_flow:lookup_centrex_callflow(Call) of
                 %% if NoMatch is false then allow the callflow or if it is true and we are able allowed
                 %% to use it for this call
                 {'ok', Flow, NoMatch} when (not NoMatch)
@@ -162,7 +162,7 @@ maybe_reply_to_req(JObj, Props, Call, Flow, NoMatch) ->
 %%    end.
 
 %%%%------------------------------------------------------------------------------
-%%%% @doc Determine if centrix callflow should respond to a route request.
+%%%% @doc Determine if centrex callflow should respond to a route request.
 %%%% @end
 %%%%------------------------------------------------------------------------------
 %%-spec callflow_should_respond(kapps_call:call()) -> boolean().

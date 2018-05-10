@@ -3,10 +3,10 @@
 %%% @doc
 %%% @end
 %%%-----------------------------------------------------------------------------
--module(kzd_centrix_accounts).
+-module(kzd_centrex_accounts).
 
 -export([new/0]).
--export([centrix_id/1, centrix_id/2, set_centrix_id/2]).
+-export([centrex_id/1, centrex_id/2, set_centrex_id/2]).
 -export([user_id/1, user_id/2, set_user_id/2]).
 -export([number_offnet/1, number_offnet/2, set_number_offnet/2]).
 
@@ -16,23 +16,23 @@
 -type doc() :: kz_json:object().
 -export_type([doc/0]).
 
--define(SCHEMA, <<"centrix_accounts">>).
+-define(SCHEMA, <<"centrex_accounts">>).
 
 -spec new() -> doc().
 new() ->
     kz_json_schema:default_object(?SCHEMA).
 
--spec centrix_id(doc()) -> kz_term:api_ne_binary().
-centrix_id(Doc) ->
-    centrix_id(Doc, 'undefined').
+-spec centrex_id(doc()) -> kz_term:api_ne_binary().
+centrex_id(Doc) ->
+    centrex_id(Doc, 'undefined').
 
--spec centrix_id(doc(), Default) -> kz_term:ne_binary() | Default.
-centrix_id(Doc, Default) ->
-    kz_json:get_ne_binary_value([<<"centrix_id">>], Doc, Default).
+-spec centrex_id(doc(), Default) -> kz_term:ne_binary() | Default.
+centrex_id(Doc, Default) ->
+    kz_json:get_ne_binary_value([<<"centrex_id">>], Doc, Default).
 
--spec set_centrix_id(doc(), kz_term:ne_binary()) -> doc().
-set_centrix_id(Doc, CentrixId) ->
-    kz_json:set_value([<<"centrix_id">>], CentrixId, Doc).
+-spec set_centrex_id(doc(), kz_term:ne_binary()) -> doc().
+set_centrex_id(Doc, CentrexId) ->
+    kz_json:set_value([<<"centrex_id">>], CentrexId, Doc).
 
 
 -spec user_id(doc()) -> kz_term:api_ne_binary().

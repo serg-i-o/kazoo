@@ -1,11 +1,11 @@
 {
-    "_id": "_design/centrix",
+    "_id": "_design/centrex",
     "language": "javascript",
     "views": {
         "crossbar_listing": {
             "map": [
                 "function(doc) {",
-                "  if (doc.pvt_type != 'centrix' || doc.pvt_deleted)",
+                "  if (doc.pvt_type != 'centrex' || doc.pvt_deleted)",
                 "    return;",
                 "  emit(doc._id, {",
                 "    'id': doc._id,",
@@ -17,14 +17,14 @@
                 "}"
             ]
         },
-        "cx_accounts_by_centrix_id": {
+        "cx_accounts_by_centrex_id": {
             "map": [
                 "function(doc) {",
-                "  if (doc.pvt_type != 'centrix_account' || doc.pvt_deleted)",
+                "  if (doc.pvt_type != 'centrex_account' || doc.pvt_deleted)",
                 "    return;",
-                "  emit(doc.centrix_id, {",
+                "  emit(doc.centrex_id, {",
                 "    'id': doc._id,",
-                "    'centrix_id': doc.centrix_id,",
+                "    'centrex_id': doc.centrex_id,",
                 "    'username': doc.username,",
                 "    'user_id': doc.user_id,",
                 "    'number': doc.number_offnet,",
@@ -36,11 +36,11 @@
         "cx_accounts_by_number_offnet": {
             "map": [
                 "function(doc) {",
-                "  if (doc.pvt_type != 'centrix_account' || doc.pvt_deleted)",
+                "  if (doc.pvt_type != 'centrex_account' || doc.pvt_deleted)",
                 "    return;",
                 "  emit(doc.number_offnet, {",
                 "    'id': doc._id,",
-                "    'centrix_id': doc.centrix_id,",
+                "    'centrex_id': doc.centrex_id,",
                 "    'username': doc.username,",
                 "    'user_id': doc.user_id,",
                 "    'number': doc.number_offnet,",

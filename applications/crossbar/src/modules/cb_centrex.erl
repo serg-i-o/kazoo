@@ -5,7 +5,7 @@
 %%% @author James Aimonetti
 %%% @end
 %%%-----------------------------------------------------------------------------
--module(cb_centrix).
+-module(cb_centrex).
 
 -export([init/0
 %%        ,authenticate/1
@@ -32,13 +32,13 @@
 
 -include("crossbar.hrl").
 
--define(TYPE_CENTRIX, <<"centrix">>).
--define(TYPE_CENTRIX_USER_ACCOUNT, <<"centrix_account">>).
--define(CENTRIX_SCHEMA_NAME, <<"centrix">>).
--define(CENTRIX_ACCOUNT_SCHEMA_NAME, <<"centrix_accounts">>).
+-define(TYPE_CENTREX, <<"centrex">>).
+-define(TYPE_CENTREX_USER_ACCOUNT, <<"centrex_account">>).
+-define(CENTREX_SCHEMA_NAME, <<"centrex">>).
+-define(CENTREX_ACCOUNT_SCHEMA_NAME, <<"centrex_accounts">>).
 
--define(CENTRIX_VIEW, <<"centrix/crossbar_listing">>).
--define(CENTRIX_ACCOUNTS_VIEW, <<"centrix/cx_accounts_by_centrix_id">>).
+-define(CENTREX_VIEW, <<"centrex/crossbar_listing">>).
+-define(CENTREX_ACCOUNTS_VIEW, <<"centrex/cx_accounts_by_centrex_id">>).
 
 %%%=============================================================================
 %%% API
@@ -52,23 +52,23 @@
 init() ->
 %%    _ = crossbar_bindings:bind(<<"*.authenticate">>, ?MODULE, 'authenticate'),
 %%    _ = crossbar_bindings:bind(<<"*.authorize">>, ?MODULE, 'authorize'),
-    _ = crossbar_bindings:bind(<<"*.allowed_methods.centrix">>, ?MODULE, 'allowed_methods'),
-    _ = crossbar_bindings:bind(<<"*.resource_exists.centrix">>, ?MODULE, 'resource_exists'),
-%%    _ = crossbar_bindings:bind(<<"*.content_types_provided.centrix">>, ?MODULE, 'content_types_provided'),
-%%    _ = crossbar_bindings:bind(<<"*.content_types_accepted.centrix">>, ?MODULE, 'content_types_accepted'),
-%%    _ = crossbar_bindings:bind(<<"*.languages_provided.centrix">>, ?MODULE, 'languages_provided'),
-%%    _ = crossbar_bindings:bind(<<"*.charsets_provided.centrix">>, ?MODULE, 'charsets_provided'),
-%%    _ = crossbar_bindings:bind(<<"*.encodings_provided.centrix">>, ?MODULE, 'encodings_provided'),
-%%    _ = crossbar_bindings:bind(<<"*.validate_resource.centrix">>, ?MODULE, 'validate_resource'),
-    _ = crossbar_bindings:bind(<<"*.validate.centrix">>, ?MODULE, 'validate'),
+    _ = crossbar_bindings:bind(<<"*.allowed_methods.centrex">>, ?MODULE, 'allowed_methods'),
+    _ = crossbar_bindings:bind(<<"*.resource_exists.centrex">>, ?MODULE, 'resource_exists'),
+%%    _ = crossbar_bindings:bind(<<"*.content_types_provided.centrex">>, ?MODULE, 'content_types_provided'),
+%%    _ = crossbar_bindings:bind(<<"*.content_types_accepted.centrex">>, ?MODULE, 'content_types_accepted'),
+%%    _ = crossbar_bindings:bind(<<"*.languages_provided.centrex">>, ?MODULE, 'languages_provided'),
+%%    _ = crossbar_bindings:bind(<<"*.charsets_provided.centrex">>, ?MODULE, 'charsets_provided'),
+%%    _ = crossbar_bindings:bind(<<"*.encodings_provided.centrex">>, ?MODULE, 'encodings_provided'),
+%%    _ = crossbar_bindings:bind(<<"*.validate_resource.centrex">>, ?MODULE, 'validate_resource'),
+    _ = crossbar_bindings:bind(<<"*.validate.centrex">>, ?MODULE, 'validate'),
 %%    _ = crossbar_bindings:bind(<<"*.billing">>, ?MODULE, 'billing'),
-%%    _ = crossbar_bindings:bind(<<"*.execute.get.centrix">>, ?MODULE, 'get'),
-    _ = crossbar_bindings:bind(<<"*.execute.put.centrix">>, ?MODULE, 'save'),
-    _ = crossbar_bindings:bind(<<"*.execute.post.centrix">>, ?MODULE, 'save'),
-    _ = crossbar_bindings:bind(<<"*.execute.patch.centrix">>, ?MODULE, 'save'),
-    _ = crossbar_bindings:bind(<<"*.execute.delete.centrix">>, ?MODULE, 'delete'),
-    _ = crossbar_bindings:bind(<<"*.etag.centrix">>, ?MODULE, 'etag'),
-    _ = crossbar_bindings:bind(<<"*.expires.centrix">>, ?MODULE, 'expires'),
+%%    _ = crossbar_bindings:bind(<<"*.execute.get.centrex">>, ?MODULE, 'get'),
+    _ = crossbar_bindings:bind(<<"*.execute.put.centrex">>, ?MODULE, 'save'),
+    _ = crossbar_bindings:bind(<<"*.execute.post.centrex">>, ?MODULE, 'save'),
+    _ = crossbar_bindings:bind(<<"*.execute.patch.centrex">>, ?MODULE, 'save'),
+    _ = crossbar_bindings:bind(<<"*.execute.delete.centrex">>, ?MODULE, 'delete'),
+    _ = crossbar_bindings:bind(<<"*.etag.centrex">>, ?MODULE, 'etag'),
+    _ = crossbar_bindings:bind(<<"*.expires.centrex">>, ?MODULE, 'expires'),
     _ = crossbar_bindings:bind(<<"*.finish_request">>, ?MODULE, 'finish_request').
 
 %%%%------------------------------------------------------------------------------
@@ -86,7 +86,7 @@ init() ->
 %%%%    maybe_authenticate(cb_context:req_verb(Context), cb_context:req_nouns(Context)).
 %%%%
 %%%%-spec maybe_authenticate(http_method(), req_nouns()) -> boolean().
-%%%%maybe_authenticate(?HTTP_GET, [{<<"centrix">>, _Tokens}, {?KZ_ACCOUNTS_DB, [_AccountId]}]) ->
+%%%%maybe_authenticate(?HTTP_GET, [{<<"centrex">>, _Tokens}, {?KZ_ACCOUNTS_DB, [_AccountId]}]) ->
 %%%%    io:format("authenticate = true\n"), 'true';
 %%%%maybe_authenticate(_Verb, _Nouns) ->
 %%%%    io:format("authenticate = false\n"),'false'.
@@ -105,7 +105,7 @@ init() ->
 %%%%        [?MODULE,cb_context:req_verb(Context), cb_context:req_nouns(Context)]),
 %%%%    maybe_authorize(cb_context:req_verb(Context), cb_context:req_nouns(Context)).
 %%%%
-%%%%maybe_authorize(?HTTP_GET, [{<<"centrix">>, _Tokens}, {?KZ_ACCOUNTS_DB, [_AccountId]}]) ->
+%%%%maybe_authorize(?HTTP_GET, [{<<"centrex">>, _Tokens}, {?KZ_ACCOUNTS_DB, [_AccountId]}]) ->
 %%%%    io:format("authorize = true\n"),'true';
 %%%%maybe_authorize(_Verb, _Nouns) ->
 %%%%    io:format("authorize = false\n"),'false'.
@@ -123,23 +123,23 @@ allowed_methods() ->
     Methods.
 
 -spec allowed_methods(path_token()) -> http_methods().
-allowed_methods(CentrixId) ->
+allowed_methods(CentrexId) ->
     Methods = [?HTTP_GET, ?HTTP_POST, ?HTTP_PATCH, ?HTTP_DELETE],
-    io:format("\n~p.allowed_methods/1:\nCentrixId=~p\nMethods=~p\n",[?MODULE, CentrixId, Methods]),
+    io:format("\n~p.allowed_methods/1:\nCentrexId=~p\nMethods=~p\n",[?MODULE, CentrexId, Methods]),
     Methods.
 
 -spec allowed_methods(path_token(), path_token()) -> http_methods().
-allowed_methods(CentrixId, ?CENTRIX_ACCOUNT_SCHEMA_NAME) ->
+allowed_methods(CentrexId, ?CENTREX_ACCOUNT_SCHEMA_NAME) ->
     Methods = [?HTTP_GET, ?HTTP_PUT, ?HTTP_DELETE],
-    io:format("\n~p.allowed_methods/2:\nCentrixId=~p\nSecondPathToken=~p\nMethods=~p\n",
-        [?MODULE,CentrixId,?CENTRIX_ACCOUNT_SCHEMA_NAME,Methods]),
+    io:format("\n~p.allowed_methods/2:\nCentrexId=~p\nSecondPathToken=~p\nMethods=~p\n",
+        [?MODULE,CentrexId,?CENTREX_ACCOUNT_SCHEMA_NAME,Methods]),
     Methods.
 
 -spec allowed_methods(path_token(), path_token(), path_token()) -> http_methods().
-allowed_methods(CentrixId, ?CENTRIX_ACCOUNT_SCHEMA_NAME, CxAccountId) ->
+allowed_methods(CentrexId, ?CENTREX_ACCOUNT_SCHEMA_NAME, CxAccountId) ->
     Methods = [?HTTP_GET, ?HTTP_POST, ?HTTP_PATCH, ?HTTP_DELETE],
-    io:format("\n~p.allowed_methods/2:\nCentrixId=~p\nSecondPathToken=~p\nCxAccountId=~p\nMethods=~p\n",
-    [?MODULE,CentrixId,?CENTRIX_ACCOUNT_SCHEMA_NAME,CxAccountId,Methods]),
+    io:format("\n~p.allowed_methods/2:\nCentrexId=~p\nSecondPathToken=~p\nCxAccountId=~p\nMethods=~p\n",
+    [?MODULE,CentrexId,?CENTREX_ACCOUNT_SCHEMA_NAME,CxAccountId,Methods]),
     Methods.
 
 %%------------------------------------------------------------------------------
@@ -219,7 +219,7 @@ resource_exists(_,_,_) -> 'true'.
 
 %%%%------------------------------------------------------------------------------
 %%%% @doc This function determines if the provided list of Nouns and Resource Ids are valid.
-%%%% If valid, updates Context with centrixId
+%%%% If valid, updates Context with centrexId
 %%%%
 %%%% Failure here returns `404 Not Found'.
 %%%% @end
@@ -266,8 +266,8 @@ resource_exists(_,_,_) -> 'true'.
 %%------------------------------------------------------------------------------
 %% @doc Check the request (request body, query string params, path tokens, etc)
 %% and load necessary information.
-%% /centrix mights load a list of centrix services
-%% /centrix/{CentrixId} might load the centrix service {CentrixId}
+%% /centrex mights load a list of centrex services
+%% /centrex/{CentrexId} might load the centrex service {CentrexId}
 %% Generally, use crossbar_doc to manipulate the cb_context{} record
 %% @end
 %%------------------------------------------------------------------------------
@@ -275,82 +275,82 @@ resource_exists(_,_,_) -> 'true'.
 -spec validate(cb_context:context()) -> cb_context:context().
 validate(Context) ->
     io:format("\n~p.validate/1:\nVerb=~p\n",[?MODULE,cb_context:req_verb(Context)]),
-    validate_centrix(cb_context:req_verb(Context), Context, []).
+    validate_centrex(cb_context:req_verb(Context), Context, []).
 
 -spec validate(cb_context:context(), path_token()) -> cb_context:context().
-validate(Context, CentrixId) ->
-    io:format("\n~p.validate/2:\nCentrixId=~p\n",[?MODULE, CentrixId]),
-    validate_centrix(cb_context:req_verb(Context), Context, [CentrixId]).
+validate(Context, CentrexId) ->
+    io:format("\n~p.validate/2:\nCentrexId=~p\n",[?MODULE, CentrexId]),
+    validate_centrex(cb_context:req_verb(Context), Context, [CentrexId]).
 
 -spec validate(cb_context:context(), path_token(), path_token()) -> cb_context:context().
-validate(Context, CentrixId, PathToken) ->
-    io:format("\n~p.validate/3:\nCentrixId=~p\nSecondToken=~p\n",[?MODULE, CentrixId, PathToken]),
-    validate_centrix(cb_context:req_verb(Context), Context, [CentrixId, PathToken]).
+validate(Context, CentrexId, PathToken) ->
+    io:format("\n~p.validate/3:\nCentrexId=~p\nSecondToken=~p\n",[?MODULE, CentrexId, PathToken]),
+    validate_centrex(cb_context:req_verb(Context), Context, [CentrexId, PathToken]).
 
 -spec validate(cb_context:context(), path_token(), path_token(), path_token()) -> cb_context:context().
-validate(Context, CentrixId, ?CENTRIX_ACCOUNT_SCHEMA_NAME, CxAccountId) ->
-    io:format("\n~p.validate/3:\nCentrixId=~p\nSecondToken=~p\nCxAccountId=~p\n",
-        [?MODULE, CentrixId, ?CENTRIX_ACCOUNT_SCHEMA_NAME, CxAccountId]),
-    validate_centrix(cb_context:req_verb(Context), Context,
-        [CentrixId, ?CENTRIX_ACCOUNT_SCHEMA_NAME, CxAccountId]
+validate(Context, CentrexId, ?CENTREX_ACCOUNT_SCHEMA_NAME, CxAccountId) ->
+    io:format("\n~p.validate/3:\nCentrexId=~p\nSecondToken=~p\nCxAccountId=~p\n",
+        [?MODULE, CentrexId, ?CENTREX_ACCOUNT_SCHEMA_NAME, CxAccountId]),
+    validate_centrex(cb_context:req_verb(Context), Context,
+        [CentrexId, ?CENTREX_ACCOUNT_SCHEMA_NAME, CxAccountId]
     ).
 
 
--spec validate_centrix(http_method(), cb_context:context(), path_tokens()) -> cb_context:context().
-validate_centrix(?HTTP_GET, Context, []) ->
-    io:format("\n~p.validate_centrix/3:\nMethod=~p\nPathTokens=~p\n",[?MODULE,?HTTP_GET,[]]),
-    crossbar_doc:load_view(?CENTRIX_VIEW, [], Context, fun normalize_view_results/2);
-validate_centrix(?HTTP_PUT, Context, []) ->
-    io:format("\n~p.validate_centrix/3:\nMethod=~p\nPathTokens=~p\n",[?MODULE,?HTTP_PUT,[]]),
-    validate_doc('undefined', ?TYPE_CENTRIX, Context);
+-spec validate_centrex(http_method(), cb_context:context(), path_tokens()) -> cb_context:context().
+validate_centrex(?HTTP_GET, Context, []) ->
+    io:format("\n~p.validate_centrex/3:\nMethod=~p\nPathTokens=~p\n",[?MODULE,?HTTP_GET,[]]),
+    crossbar_doc:load_view(?CENTREX_VIEW, [], Context, fun normalize_view_results/2);
+validate_centrex(?HTTP_PUT, Context, []) ->
+    io:format("\n~p.validate_centrex/3:\nMethod=~p\nPathTokens=~p\n",[?MODULE,?HTTP_PUT,[]]),
+    validate_doc('undefined', ?TYPE_CENTREX, Context);
 
 
-validate_centrix(?HTTP_GET, Context, [CentrixId]) ->
-    io:format("\n~p.validate_centrix/3: [CentrixId]\nMethod=~p\nPathTokens=~p\n",[?MODULE,?HTTP_GET,[CentrixId]]),
-    crossbar_doc:load(CentrixId, Context, ?TYPE_CHECK_OPTION(?TYPE_CENTRIX));
-validate_centrix(?HTTP_DELETE, Context, [CentrixId]) ->
-    io:format("\n~p.validate_centrix/3: [CentrixId]\nMethod=~p\nPathTokens=~p\n",[?MODULE,?HTTP_DELETE,[CentrixId]]),
-    crossbar_doc:load_view(?CENTRIX_ACCOUNTS_VIEW, [{'key', CentrixId}], Context);
-validate_centrix(?HTTP_POST, Context, [CentrixId]) ->
-    io:format("\n~p.validate_centrix/3: [CentrixId]\nMethod=~p\nPathTokens=~p\n",[?MODULE,?HTTP_POST,[CentrixId]]),
-    validate_doc(CentrixId, ?TYPE_CENTRIX, Context);
-validate_centrix(?HTTP_PATCH, Context, [CentrixId]) ->
-    io:format("\n~p.validate_centrix/3: [CentrixId]\nMethod=~p\nPathTokens=~p\n",[?MODULE,?HTTP_PATCH,[CentrixId]]),
-    patch_and_validate_doc(CentrixId, ?TYPE_CENTRIX, Context);
+validate_centrex(?HTTP_GET, Context, [CentrexId]) ->
+    io:format("\n~p.validate_centrex/3: [CentrexId]\nMethod=~p\nPathTokens=~p\n",[?MODULE,?HTTP_GET,[CentrexId]]),
+    crossbar_doc:load(CentrexId, Context, ?TYPE_CHECK_OPTION(?TYPE_CENTREX));
+validate_centrex(?HTTP_DELETE, Context, [CentrexId]) ->
+    io:format("\n~p.validate_centrex/3: [CentrexId]\nMethod=~p\nPathTokens=~p\n",[?MODULE,?HTTP_DELETE,[CentrexId]]),
+    crossbar_doc:load_view(?CENTREX_ACCOUNTS_VIEW, [{'key', CentrexId}], Context);
+validate_centrex(?HTTP_POST, Context, [CentrexId]) ->
+    io:format("\n~p.validate_centrex/3: [CentrexId]\nMethod=~p\nPathTokens=~p\n",[?MODULE,?HTTP_POST,[CentrexId]]),
+    validate_doc(CentrexId, ?TYPE_CENTREX, Context);
+validate_centrex(?HTTP_PATCH, Context, [CentrexId]) ->
+    io:format("\n~p.validate_centrex/3: [CentrexId]\nMethod=~p\nPathTokens=~p\n",[?MODULE,?HTTP_PATCH,[CentrexId]]),
+    patch_and_validate_doc(CentrexId, ?TYPE_CENTREX, Context);
 
 
-validate_centrix(?HTTP_GET, Context, [CentrixId, ?CENTRIX_ACCOUNT_SCHEMA_NAME]) ->
-    io:format("\n~p.validate_centrix/3: [CentrixId, <<\"centrix_accounts\">>]\nMethod=~p\nPathTokens=~p\nOptions=~p\n",
-        [?MODULE,?HTTP_GET,[CentrixId,?CENTRIX_ACCOUNT_SCHEMA_NAME],[{'key', CentrixId}]]),
-    crossbar_doc:load_view(?CENTRIX_ACCOUNTS_VIEW, [{'key', CentrixId}], Context);
-validate_centrix(?HTTP_PUT, Context, [CentrixId, ?CENTRIX_ACCOUNT_SCHEMA_NAME]) ->
-    io:format("\n~p.validate_centrix/3: [CentrixId, <<\"centrix_accounts\">>]\nMethod=~p\nPathTokens=~p\n",
-        [?MODULE,?HTTP_PUT,[CentrixId,?CENTRIX_ACCOUNT_SCHEMA_NAME]]),
-    ReqData = kz_json:set_values([{<<"centrix_id">>, CentrixId}], cb_context:req_data(Context)),
+validate_centrex(?HTTP_GET, Context, [CentrexId, ?CENTREX_ACCOUNT_SCHEMA_NAME]) ->
+    io:format("\n~p.validate_centrex/3: [CentrexId, <<\"centrex_accounts\">>]\nMethod=~p\nPathTokens=~p\nOptions=~p\n",
+        [?MODULE,?HTTP_GET,[CentrexId,?CENTREX_ACCOUNT_SCHEMA_NAME],[{'key', CentrexId}]]),
+    crossbar_doc:load_view(?CENTREX_ACCOUNTS_VIEW, [{'key', CentrexId}], Context);
+validate_centrex(?HTTP_PUT, Context, [CentrexId, ?CENTREX_ACCOUNT_SCHEMA_NAME]) ->
+    io:format("\n~p.validate_centrex/3: [CentrexId, <<\"centrex_accounts\">>]\nMethod=~p\nPathTokens=~p\n",
+        [?MODULE,?HTTP_PUT,[CentrexId,?CENTREX_ACCOUNT_SCHEMA_NAME]]),
+    ReqData = kz_json:set_values([{<<"centrex_id">>, CentrexId}], cb_context:req_data(Context)),
     io:format("ReqData=~p\n",[ReqData]),
-    validate_doc('undefined', ?TYPE_CENTRIX_USER_ACCOUNT, cb_context:set_req_data(Context, ReqData));
-validate_centrix(?HTTP_DELETE, Context, [CentrixId, ?CENTRIX_ACCOUNT_SCHEMA_NAME]) ->
-    io:format("\n~p.validate_centrix/3: [CentrixId, <<\"centrix_accounts\">>]\nMethod=~p\nPathTokens=~p\n",
-        [?MODULE,?HTTP_DELETE,[CentrixId,?CENTRIX_ACCOUNT_SCHEMA_NAME]]),
-    crossbar_doc:load_view(?CENTRIX_ACCOUNT_SCHEMA_NAME, [{'key', CentrixId}], Context);
+    validate_doc('undefined', ?TYPE_CENTREX_USER_ACCOUNT, cb_context:set_req_data(Context, ReqData));
+validate_centrex(?HTTP_DELETE, Context, [CentrexId, ?CENTREX_ACCOUNT_SCHEMA_NAME]) ->
+    io:format("\n~p.validate_centrex/3: [CentrexId, <<\"centrex_accounts\">>]\nMethod=~p\nPathTokens=~p\n",
+        [?MODULE,?HTTP_DELETE,[CentrexId,?CENTREX_ACCOUNT_SCHEMA_NAME]]),
+    crossbar_doc:load_view(?CENTREX_ACCOUNT_SCHEMA_NAME, [{'key', CentrexId}], Context);
 
 
-validate_centrix(?HTTP_GET, Context, [CentrixId, ?CENTRIX_ACCOUNT_SCHEMA_NAME, CxAccountId]) ->
-    io:format("\n~p.validate_centrix/3:\nMethod=~p\nPathTokens=~p\n",
-        [?MODULE,?HTTP_GET,[CentrixId,?CENTRIX_ACCOUNT_SCHEMA_NAME,CxAccountId]]),
-    crossbar_doc:load(CxAccountId, Context, ?TYPE_CHECK_OPTION(?TYPE_CENTRIX_USER_ACCOUNT));
-validate_centrix(?HTTP_DELETE, Context, [CentrixId, ?CENTRIX_ACCOUNT_SCHEMA_NAME, CxAccountId]) ->
-    io:format("\n~p.validate_centrix/3:\nMethod=~p\nPathTokens=~p\n",
-        [?MODULE,?HTTP_DELETE,[CentrixId,?CENTRIX_ACCOUNT_SCHEMA_NAME,CxAccountId]]),
-    crossbar_doc:load(CxAccountId, Context, ?TYPE_CHECK_OPTION(?TYPE_CENTRIX_USER_ACCOUNT));
-validate_centrix(?HTTP_POST, Context, [CentrixId, ?CENTRIX_ACCOUNT_SCHEMA_NAME, CxAccountId]) ->
-    io:format("\n~p.validate_centrix/3:\nMethod=~p\nPathTokens=~p\n",
-        [?MODULE,?HTTP_POST,[CentrixId,?CENTRIX_ACCOUNT_SCHEMA_NAME,CxAccountId]]),
-    validate_doc(CxAccountId, ?TYPE_CENTRIX_USER_ACCOUNT, Context);
-validate_centrix(?HTTP_PATCH, Context, [CentrixId, ?CENTRIX_ACCOUNT_SCHEMA_NAME, CxAccountId]) ->
-    io:format("\n~p.validate_centrix/3:\nMethod=~p\nPathTokens=~p\n",
-        [?MODULE,?HTTP_PATCH,[CentrixId,?CENTRIX_ACCOUNT_SCHEMA_NAME,CxAccountId]]),
-    patch_and_validate_doc(CxAccountId, ?TYPE_CENTRIX_USER_ACCOUNT, Context).
+validate_centrex(?HTTP_GET, Context, [CentrexId, ?CENTREX_ACCOUNT_SCHEMA_NAME, CxAccountId]) ->
+    io:format("\n~p.validate_centrex/3:\nMethod=~p\nPathTokens=~p\n",
+        [?MODULE,?HTTP_GET,[CentrexId,?CENTREX_ACCOUNT_SCHEMA_NAME,CxAccountId]]),
+    crossbar_doc:load(CxAccountId, Context, ?TYPE_CHECK_OPTION(?TYPE_CENTREX_USER_ACCOUNT));
+validate_centrex(?HTTP_DELETE, Context, [CentrexId, ?CENTREX_ACCOUNT_SCHEMA_NAME, CxAccountId]) ->
+    io:format("\n~p.validate_centrex/3:\nMethod=~p\nPathTokens=~p\n",
+        [?MODULE,?HTTP_DELETE,[CentrexId,?CENTREX_ACCOUNT_SCHEMA_NAME,CxAccountId]]),
+    crossbar_doc:load(CxAccountId, Context, ?TYPE_CHECK_OPTION(?TYPE_CENTREX_USER_ACCOUNT));
+validate_centrex(?HTTP_POST, Context, [CentrexId, ?CENTREX_ACCOUNT_SCHEMA_NAME, CxAccountId]) ->
+    io:format("\n~p.validate_centrex/3:\nMethod=~p\nPathTokens=~p\n",
+        [?MODULE,?HTTP_POST,[CentrexId,?CENTREX_ACCOUNT_SCHEMA_NAME,CxAccountId]]),
+    validate_doc(CxAccountId, ?TYPE_CENTREX_USER_ACCOUNT, Context);
+validate_centrex(?HTTP_PATCH, Context, [CentrexId, ?CENTREX_ACCOUNT_SCHEMA_NAME, CxAccountId]) ->
+    io:format("\n~p.validate_centrex/3:\nMethod=~p\nPathTokens=~p\n",
+        [?MODULE,?HTTP_PATCH,[CentrexId,?CENTREX_ACCOUNT_SCHEMA_NAME,CxAccountId]]),
+    patch_and_validate_doc(CxAccountId, ?TYPE_CENTREX_USER_ACCOUNT, Context).
 
 
 -spec validate_doc(kz_term:api_binary(), kz_term:ne_binary(), cb_context:context()) -> cb_context:context().
@@ -364,8 +364,8 @@ patch_and_validate_doc(Id, Type, Context) ->
     crossbar_doc:patch_and_validate(Id, Context, ValidateFun).
 
 -spec type_schema_name(kz_term:api_binary()) -> kz_term:api_binary().
-type_schema_name(?TYPE_CENTRIX) -> ?CENTRIX_SCHEMA_NAME;
-type_schema_name(?TYPE_CENTRIX_USER_ACCOUNT) -> ?CENTRIX_ACCOUNT_SCHEMA_NAME;
+type_schema_name(?TYPE_CENTREX) -> ?CENTREX_SCHEMA_NAME;
+type_schema_name(?TYPE_CENTREX_USER_ACCOUNT) -> ?CENTREX_ACCOUNT_SCHEMA_NAME;
 type_schema_name(_Type) -> 'undefined'.
 
 %%------------------------------------------------------------------------------
@@ -374,7 +374,7 @@ type_schema_name(_Type) -> 'undefined'.
 %%------------------------------------------------------------------------------
 -spec validate_request(cb_context:context()) -> cb_context:context().
 validate_request(Context) ->
-    cb_context:validate_request_data(?CENTRIX_VIEW, Context).
+    cb_context:validate_request_data(?CENTREX_VIEW, Context).
 
 %%------------------------------------------------------------------------------
 %% @doc If the HTTP verb is PUT or POST or PATCH save context doc to db.
@@ -386,15 +386,15 @@ save(Context) ->
     crossbar_doc:save(Context).
 
 -spec save(cb_context:context(), path_token()) -> cb_context:context().
-save(Context, _CentrixId) ->
+save(Context, _CentrexId) ->
     save(Context).
 
 -spec save(cb_context:context(), path_token(), path_token()) -> cb_context:context().
-save(Context, _CentrixId, ?CENTRIX_ACCOUNT_SCHEMA_NAME) ->
+save(Context, _CentrexId, ?CENTREX_ACCOUNT_SCHEMA_NAME) ->
     save(Context).
 
 -spec save(cb_context:context(), path_token(), path_token(), path_token()) -> cb_context:context().
-save(Context, _CentrixId, ?CENTRIX_ACCOUNT_SCHEMA_NAME, _CxAccountId) ->
+save(Context, _CentrexId, ?CENTREX_ACCOUNT_SCHEMA_NAME, _CxAccountId) ->
     save(Context).
 
 %%%%------------------------------------------------------------------------------
@@ -437,15 +437,15 @@ patch(Context, _) ->
 %% @end
 %%------------------------------------------------------------------------------
 -spec delete(cb_context:context(), path_token()) -> cb_context:context().
-delete(Context, CentrixId) ->
-    _ = delete(Context, CentrixId, ?CENTRIX_ACCOUNT_SCHEMA_NAME),
-    io:format("\n~p.delete/2:\nContext=~p\nCentrixId=~p\nOptions=~p\n",
-        [?MODULE,Context,CentrixId,?TYPE_CHECK_OPTION(?TYPE_CENTRIX)]),
-    Context1 = crossbar_doc:load(CentrixId, Context, ?TYPE_CHECK_OPTION(?TYPE_CENTRIX)),
+delete(Context, CentrexId) ->
+    _ = delete(Context, CentrexId, ?CENTREX_ACCOUNT_SCHEMA_NAME),
+    io:format("\n~p.delete/2:\nContext=~p\nCentrexId=~p\nOptions=~p\n",
+        [?MODULE,Context,CentrexId,?TYPE_CHECK_OPTION(?TYPE_CENTREX)]),
+    Context1 = crossbar_doc:load(CentrexId, Context, ?TYPE_CHECK_OPTION(?TYPE_CENTREX)),
     crossbar_doc:delete(Context1).
 
 -spec delete(cb_context:context(), path_token(), path_token()) -> cb_context:context().
-delete(Context, _CentrixId, ?CENTRIX_ACCOUNT_SCHEMA_NAME) ->
+delete(Context, _CentrexId, ?CENTREX_ACCOUNT_SCHEMA_NAME) ->
     Docs = [kz_json:get_value(<<"id">>, Entry) || Entry <- cb_context:doc(Context)],
     AccountDb = kz_util:format_account_id(cb_context:account_db(Context), 'encoded'),
     %% do we need 'soft' delete as in crossbar_doc?
@@ -453,7 +453,7 @@ delete(Context, _CentrixId, ?CENTRIX_ACCOUNT_SCHEMA_NAME) ->
     Context.
 
 -spec delete(cb_context:context(), path_token(), path_token(), path_token()) -> cb_context:context().
-delete(Context, _CentrixId, ?CENTRIX_ACCOUNT_SCHEMA_NAME, _CxAccountId) ->
+delete(Context, _CentrexId, ?CENTREX_ACCOUNT_SCHEMA_NAME, _CxAccountId) ->
     crossbar_doc:delete(Context).
 
 %%------------------------------------------------------------------------------
@@ -523,8 +523,8 @@ finish_request(Context) ->
 %%%%------------------------------------------------------------------------------
 %%-spec summary(cb_context:context()) -> cb_context:context().
 %%summary(Context) ->
-%%    io:format("\n~p.summary/1: Try load centrix list\n",[?MODULE]),
-%%    crossbar_doc:load_view(?CENTRIX_VIEW, [], Context, fun normalize_view_results/2).
+%%    io:format("\n~p.summary/1: Try load centrex list\n",[?MODULE]),
+%%    crossbar_doc:load_view(?CENTREX_VIEW, [], Context, fun normalize_view_results/2).
 
 %%------------------------------------------------------------------------------
 %% @doc
@@ -541,9 +541,9 @@ on_successfull_validation(Id, Type, Context) ->
 
 %%-spec on_successful_validation(kz_term:api_binary(), cb_context:context()) -> cb_context:context().
 %%on_successful_validation('undefined', Context) ->
-%%    cb_context:set_doc(Context, kz_doc:set_type(cb_context:doc(Context), <<"centrix">>));
+%%    cb_context:set_doc(Context, kz_doc:set_type(cb_context:doc(Context), <<"centrex">>));
 %%on_successful_validation(Id, Context) ->
-%%    crossbar_doc:load_merge(Id, Context, ?TYPE_CHECK_OPTION(<<"centrix">>)).
+%%    crossbar_doc:load_merge(Id, Context, ?TYPE_CHECK_OPTION(<<"centrex">>)).
 
 %%------------------------------------------------------------------------------
 %% @doc Normalizes the results of a view.

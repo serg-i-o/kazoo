@@ -1,5 +1,5 @@
 ROOT = ../..
-PROJECT = centrix
+PROJECT = centrex
 
 all: compile
 

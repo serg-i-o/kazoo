@@ -4,14 +4,14 @@
 %%% @author James Aimonetti
 %%% @end
 %%%-----------------------------------------------------------------------------
--module(centrix_app).
+-module(centrex_app).
 
 -behaviour(application).
 
 %% Application callbacks
 -export([start/2, stop/1]).
 
--include("centrix.hrl").
+-include("centrex.hrl").
 
 %%==============================================================================
 %% Application callbacks
@@ -24,7 +24,7 @@
 -spec start(application:start_type(), any()) -> kz_types:startapp_ret().
 start(_StartType, _StartArgs) ->
     _ = declare_exchanges(),
-    centrix_sup:start_link().
+    centrex_sup:start_link().
 
 -spec stop(any()) -> any().
 stop(_State) ->

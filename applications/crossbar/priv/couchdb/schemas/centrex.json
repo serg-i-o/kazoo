@@ -1,20 +1,20 @@
 {
     "$schema": "http://json-schema.org/draft-04/schema#",
-    "_id": "centrix",
-    "description": "Schema for a centrix service",
+    "_id": "centrex",
+    "description": "Schema for a centrex service",
     "properties": {
         "callflow_id": {
-            "description": "The ID of a callflow pattern for this centrix service",
+            "description": "The ID of a callflow pattern for this centrex service",
             "type": "string"
         },
         "description": {
-            "description": "A friendly centrix service description",
+            "description": "A friendly centrex service description",
             "maxLength": 128,
             "minLength": 1,
             "type": "string"
         },
         "name": {
-            "description": "A friendly centrix service name",
+            "description": "A friendly centrex service name",
             "maxLength": 128,
             "minLength": 1,
             "type": "string"

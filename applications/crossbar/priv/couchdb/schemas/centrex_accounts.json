@@ -1,10 +1,10 @@
 {
     "$schema": "http://json-schema.org/draft-04/schema#",
-    "_id": "centrix_accounts",
-    "description": "Schema centrix user accounts",
+    "_id": "centrex_accounts",
+    "description": "Schema centrex user accounts",
     "properties": {
-        "centrix_id": {
-            "description": "Centrix service id",
+        "centrex_id": {
+            "description": "Centrex service id",
             "type": "string"
         },
         "number_offnet": {
@@ -12,13 +12,13 @@
             "type": "string"
         },
         "user_id": {
-            "description": "The ID of single user for the centrix account",
+            "description": "The ID of single user for the centrex account",
             "type": "string"
         }
     },
     "required": [
         "number_offnet",
-        "centrix_id",
+        "centrex_id",
         "user_id"
     ],
     "type": "object"

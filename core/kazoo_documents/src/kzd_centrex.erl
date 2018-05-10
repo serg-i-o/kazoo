@@ -3,7 +3,7 @@
 %%% @doc
 %%% @end
 %%%-----------------------------------------------------------------------------
--module(kzd_centrix).
+-module(kzd_centrex).
 
 -export([new/0]).
 -export([callflow_id/1, callflow_id/2, set_callflow_id/2]).
@@ -16,7 +16,7 @@
 -type doc() :: kz_json:object().
 -export_type([doc/0]).
 
--define(SCHEMA, <<"centrix">>).
+-define(SCHEMA, <<"centrex">>).
 
 -spec new() -> doc().
 new() ->

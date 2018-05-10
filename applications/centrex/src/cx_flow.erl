@@ -1,21 +1,21 @@
 -module(cx_flow).
 
--export([lookup_centrix_account/1, lookup_centrix_account/2
-        , lookup_centrix_callflow/1, lookup_centrix_callflow/2
+-export([lookup_centrex_account/1, lookup_centrex_account/2
+        , lookup_centrex_callflow/1, lookup_centrex_callflow/2
 ]).
 
--include("centrix.hrl").
+-include("centrex.hrl").
 
 
 %%------------------------------------------------------------------------------
-%% @doc Cache centrix callflow
+%% @doc Cache centrex callflow
 %% @end
 %%------------------------------------------------------------------------------
 -spec cache_callflow(kz_term:ne_binary(), kz_term:ne_binary(), kzd_callflow:doc()) -> cx_callflow_ret().
 cache_callflow(Number, AccountId, Flow) ->
     AccountDb = kz_util:format_account_db(AccountId),
     CacheOptions = [
-        {'origin', [{'db', AccountDb, <<"centrix">>}]}
+        {'origin', [{'db', AccountDb, <<"centrex">>}]}
 %%        , {'expires', ?MILLISECONDS_IN_HOUR}
     ],
     io:format("\n~p.cache_callflow/3:\nCacheName=~p\nCacheKey=~p\nFlowId=~p\nCacheOptions=~p\n",
@@ -25,14 +25,14 @@ cache_callflow(Number, AccountId, Flow) ->
 
 
 %%------------------------------------------------------------------------------
-%% @doc Cache centrix (user) account
+%% @doc Cache centrex (user) account
 %% @end
 %%------------------------------------------------------------------------------
--spec cache_cx_account(kz_term:ne_binary(), kz_term:ne_binary(), kzd_centrix_accounts:doc()) -> cx_account_lookup_ret().
+-spec cache_cx_account(kz_term:ne_binary(), kz_term:ne_binary(), kzd_centrex_accounts:doc()) -> cx_account_lookup_ret().
 cache_cx_account(Number, AccountId, CxAccount) ->
     AccountDb = kz_util:format_account_db(AccountId),
     CacheOptions = [
-        {'origin', [{'db', AccountDb, <<"centrix_accounts">>}]}
+        {'origin', [{'db', AccountDb, <<"centrex_accounts">>}]}
 %%        , {'expires', ?MILLISECONDS_IN_HOUR}
     ],
     io:format("\n~p.cache_cx_account/3:\nCacheName=~p\nCacheKey=~p\nCxAccountId=~p\nCacheOptions=~p\n",
@@ -42,22 +42,22 @@ cache_cx_account(Number, AccountId, CxAccount) ->
 
 
 %%------------------------------------------------------------------------------
-%% @doc Get centrix (user) account
+%% @doc Get centrex (user) account
 %% @end
 %%------------------------------------------------------------------------------
--type cx_account_lookup_ret() :: {'ok', kzd_centrix_accounts:doc()} | {'error', any()}.
+-type cx_account_lookup_ret() :: {'ok', kzd_centrex_accounts:doc()} | {'error', any()}.
 
--spec lookup_centrix_account(kapps_call:call()) -> cx_account_lookup_ret().
-lookup_centrix_account(Call) ->
-    lookup_centrix_account(kapps_call:request_user(Call), kapps_call:account_id(Call)).
+-spec lookup_centrex_account(kapps_call:call()) -> cx_account_lookup_ret().
+lookup_centrex_account(Call) ->
+    lookup_centrex_account(kapps_call:request_user(Call), kapps_call:account_id(Call)).
 
--spec lookup_centrix_account(kz_term:ne_binary(), kz_term:ne_binary()) -> cx_account_lookup_ret().
-lookup_centrix_account(Number, AccountId) when not is_binary(Number) ->
-    lookup_centrix_account(kz_term:to_binary(Number), AccountId);
-lookup_centrix_account(<<>>, _) ->
+-spec lookup_centrex_account(kz_term:ne_binary(), kz_term:ne_binary()) -> cx_account_lookup_ret().
+lookup_centrex_account(Number, AccountId) when not is_binary(Number) ->
+    lookup_centrex_account(kz_term:to_binary(Number), AccountId);
+lookup_centrex_account(<<>>, _) ->
     {'error', 'invalid_number'};
-lookup_centrix_account(Number, AccountId) ->
-    io:format("\n~p.lookup_centrix_account/2:\nNumber=~p\nAccountId=~p\n",[?MODULE,Number,AccountId]),
+lookup_centrex_account(Number, AccountId) ->
+    io:format("\n~p.lookup_centrex_account/2:\nNumber=~p\nAccountId=~p\n",[?MODULE,Number,AccountId]),
     case kz_cache:fetch_local(?CACHE_NAME, ?CX_ACCOUNT_CACHE_KEY(Number, AccountId)) of
         {'ok', CxAccountId} ->
             io:format("kz_cache:fetch_local CxAccountId=~p\n",[CxAccountId]),
@@ -87,11 +87,11 @@ return_cx_account_doc(CxAccountId, AccountId, Props) ->
 -spec do_cx_account_lookup(kz_term:ne_binary(), kz_term:ne_binary()) -> cx_account_lookup_ret().
 do_cx_account_lookup(Number, AccountId) ->
     Db = kz_util:format_account_db(AccountId),
-    io:format("\n~p.do_cx_account_lookup/2:\nsearching for centrix account for number ~s in account db '~s'\n",
+    io:format("\n~p.do_cx_account_lookup/2:\nsearching for centrex account for number ~s in account db '~s'\n",
         [?MODULE,Number, Db]),
-    lager:info("searching for centrix account for number ~s in account db '~s'", [Number, Db]),
+    lager:info("searching for centrex account for number ~s in account db '~s'", [Number, Db]),
     Options = [{'key', Number}, 'include_docs'],
-    case kz_datamgr:get_results(Db, ?CENTRIX_ACCOUNTS_BY_NUMBER_VIEW, Options) of
+    case kz_datamgr:get_results(Db, ?CENTREX_ACCOUNTS_BY_NUMBER_VIEW, Options) of
         {'error', _}=E ->
             io:format("kz_datamgr:get_results CxAccount=~p\n",[E]),
             E;
@@ -103,73 +103,73 @@ do_cx_account_lookup(Number, AccountId) ->
             io:format("kz_datamgr:get_results\nJObj=~p\nCxAccountId=~p\n",[JObj,kz_doc:id(CxAccount)]),
             cache_cx_account(Number, AccountId, CxAccount);
         {'ok', [JObj | _Rest]} ->
-            io:format("centrix account lookup for number ~s resulted in more than one result, using the first\n",[Number]),
-            lager:warning("centrix account lookup for number ~s resulted in more than one result, using the first",[Number]),
+            io:format("centrex account lookup for number ~s resulted in more than one result, using the first\n",[Number]),
+            lager:warning("centrex account lookup for number ~s resulted in more than one result, using the first",[Number]),
             CxAccount = kz_json:get_value(<<"doc">>, JObj),
             io:format("kz_datamgr:get_results CxAccountId=~p\n",[kz_doc:id(CxAccount)]),
             cache_cx_account(Number, AccountId, CxAccount)
     end.
 
 %%------------------------------------------------------------------------------
-%% @doc Get centrix callflow
+%% @doc Get centrex callflow
 %% @end
 %%------------------------------------------------------------------------------
 -type cx_callflow_ret() :: {'ok', kzd_callflow:doc(), boolean()} | {'error', any()}.
--type centrix_ret() :: {'ok', kzd_centrix:doc()} | {'error', any()}.
+-type centrex_ret() :: {'ok', kzd_centrex:doc()} | {'error', any()}.
 
--spec lookup_centrix_callflow(kapps_call:call()) -> cx_callflow_ret().
-lookup_centrix_callflow(Call) ->
-    lookup_centrix_callflow(kapps_call:request_user(Call), kapps_call:account_id(Call)).
+-spec lookup_centrex_callflow(kapps_call:call()) -> cx_callflow_ret().
+lookup_centrex_callflow(Call) ->
+    lookup_centrex_callflow(kapps_call:request_user(Call), kapps_call:account_id(Call)).
 
--spec lookup_centrix_callflow(kz_term:ne_binary(), kz_term:ne_binary()) -> cx_callflow_ret().
-lookup_centrix_callflow(Number, AccountId) when not is_binary(Number) ->
-    lookup_centrix_callflow(kz_term:to_binary(Number), AccountId);
-lookup_centrix_callflow(<<>>, _) ->
+-spec lookup_centrex_callflow(kz_term:ne_binary(), kz_term:ne_binary()) -> cx_callflow_ret().
+lookup_centrex_callflow(Number, AccountId) when not is_binary(Number) ->
+    lookup_centrex_callflow(kz_term:to_binary(Number), AccountId);
+lookup_centrex_callflow(<<>>, _) ->
     {'error', 'invalid_number'};
-lookup_centrix_callflow(Number, AccountId) ->
-    io:format("\n~p.lookup_centrix_callflow/2:\nNumber=~p\nAccountId=~p\n",[?MODULE,Number,AccountId]),
+lookup_centrex_callflow(Number, AccountId) ->
+    io:format("\n~p.lookup_centrex_callflow/2:\nNumber=~p\nAccountId=~p\n",[?MODULE,Number,AccountId]),
     case kz_cache:fetch_local(?CACHE_NAME, ?CX_CALLFLOW_CACHE_KEY(Number, AccountId)) of
         {'ok', FlowId} ->
             io:format("kz_cache:fetch_local FlowId=~p\n",[FlowId]),
             return_callflow_doc(Number, AccountId, FlowId);
         {'error', 'not_found'} ->
             io:format("kz_cache:fetch_local FlowId=~p\n",['not_found']),
-            do_lookup_centrix_callflow(Number, AccountId)
+            do_lookup_centrex_callflow(Number, AccountId)
     end.
 
 
--spec do_lookup_centrix_callflow(kz_term:ne_binary(), kz_term:ne_binary()) -> cx_callflow_ret().
-do_lookup_centrix_callflow(Number, AccountId) ->
-    case lookup_centrix_account(Number, AccountId) of
+-spec do_lookup_centrex_callflow(kz_term:ne_binary(), kz_term:ne_binary()) -> cx_callflow_ret().
+do_lookup_centrex_callflow(Number, AccountId) ->
+    case lookup_centrex_account(Number, AccountId) of
         {'error', _}=E -> E;
-        {'ok', CentrixAccount} ->
-            io:format("\n~p.do_lookup_centrix_callflow/2:\nNumber=~p\nAccountId=~p\nCxAccountId=~p\n",
-                [?MODULE,Number, AccountId, kzd_centrix_accounts:centrix_id(CentrixAccount)]),
-            do_lookup_centrix_callflow(Number, AccountId, kzd_centrix_accounts:centrix_id(CentrixAccount))
+        {'ok', CentrexAccount} ->
+            io:format("\n~p.do_lookup_centrex_callflow/2:\nNumber=~p\nAccountId=~p\nCxAccountId=~p\n",
+                [?MODULE,Number, AccountId, kzd_centrex_accounts:centrex_id(CentrexAccount)]),
+            do_lookup_centrex_callflow(Number, AccountId, kzd_centrex_accounts:centrex_id(CentrexAccount))
     end.
 
--spec do_lookup_centrix_callflow(kz_term:ne_binary(), kz_term:ne_binary(), kz_term:ne_binary()) -> cx_callflow_ret().
-do_lookup_centrix_callflow(_Number, _AccountId, 'undefined') ->
-    io:format("\n~p.do_lookup_centrix_callflow/3:  ~p\n",[?MODULE, 'invalid_centrix_account']),
-    {'error', 'invalid_centrix_account'};
-do_lookup_centrix_callflow(Number, AccountId, CentrixId) ->
-    io:format("\n~p.do_lookup_centrix_callflow/3:\nNumber=~p\nAccountId=~p\nCentrixId=~p\n",
-        [?MODULE, Number, AccountId, CentrixId]),
-    case return_centrix_doc(CentrixId, AccountId) of
+-spec do_lookup_centrex_callflow(kz_term:ne_binary(), kz_term:ne_binary(), kz_term:ne_binary()) -> cx_callflow_ret().
+do_lookup_centrex_callflow(_Number, _AccountId, 'undefined') ->
+    io:format("\n~p.do_lookup_centrex_callflow/3:  ~p\n",[?MODULE, 'invalid_centrex_account']),
+    {'error', 'invalid_centrex_account'};
+do_lookup_centrex_callflow(Number, AccountId, CentrexId) ->
+    io:format("\n~p.do_lookup_centrex_callflow/3:\nNumber=~p\nAccountId=~p\nCentrexId=~p\n",
+        [?MODULE, Number, AccountId, CentrexId]),
+    case return_centrex_doc(CentrexId, AccountId) of
         {'error', _}=E -> E;
-        {'ok', Centrix} -> return_callflow_doc(Number, AccountId, kzd_centrix:callflow_id(Centrix))
+        {'ok', Centrex} -> return_callflow_doc(Number, AccountId, kzd_centrex:callflow_id(Centrex))
     end.
 
--spec return_centrix_doc(kz_term:ne_binary(), kz_term:ne_binary()) -> centrix_ret().
-return_centrix_doc(CentrixId, AccountId) ->
-    return_centrix_doc(CentrixId, AccountId, []).
+-spec return_centrex_doc(kz_term:ne_binary(), kz_term:ne_binary()) -> centrex_ret().
+return_centrex_doc(CentrexId, AccountId) ->
+    return_centrex_doc(CentrexId, AccountId, []).
 
--spec return_centrix_doc(kz_term:ne_binary(), kz_term:ne_binary(), kz_term:proplist()) -> centrix_ret().
-return_centrix_doc(CentrixId, AccountId, Props) ->
+-spec return_centrex_doc(kz_term:ne_binary(), kz_term:ne_binary(), kz_term:proplist()) -> centrex_ret().
+return_centrex_doc(CentrexId, AccountId, Props) ->
     Db = kz_util:format_account_db(AccountId),
-    io:format("\n~p.return_centrix_doc/3:\nCentrixId=~p\nAccountId=~p\nProps=~p\n",
-        [?MODULE, CentrixId, AccountId, Props]),
-    case kz_datamgr:open_cache_doc(Db, CentrixId) of
+    io:format("\n~p.return_centrex_doc/3:\nCentrexId=~p\nAccountId=~p\nProps=~p\n",
+        [?MODULE, CentrexId, AccountId, Props]),
+    case kz_datamgr:open_cache_doc(Db, CentrexId) of
         {'ok', Doc} ->
             io:format("Doc=~p\n",[Doc]),
             {'ok', kz_json:set_values(Props, Doc)};
@@ -180,7 +180,7 @@ return_centrix_doc(CentrixId, AccountId, Props) ->
 
 -spec return_callflow_doc(kz_term:ne_binary(), kz_term:ne_binary(), kz_term:ne_binary()) -> cx_callflow_ret().
 return_callflow_doc(_Number, _AccountId, 'undefined') ->
-    {'error', 'invalid_centrix_service'};
+    {'error', 'invalid_centrex_service'};
 return_callflow_doc(Number, AccountId, FlowId) ->
     Db = kz_util:format_account_db(AccountId),
     io:format("\n~p.return_callflow_doc/3:\nNumber=~p\nAccountId=~p\nFlowId=~p\n",[?MODULE,Number, AccountId, FlowId]),

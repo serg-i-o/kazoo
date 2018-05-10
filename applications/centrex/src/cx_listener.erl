@@ -17,7 +17,7 @@
         ,code_change/3
         ]).
 
-%%-include("centrix.hrl").
+%%-include("centrex.hrl").
 
 -record(state, {}).
 -type state() :: #state{}.
@@ -67,7 +67,7 @@ start_link() ->
 -spec init([]) -> {'ok', state()}.
 init([]) ->
     process_flag('trap_exit', 'true'),
-    lager:debug("starting new centrix callflow listener"),
+    lager:debug("starting new centrex callflow listener"),
     {'ok', #state{}}.
 
 %%------------------------------------------------------------------------------
@@ -117,7 +117,7 @@ handle_event(_JObj, _State) ->
 %%------------------------------------------------------------------------------
 -spec terminate(any(), any()) -> 'ok'.
 terminate(_Reason, _) ->
-    lager:info("centrix callflow listner ~p termination", [_Reason]).
+    lager:info("centrex callflow listner ~p termination", [_Reason]).
 
 %%------------------------------------------------------------------------------
 %% @doc Convert process state when code is changed.
