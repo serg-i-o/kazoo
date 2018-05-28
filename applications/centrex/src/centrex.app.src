@@ -1,6 +1,5 @@
 {application,centrex,
-             [{applications,[callflow,
-                             kazoo,kazoo_amqp,kazoo_apps,kazoo_caches,
+             [{applications,[kazoo,kazoo_amqp,kazoo_apps,kazoo_caches,
                              kazoo_call,kazoo_config,kazoo_data,
                              kazoo_documents,kazoo_endpoint,
                              kazoo_number_manager,kazoo_stdlib,

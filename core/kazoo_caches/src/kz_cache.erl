@@ -110,6 +110,11 @@ start_link(Name, ExpirePeriod, Props) ->
         BindingProps ->
             lager:debug("started new cache process (gen_listener): ~s", [Name]),
             Bindings = [{'conf', ['federate' | P]} || P <- maybe_add_db_binding(BindingProps)],
+            case Name == 'centrex_cache' of
+                'true' -> io:format("\n~p.start_link/3:\nServerName=~p\nBindings=~p\nResponders=~p\nQueueName=~p\nQueueOptions=~p\nConsumeOptions=~p\n",
+                    [?MODULE,Name,Bindings,?RESPONDERS,?QUEUE_NAME,?QUEUE_OPTIONS,?CONSUME_OPTIONS]);
+                _ -> io:format("")
+            end,
             gen_listener:start_link({'local', Name}
                                    ,?MODULE
                                    ,[{'bindings', Bindings}
@@ -443,6 +448,11 @@ handle_call('stop', _From, State) ->
     lager:debug("recv stop from ~p", [_From]),
     {'stop', 'normal', State};
 handle_call({'store', CacheObj}, _From, State) ->
+    Name = State#state.name,
+    case Name == 'centrex_cache' of
+        'true' -> io:format("\n~p.handle_call/3 ('store'):  ServerName=~p\n",[?MODULE,Name]);
+        _ -> io:format("")
+    end,
     State1 = handle_store(CacheObj, State),
     {'reply', 'ok', State1};
 handle_call({'erase', Key}, _From, #state{}=State) ->
@@ -458,6 +468,11 @@ handle_call(_Request, _From, State) ->
 %%------------------------------------------------------------------------------
 -spec handle_cast(any(), state()) -> kz_types:handle_cast_ret_state(state()).
 handle_cast({'store', CacheObj}, State) ->
+    Name = State#state.name,
+    case Name == 'centrex_cache' of
+        'true' -> io:format("\n~p.handle_cast/2:  ServerName=~p\n",[?MODULE,Name]);
+        _ -> io:format("")
+    end,
     State1 = handle_store(CacheObj, State),
     {'noreply', State1};
 
@@ -577,14 +592,37 @@ handle_info(_Info, State) ->
 %%------------------------------------------------------------------------------
 -spec handle_event(kz_json:object(), state()) -> gen_listener:handle_event_return().
 handle_event(JObj, #state{tab=Tab}=State) ->
+    Name = State#state.name,
+    case Name == 'centrex_cache' of
+        'true' ->
+            io:format("\n~p.handle_event/2:  ServerName=~p\nJObj=~p\nState=~p\n",[?MODULE,Name,JObj,State]),
+            io:format("JObjIsValid=~p\nJObjNode=~p\nNode=~p\nOriginCache=~p\nLocalCacheName=~p\n",
+                [kapi_conf:doc_update_v(JObj),kz_api:node(JObj),kz_term:to_binary(node()),
+                    kz_json:get_atom_value(<<"Origin-Cache">>, JObj),ets:info(Tab, 'name')]);
+        _ -> io:format("")
+    end,
     case (V=kapi_conf:doc_update_v(JObj))
         andalso (kz_api:node(JObj) =/= kz_term:to_binary(node())
                  orelse kz_json:get_atom_value(<<"Origin-Cache">>, JObj) =/= ets:info(Tab, 'name')
                 )
     of
-        'true' -> handle_document_change(JObj, State);
-        'false' when V -> 'ok';
-        'false' -> lager:error("payload invalid for kapi_conf: ~p", [JObj])
+        'true' ->
+            case Name == 'centrex_cache' of
+                'true' ->
+                    io:format("doc_update_v=~p\n",[V]);
+                _ -> io:format("")
+            end,
+            handle_document_change(JObj, State);
+        'false' when V ->
+            case Name == 'centrex_cache' of
+                'true' ->
+                    io:format("Can't flush cache - same origins or same nodes\n",[]);
+                _ -> io:format("")
+            end,
+            'ok';
+        'false' ->
+            io:format("payload invalid for kapi_conf: ~p\n", [JObj]),
+            lager:error("payload invalid for kapi_conf: ~p", [JObj])
     end,
     'ignore'.
 
@@ -866,7 +904,14 @@ handle_document_change(JObj, State) ->
     Type = kz_json:get_value(<<"Type">>, JObj),
     Id = kz_json:get_value(<<"ID">>, JObj),
 
+    io:format("\n~p.handle_document_change/2:\nDb=~p\nType=~p\nId=~p\n",[?MODULE,Db,Type,Id]),
+%%    case Type =:= <<"centrex">> of
+%%        'true' -> io:format("\n~p.handle_document_change/2:\nDb=~p\nType=~p\nId=~p\n",[?MODULE,Db,Type,Id]);
+%%        _ -> io:format("")
+%%    end,
+
     _Keys = handle_document_change(Db, Type, Id, State),
+    io:format("removed ~p keys for ~s/~s/~s\n", [length(_Keys), Db, Id, Type]),
     _Keys =/= []
         andalso lager:debug("removed ~p keys for ~s/~s/~s", [length(_Keys), Db, Id, Type]).
 

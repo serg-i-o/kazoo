@@ -20,18 +20,51 @@
 %% TODO Create centrex system_config section
 -define(ROUTE_WIN_TIMEOUT, kapps_config:get_integer(?CONFIG_CAT, ?ROUTE_WIN_TIMEOUT_KEY, ?DEFAULT_ROUTE_WIN_TIMEOUT)).
 
+%%-spec handle_req(kz_json:object(), kz_term:proplist()) -> 'ok'.
+%%handle_req(JObj, Props) ->
+%%    _ = kz_util:put_callid(JObj),
+%%    'true' = kapi_route:req_v(JObj),
+%%    Routines = [fun maybe_referred_call/1
+%%                ,fun maybe_device_redirected/1
+%%               ],
+%%    Call = kapps_call:exec(Routines, kapps_call:from_route_req(JObj)),
+%%    io:format("\n~p.handle_req/2:\nCallId=~p\nProps=~p\n",[?MODULE,kz_doc:id(Call),Props]),
+%%    case centrex_maintenance:is_centrex_account(Call)
+%%    of
+%%        'true' ->
+%%            io:format("received request ~s asking if callflows can route the call to ~s\n"
+%%                ,[kapi_route:fetch_id(JObj), kapps_call:request_user(Call)]
+%%            ),
+%%            lager:info("received request ~s asking if callflows can route the call to ~s"
+%%                      ,[kapi_route:fetch_id(JObj), kapps_call:request_user(Call)]
+%%                      ),
+%%            AllowNoMatch = allow_no_match(Call),
+%%            case cx_flow:lookup_centrex_callflow(Call) of
+%%                %% if NoMatch is false then allow the callflow or if it is true and we are able allowed
+%%                %% to use it for this call
+%%                {'ok', Flow, NoMatch} when (not NoMatch)
+%%                                           orelse AllowNoMatch ->
+%%                    io:format("\nFlowId=~p\nProps=~p\nCallId=~p\nNoMatch=~p\nAllowNoMatch=~p\n",
+%%                        [kz_doc:id(Flow),Props,kz_doc:id(Call),NoMatch,AllowNoMatch]),
+%%                    maybe_prepend_preflow(JObj, Props, Call, Flow, NoMatch);
+%%                {'ok', _, 'true'} ->
+%%                    io:format("only available callflow is a nomatch for a unauthorized call\n", []),
+%%                    lager:info("only available callflow is a nomatch for a unauthorized call", []);
+%%                {'error', R} ->
+%%                    io:format("unable to find callflow ~p\n", [R]),
+%%                    lager:info("unable to find callflow ~p", [R])
+%%            end;
+%%        'false' ->
+%%            lager:debug("callflow not handling fetch-id ~s", [kapi_route:fetch_id(JObj)])
+%%    end.
+
+
 -spec handle_req(kz_json:object(), kz_term:proplist()) -> 'ok'.
 handle_req(JObj, Props) ->
     _ = kz_util:put_callid(JObj),
     'true' = kapi_route:req_v(JObj),
-%%    Routines = [fun maybe_referred_call/1
-%%                ,fun maybe_device_redirected/1
-%%               ],
-    Routines = [fun cf_route_req:maybe_referred_call/1
-               ,fun cf_route_req:maybe_device_redirected/1
-               ],
-    Call = kapps_call:exec(Routines, kapps_call:from_route_req(JObj)),
-    io:format("\n~p.handle_req/2:\nCallId=~p\nProps=~p\n",[?MODULE,kz_doc:id(Call),Props]),
+    Call = kapps_call:from_route_req(JObj),
+    io:format("\n\n~p.handle_req/2:\nCallId=~p\nProps=~p\nCallJObj=~p\n",[?MODULE,kz_doc:id(Call),Props,JObj]),
     case centrex_maintenance:is_centrex_account(Call)
     of
         'true' ->
@@ -39,17 +72,15 @@ handle_req(JObj, Props) ->
                 ,[kapi_route:fetch_id(JObj), kapps_call:request_user(Call)]
             ),
             lager:info("received request ~s asking if callflows can route the call to ~s"
-                      ,[kapi_route:fetch_id(JObj), kapps_call:request_user(Call)]
-                      ),
-            AllowNoMatch = cf_route_req:allow_no_match(Call),
+                ,[kapi_route:fetch_id(JObj), kapps_call:request_user(Call)]
+            ),
             case cx_flow:lookup_centrex_callflow(Call) of
                 %% if NoMatch is false then allow the callflow or if it is true and we are able allowed
                 %% to use it for this call
-                {'ok', Flow, NoMatch} when (not NoMatch)
-                                           orelse AllowNoMatch ->
-                    io:format("\nFlowId=~p\nProps=~p\nCallId=~p\nNoMatch=~p\nAllowNoMatch=~p\n",
-                        [kz_doc:id(Flow),Props,kz_doc:id(Call),NoMatch,AllowNoMatch]),
-                    maybe_prepend_preflow(JObj, Props, Call, Flow, NoMatch);
+                {'ok', Flow, NoMatch} when (not NoMatch) ->
+                    io:format("\nFlowId=~p\nProps=~p\nCallId=~p\nNoMatch=~p\n",
+                        [kz_doc:id(Flow),Props,kz_doc:id(Call),NoMatch]),
+                    maybe_reply_to_req(JObj, Props, Call, Flow, NoMatch);
                 {'ok', _, 'true'} ->
                     io:format("only available callflow is a nomatch for a unauthorized call\n", []),
                     lager:info("only available callflow is a nomatch for a unauthorized call", []);
@@ -61,45 +92,58 @@ handle_req(JObj, Props) ->
             lager:debug("callflow not handling fetch-id ~s", [kapi_route:fetch_id(JObj)])
     end.
 
--spec maybe_prepend_preflow(kz_json:object(), kz_term:proplist()
-                           ,kapps_call:call(), kzd_callflow:doc()
-                           ,boolean()
-                           ) -> 'ok'.
-maybe_prepend_preflow(JObj, Props, Call, Callflow, NoMatch) ->
-    AccountId = kapps_call:account_id(Call),
-    io:format("\n~p.maybe_prepend_preflow/5: \nAccountId=~p\n",[?MODULE,AccountId]),
-    case kzd_accounts:fetch(AccountId) of
-        {'error', _E} ->
-            lager:warning("could not open account doc ~s : ~p", [AccountId, _E]),
-            maybe_reply_to_req(JObj, Props, Call, Callflow, NoMatch);
-        {'ok', AccountDoc} ->
-            case kzd_accounts:preflow_id(AccountDoc) of
-                'undefined' ->
-                    io:format("ignore preflow, not set\n"),
-                    lager:debug("ignore preflow, not set"),
-                    maybe_reply_to_req(JObj, Props, Call, Callflow, NoMatch);
-                PreflowId ->
-                    NewCallflow = kzd_callflow:prepend_preflow(Callflow, PreflowId),
-                    maybe_reply_to_req(JObj, Props, Call, NewCallflow, NoMatch)
-            end
-    end.
-
 -spec maybe_reply_to_req(kz_json:object(), kz_term:proplist()
-                        ,kapps_call:call(), kz_json:object(), boolean()) -> 'ok'.
+    ,kapps_call:call(), kz_json:object(), boolean()) -> 'ok'.
 maybe_reply_to_req(JObj, Props, Call, Flow, NoMatch) ->
-    lager:info("callflow ~s in ~s satisfies request for ~s", [kz_doc:id(Flow)
-                                                             ,kapps_call:account_id(Call)
-                                                             ,kapps_call:request_user(Call)
-                                                             ]),
-    io:format("\n~p.maybe_reply_to_req/5:  has_tokens=~p\n",[?MODULE,cf_route_req:has_tokens(Call, Flow)]),
-    case cf_route_req:has_tokens(Call, Flow) of
-        'false' -> 'ok';
-        'true' ->
-            ControllerQ = props:get_value('queue', Props),
-            NewCall = update_call(Flow, NoMatch, ControllerQ, Call),
-            cf_route_req:send_route_response(Flow, JObj, NewCall)
-    end.
+    lager:info("callflow ~s in ~s satisfies request for ~s",
+        [kz_doc:id(Flow)
+        ,kapps_call:account_id(Call)
+        ,kapps_call:request_user(Call)
+    ]),
+    ControllerQ = props:get_value('queue', Props),
+    NewCall = update_call(Flow, NoMatch, ControllerQ, Call),
+    send_route_response(Flow, JObj, NewCall).
 
+
+%%-spec maybe_prepend_preflow(kz_json:object(), kz_term:proplist()
+%%                           ,kapps_call:call(), kzd_callflow:doc()
+%%                           ,boolean()
+%%                           ) -> 'ok'.
+%%maybe_prepend_preflow(JObj, Props, Call, Callflow, NoMatch) ->
+%%    AccountId = kapps_call:account_id(Call),
+%%    io:format("\n~p.maybe_prepend_preflow/5: \nAccountId=~p\n",[?MODULE,AccountId]),
+%%    case kzd_accounts:fetch(AccountId) of
+%%        {'error', _E} ->
+%%            lager:warning("could not open account doc ~s : ~p", [AccountId, _E]),
+%%            maybe_reply_to_req(JObj, Props, Call, Callflow, NoMatch);
+%%        {'ok', AccountDoc} ->
+%%            case kzd_accounts:preflow_id(AccountDoc) of
+%%                'undefined' ->
+%%                    io:format("ignore preflow, not set\n"),
+%%                    lager:debug("ignore preflow, not set"),
+%%                    maybe_reply_to_req(JObj, Props, Call, Callflow, NoMatch);
+%%                PreflowId ->
+%%                    NewCallflow = kzd_callflow:prepend_preflow(Callflow, PreflowId),
+%%                    maybe_reply_to_req(JObj, Props, Call, NewCallflow, NoMatch)
+%%            end
+%%    end.
+
+%%-spec maybe_reply_to_req(kz_json:object(), kz_term:proplist()
+%%                        ,kapps_call:call(), kz_json:object(), boolean()) -> 'ok'.
+%%maybe_reply_to_req(JObj, Props, Call, Flow, NoMatch) ->
+%%    lager:info("callflow ~s in ~s satisfies request for ~s", [kz_doc:id(Flow)
+%%                                                             ,kapps_call:account_id(Call)
+%%                                                             ,kapps_call:request_user(Call)
+%%                                                             ]),
+%%    io:format("\n~p.maybe_reply_to_req/5:  has_tokens=~p\n",[?MODULE, has_tokens(Call, Flow)]),
+%%    case has_tokens(Call, Flow) of
+%%        'false' -> 'ok';
+%%        'true' ->
+%%            ControllerQ = props:get_value('queue', Props),
+%%            NewCall = update_call(Flow, NoMatch, ControllerQ, Call),
+%%            send_route_response(Flow, JObj, NewCall)
+%%    end.
+%%
 %%-spec has_tokens(kapps_call:call(), kz_json:object()) -> boolean().
 %%has_tokens(Call, Flow) ->
 %%    case kapps_config:get_is_true(?CF_CONFIG_CAT, <<"calls_consume_tokens">>, 'true') of
@@ -177,79 +221,79 @@ maybe_reply_to_req(JObj, Props, Call, Flow, NoMatch) ->
 %%        <<"click2call">> -> 'true';
 %%        <<"conference">> -> 'true';
 %%        <<"resource">> -> 'true';
-%%%%        <<"sys_info">> ->
-%%%%            timer:sleep(500),
-%%%%            Number = kapps_call:request_user(Call),
-%%%%            (not knm_converters:is_reconcilable(Number));
+%%        <<"sys_info">> ->
+%%            timer:sleep(500),
+%%            Number = kapps_call:request_user(Call),
+%%            (not knm_converters:is_reconcilable(Number));
 %%        'undefined' -> 'true';
 %%        _Else ->
 %%            lager:debug("not responding to calls from auth-type ~s", [_Else]),
 %%            'false'
 %%    end.
 
-%%%%------------------------------------------------------------------------------
-%%%% @doc Send a route response for a route request that can be fulfilled by this
-%%%% process.
-%%%% @end
-%%%%------------------------------------------------------------------------------
-%%-spec send_route_response(kz_json:object(), kz_json:object(), kapps_call:call()) -> 'ok'.
-%%send_route_response(Flow, JObj, Call) ->
-%%    io:format("\n~p.send_route_response/3: callflows knows how to route the call! sending park response\n",[?MODULE]),
-%%    lager:info("callflows knows how to route the call! sending park response"),
-%%    AccountId = kapps_call:account_id(Call),
-%%    Resp = props:filter_undefined(
-%%             [{?KEY_MSG_ID, kz_api:msg_id(JObj)}
-%%             ,{?KEY_MSG_REPLY_ID, kapps_call:call_id_direct(Call)}
-%%             ,{<<"Routes">>, []}
-%%             ,{<<"Method">>, <<"park">>}
-%%             ,{<<"Transfer-Media">>, get_transfer_media(Flow, JObj)}
-%%             ,{<<"Ringback-Media">>, get_ringback_media(Flow, JObj)}
+%%------------------------------------------------------------------------------
+%% @doc Send a route response for a route request that can be fulfilled by this
+%% process.
+%% @end
+%%------------------------------------------------------------------------------
+-spec send_route_response(kz_json:object(), kz_json:object(), kapps_call:call()) -> 'ok'.
+send_route_response(Flow, JObj, Call) ->
+    io:format("\n~p.send_route_response/3: callflows knows how to route the call! sending park response\n",[?MODULE]),
+    lager:info("callflows knows how to route the call! sending park response"),
+    AccountId = kapps_call:account_id(Call),
+    Resp = props:filter_undefined(
+             [{?KEY_MSG_ID, kz_api:msg_id(JObj)}
+             ,{?KEY_MSG_REPLY_ID, kapps_call:call_id_direct(Call)}
+             ,{<<"Routes">>, []}
+             ,{<<"Method">>, <<"park">>}
+             ,{<<"Transfer-Media">>, get_transfer_media(Flow, JObj)}
+             ,{<<"Ringback-Media">>, get_ringback_media(Flow, JObj)}
 %%             ,{<<"Pre-Park">>, pre_park_action(Call)}
-%%             ,{<<"From-Realm">>, kzd_accounts:fetch_realm(AccountId)}
-%%             ,{<<"Custom-Channel-Vars">>, kapps_call:custom_channel_vars(Call)}
-%%             ,{<<"Custom-Application-Vars">>, kapps_call:custom_application_vars(Call)}
-%%              | kz_api:default_headers(?APP_NAME, ?APP_VERSION)
-%%             ]),
-%%    ServerId = kz_api:server_id(JObj),
-%%    Publisher = fun(P) -> kapi_route:publish_resp(ServerId, P) end,
-%%    io:format("AccountId=~p\nResp=~p\nServerId=~p\nPublisher=~p\n",[AccountId,Resp,ServerId,Publisher]),
-%%    case kz_amqp_worker:call(Resp
-%%                            ,Publisher
-%%                            ,fun kapi_route:win_v/1
-%%                            ,?ROUTE_WIN_TIMEOUT
-%%                            )
-%%    of
-%%        {'ok', RouteWin} ->
-%%            io:format("callflow has received a route win, taking control of the call\nRouteWin=~p\n",[RouteWin]),
-%%            lager:info("callflow has received a route win, taking control of the call"),
-%%            cf_route_win:execute_callflow(RouteWin, kapps_call:from_route_win(RouteWin, Call));
-%%        {'error', _E} ->
-%%            lager:info("callflow didn't received a route win, exiting : ~p", [_E])
-%%    end.
-%%
-%%-spec get_transfer_media(kz_json:object(), kz_json:object()) -> kz_term:api_binary().
-%%get_transfer_media(Flow, JObj) ->
-%%    case kz_json:get_value([<<"ringback">>, <<"transfer">>], Flow) of
-%%        'undefined' ->
-%%            kz_json:get_value(<<"Transfer-Media">>, JObj);
-%%        MediaId -> MediaId
-%%    end.
-%%
-%%-spec get_ringback_media(kz_json:object(), kz_json:object()) -> kz_term:api_binary().
-%%get_ringback_media(Flow, JObj) ->
-%%    case kz_json:get_value([<<"ringback">>, <<"early">>], Flow) of
-%%        'undefined' ->
-%%            kz_json:get_value(<<"Ringback-Media">>, JObj);
-%%        MediaId -> MediaId
-%%    end.
-%%
+             ,{<<"From-Realm">>, kzd_accounts:fetch_realm(AccountId)}
+             ,{<<"Custom-Channel-Vars">>, kapps_call:custom_channel_vars(Call)}
+             ,{<<"Custom-Application-Vars">>, kapps_call:custom_application_vars(Call)}
+              | kz_api:default_headers(?APP_NAME, ?APP_VERSION)
+             ]),
+    ServerId = kz_api:server_id(JObj),
+    Publisher = fun(P) -> kapi_route:publish_resp(ServerId, P) end,
+    io:format("AccountId=~p\nResp=~p\nServerId=~p\nPublisher=~p\n",[AccountId,Resp,ServerId,Publisher]),
+    case kz_amqp_worker:call(Resp
+                            ,Publisher
+                            ,fun kapi_route:win_v/1
+                            ,?ROUTE_WIN_TIMEOUT
+                            )
+    of
+        {'ok', RouteWin} ->
+            io:format("callflow has received a route win, taking control of the call\nRouteWin=~p\n",[RouteWin]),
+            lager:info("callflow has received a route win, taking control of the call"),
+            cx_route_win:execute_callflow(RouteWin, kapps_call:from_route_win(RouteWin, Call));
+        {'error', _E} ->
+            lager:info("callflow didn't received a route win, exiting : ~p", [_E])
+    end.
+
+-spec get_transfer_media(kz_json:object(), kz_json:object()) -> kz_term:api_binary().
+get_transfer_media(Flow, JObj) ->
+    case kz_json:get_value([<<"ringback">>, <<"transfer">>], Flow) of
+        'undefined' ->
+            kz_json:get_value(<<"Transfer-Media">>, JObj);
+        MediaId -> MediaId
+    end.
+
+-spec get_ringback_media(kz_json:object(), kz_json:object()) -> kz_term:api_binary().
+get_ringback_media(Flow, JObj) ->
+    case kz_json:get_value([<<"ringback">>, <<"early">>], Flow) of
+        'undefined' ->
+            kz_json:get_value(<<"Ringback-Media">>, JObj);
+        MediaId -> MediaId
+    end.
+
 %%%%------------------------------------------------------------------------------
 %%%% @doc
 %%%% @end
 %%%%------------------------------------------------------------------------------
 %%-spec pre_park_action(kapps_call:call()) -> kz_term:ne_binary().
 %%pre_park_action(Call) ->
-%%    case kapps_config:get_is_true(?CF_CONFIG_CAT, <<"ring_ready_offnet">>, 'true')
+%%    case kapps_config:get_is_true(?CX_CONFIG_CAT, <<"ring_ready_offnet">>, 'true')
 %%        andalso kapps_call:inception(Call) =/= 'undefined'
 %%        andalso kapps_call:authorizing_type(Call) =:= 'undefined'
 %%    of
@@ -271,7 +315,7 @@ update_call(Flow, NoMatch, ControllerQ, Call) ->
             ,{'cf_capture_group', kz_json:get_ne_value(<<"capture_group">>, Flow)}
             ,{'cf_capture_groups', kz_json:get_value(<<"capture_groups">>, Flow, kz_json:new())}
             ,{'cf_no_match', NoMatch}
-            ,{'cf_metaflow', kz_json:get_value(<<"metaflows">>, Flow, ?DEFAULT_METAFLOWS(kapps_call:account_id(Call)))}
+%%            ,{'cf_metaflow', kz_json:get_value(<<"metaflows">>, Flow, ?DEFAULT_METAFLOWS(kapps_call:account_id(Call)))}
             ],
 
     Updaters = [{fun kapps_call:kvs_store_proplist/2, Props}
@@ -307,7 +351,7 @@ update_call(Flow, NoMatch, ControllerQ, Call) ->
 %%            io:format("Remove keys from call = ~p\n",[Keys]),
 %%            kapps_call:remove_custom_channel_vars(Keys, Call)
 %%    end.
-%%
+
 %%-spec get_referred_by(kapps_call:call()) -> kz_term:api_binary().
 %%get_referred_by(Call) ->
 %%    ReferredBy = kapps_call:custom_channel_var(<<"Referred-By">>, Call),
@@ -321,7 +365,7 @@ update_call(Flow, NoMatch, ControllerQ, Call) ->
 %%    SipUserName = extract_sip_username(RedirectedBy),
 %%    io:format("\n~p.get_redirected_by/1: \nRedirectedBy=~p\nSipUserName=~p\n",[?MODULE,RedirectedBy,SipUserName]),
 %%    SipUserName.
-
+%%
 %%-spec is_valid_endpoint(kz_term:api_binary(), kapps_call:call()) -> boolean().
 %%is_valid_endpoint('undefined', _) -> 'false';
 %%is_valid_endpoint(Contact, Call) ->

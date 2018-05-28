@@ -19,9 +19,7 @@
 -define(SERVER, ?MODULE).
 
 -define(ORIGIN_BINDINGS, [[{'type', <<"account">>}]
-                         ,[{'type', <<"user">>}]
-                         ,[{'type', <<"callflow">>}]
-                         ,[{'type', <<"number">>}]
+                         ,[{'type', <<"centrex">>}]
                          ]).
 
 -define(CACHE_PROPS, [{'origin_bindings', ?ORIGIN_BINDINGS}]).

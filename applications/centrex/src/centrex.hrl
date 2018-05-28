@@ -19,7 +19,12 @@
 -define(IS_CX_ACCOUNT_CACHE_KEY(AccountId), {'is_cx_account', AccountId}).
 
 %% may be not used
+-define(DEFAULT_CHILD_KEY, <<"_">>).
+-define(CX_CONFIG_CAT, <<"ring_ready_offnet">>).
 -define(RESTRICTED_ENDPOINT_KEY, <<"Restricted-Endpoint-ID">>).
+
+-define(KEY_MSG_ID, <<"Msg-ID">>).
+-define(KEY_MSG_REPLY_ID, <<"Msg-Reply-ID">>).
 
 
 -define(TS_HRL, 'true').

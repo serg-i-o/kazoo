@@ -19,8 +19,8 @@ flush() ->
 %%------------------------------------------------------------------------------
 -spec cache_is_centrex(kz_term:ne_binary(), boolean()) -> boolean().
 cache_is_centrex(AccountId, IsCentrex) ->
-    AccountDb = kz_util:format_account_db(AccountId),
-    CacheOptions = [{'origin', [{'db', AccountDb, <<"centrex">>}]}, {'expires', ?MILLISECONDS_IN_HOUR}],
+%%    AccountDb = kz_util:format_account_db(AccountId),
+    CacheOptions = [{'expires', ?MILLISECONDS_IN_HOUR}],
     io:format("\n~p.cache_is_centrex/2:\nCacheName=~p\nCacheKey=~p\nIsCentrex=~p\nCacheOptions=~p\n",
         [?MODULE, ?CACHE_NAME, ?IS_CX_ACCOUNT_CACHE_KEY(AccountId), IsCentrex, CacheOptions]),
     kz_cache:store_local(?CACHE_NAME, ?IS_CX_ACCOUNT_CACHE_KEY(AccountId), IsCentrex, CacheOptions),
