@@ -2,7 +2,7 @@
 
 #### About Centrex app
 
-[Centrex](../../applications/centrex/doc/README.md) is the module for lightweight services pattern management.
+[Centrex](../../centrex/doc/README.md) is the module for lightweight services pattern management.
 
 
 #### Schema
