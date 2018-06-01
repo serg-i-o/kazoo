@@ -50,11 +50,14 @@ account_has_centix(AccountId) ->
 -spec do_lookup(kz_term:ne_binary()) -> boolean().
 do_lookup(AccountId) ->
     Db = kz_util:format_account_db(AccountId),
+    io:format("\n~p.do_lookup/1:\tAccountId=~p\n",[?MODULE, AccountId]),
     lager:info("searching for centrex docs in account ~s", [Db]),
     case kz_datamgr:get_results(Db, ?CENTREX_VIEW) of
         {'error', ErrorType} -> lager:debug("error ~s on find centrex docs in account ~s",[ErrorType, AccountId]), 'false';
         {'ok', []} -> lager:debug("can not find any centrex docs in account ~s", [AccountId]), 'false';
         {'ok', [_JObj]} ->
+            cache_is_centrex(AccountId, 'true');
+        {'ok', [_JObjH | _JobjT]} ->
             cache_is_centrex(AccountId, 'true')
     end.
 
