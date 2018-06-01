@@ -404,17 +404,10 @@ fix_value(O) -> kz_term:to_lower_binary(O).
 
 -spec fix_error_value(atom() | {atom(), atom()}) -> kz_term:ne_binary().
 fix_error_value({E, R}) ->
-<<<<<<< HEAD
-    <<(kz_term:to_binary(E))/binary
-     ,": "
-     ,(kz_term:to_binary(R))/binary
-    >>;
-=======
     list_to_binary([kz_term:to_binary(E)
                    ,": "
                    ,kz_term:to_binary(R)
                    ]);
->>>>>>> 2600hz/master
 fix_error_value(E) ->
     kz_term:to_binary(E).
 
