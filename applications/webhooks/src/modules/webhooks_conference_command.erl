@@ -1,3 +1,8 @@
+%%%-----------------------------------------------------------------------------
+%%% @copyright (C) 2018-, 2600Hz
+%%% @doc
+%%% @end
+%%%-----------------------------------------------------------------------------
 -module(webhooks_conference_command).
 
 -export([init/0
@@ -60,5 +65,3 @@ bindings_and_responders() ->
      [{'conference', [{'restrict_to',[ {'command', <<"*">>}]}]}],
      [{{'webhooks_conference_util', 'handle_event'},[{<<"conference">>, <<"command">>}]}]
     }.
-
-

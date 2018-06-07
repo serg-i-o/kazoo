@@ -1,3 +1,8 @@
+%%%-----------------------------------------------------------------------------
+%%% @copyright (C) 2018-, 2600Hz
+%%% @doc
+%%% @end
+%%%-----------------------------------------------------------------------------
 -module(webhooks_conference_del_member).
 
 -export([init/0
@@ -37,5 +42,3 @@ bindings_and_responders() ->
       }],
      [{{'webhooks_conference_util', 'handle_event'},[{<<"conference">>, <<"event">>}]}]
     }.
-
-

@@ -1,3 +1,8 @@
+%%%-----------------------------------------------------------------------------
+%%% @copyright (C) 2018-, 2600Hz
+%%% @doc
+%%% @end
+%%%-----------------------------------------------------------------------------
 -module(webhooks_conference_util).
 
 -export([handle_event/2]).
@@ -56,7 +61,6 @@ maybe_handle_conf_command(HookEvent, ConferenceId, CommandName, JObj) ->
             webhooks_util:fire_hooks(JObj, Hooks)
     end.
 
-%% @public
 -spec maybe_handle_conf_event(kz_term:ne_binary(), kz_term:ne_binary(), kz_json:object()) -> 'ok'.
 maybe_handle_conf_event(AccountId, HookEvent, JObj) ->
     case webhooks_util:find_webhooks(HookEvent, AccountId) of
